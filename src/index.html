@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Socket.IO Username Check</title>
+</head>
+<body>
+  <h2>Check Username Availability</h2>
+  <input id="usernameInput" placeholder="Enter username" />
+  <button id="checkBtn">Check</button>
+  <p id="result">Connecting to server...</p>
+
+  <!-- Socket.IO client CDN -->
+  <script src="https://cdn.socket.io/4.6.1/socket.io.min.js"></script>
+  <script>
+    const socket = io('http://localhost:3000'); // match your NestJS port
+
+    const usernameInput = document.getElementById('usernameInput');
+    const checkBtn = document.getElementById('checkBtn');
+    const result = document.getElementById('result');
+
+    // Show connection status
+    socket.on('connect', () => {
+      result.textContent = 'Connected! Enter username to check.';
+    });
+
+    socket.on('disconnect', () => {
+      result.textContent = 'Disconnected from server.';
+    });
+
+    socket.on('connect_error', (err) => {
+      result.textContent = 'Connection error: ' + err.message;
+    });
+
+    // Handle server response
+    socket.on('usernameResult', (data) => {
+      if (data.available) {
+        result.textContent = `✅ Username "${data.username}" is available!`;
+      } else {
+        result.textContent = `❌ Username "${data.username}" is not available: ${data.message}`;
+      }
+    });
+
+    // Emit username check
+    checkBtn.addEventListener('click', () => {
+      const username = usernameInput.value.trim();
+      if (!username) {
+        result.textContent = 'Please enter a username.';
+        return;
+      }
+
+      if (!socket.connected) {
+        result.textContent = 'Not connected to server!';
+        return;
+      }
+
+      socket.emit('checkUsername', username);
+      result.textContent = 'Checking...';
+
+      // Optional: timeout if server doesn't respond
+      setTimeout(() => {
+        if (result.textContent === 'Checking...') {
+          result.textContent = 'No response from server.';
+        }
+      }, 3000);
+    });
+  </script>
+</body>
+</html>

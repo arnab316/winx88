@@ -9,7 +9,7 @@ import { AuthService } from './auth.service';
   cors: { origin: '*' },
 })
 export class AuthGateway {
-  constructor(private authService: AuthService) {
+  constructor(private authService: AuthService) { 
   }
 
   @SubscribeMessage('checkUsername')
