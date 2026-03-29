@@ -247,5 +247,12 @@ export class AuthService {
     
 }
 
+async isUsernameTaken(username: string): Promise<boolean> {
+  const result = await this.dataSource.query(
+    `SELECT 1 FROM users WHERE username = $1 LIMIT 1`,
+    [username],
+  );
 
+  return result.length > 0;
+}
 }
