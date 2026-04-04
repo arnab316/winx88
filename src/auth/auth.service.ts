@@ -10,6 +10,8 @@ export class AuthService {
         private dataSource: DataSource
         , private jwtService: JwtService) { }
 
+
+    // Old Register and Login methods (email + password)
     async register(dto: any) {
         const queryRunner = this.dataSource.createQueryRunner();
         try {
@@ -44,62 +46,97 @@ export class AuthService {
 
 
 
+  
+async login(dto: any) {
+    try {
+        const { phone_number, email, password } = dto;
 
-    async login(dto: any) {
-
-        try {
-
-            const user = await this.dataSource.query(
-                'SELECT * FROM users WHERE email = $1',
-                [dto.email],
-            );
-            if (!user.length) {
-                throw new UnauthorizedException('User not found');
-            }
-            const u = user[0];
-
-            const isValid = await bcrypt.compare(dto.password, u.password);
-            if (!isValid) {
-                throw new UnauthorizedException('Invalid password');
-            }
-            // generate tokens
-            const payload = {
-                sub: u.id,
-                role: 'USER',
-            };
-
-            const accessToken = this.jwtService.sign(payload, {
-                expiresIn: '15m',
-            });
-
-            const refreshToken = this.jwtService.sign(payload, {
-                expiresIn: '7d',
-            });
-            const hashedToken = await bcrypt.hash(refreshToken, 10);
-            // store in DB
-            await this.dataSource.query(
-                `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-       VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-                [u.id, hashedToken],
-            );
-
-
-            return {
-                accessToken,
-                refreshToken,
-                user: {
-                    id: u.id,
-                    username: u.username,
-                },
-            };
-
-        } catch (error) {
-            console.error('Error during login:', error);
-            throw error; // Rethrow the error to be handled by the caller }
-
+        if (!password) {
+            throw new UnauthorizedException('Password is required');
         }
 
+        let user: any[];
+
+        // ✅ Login with phone
+        if (phone_number) {
+            user = await this.dataSource.query(
+                `SELECT u.* FROM users u
+                 JOIN user_phone_numbers up 
+                 ON u.id = up.user_id
+                 WHERE up.phone_number = $1
+                 AND up.is_primary = true
+                 LIMIT 1`,
+                [phone_number],
+            );
+        }
+
+        // ✅ Login with email
+        else if (email) {
+            user = await this.dataSource.query(
+                `SELECT * FROM users WHERE email = $1 LIMIT 1`,
+                [email],
+            );
+        }
+
+        // ❌ Neither provided
+        else {
+            throw new UnauthorizedException('Email or phone number is required');
+        }
+
+        if (!user || !user.length) {
+            throw new UnauthorizedException('User not found');
+        }
+
+        const u = user[0];
+
+        // 🔒 Password check
+        const isValid = await bcrypt.compare(password, u.password);
+        if (!isValid) {
+            throw new UnauthorizedException('Invalid password');
+        }
+
+        // 🚫 Optional: check account status
+        if (u.account_status !== 'ACTIVE') {
+            throw new UnauthorizedException(`Account is ${u.account_status}`);
+        }
+
+        // 🎟️ Generate tokens
+        const payload = {
+            sub: u.id,
+            role: 'USER',
+        };
+
+        const accessToken = this.jwtService.sign(payload, {
+            expiresIn: '15m',
+        });
+
+        const refreshToken = this.jwtService.sign(payload, {
+            expiresIn: '7d',
+        });
+
+        const hashedToken = await bcrypt.hash(refreshToken, 10);
+
+        // 💾 Store refresh token
+        await this.dataSource.query(
+            `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+             VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
+            [u.id, hashedToken],
+        );
+
+        return {
+            accessToken,
+            refreshToken,
+            user: {
+                id: u.id,
+                username: u.username,
+            },
+        };
+
+    } catch (error) {
+        console.error('Error during login:', error);
+        throw error;
     }
+}
 
 
     async refreshToken(dto: any) {
