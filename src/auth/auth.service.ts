@@ -241,12 +241,11 @@ async login(dto: any) {
 
         const hashedToken = await bcrypt.hash(refreshToken, 10);
 
-        await this.dataSource.query(
-            `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-       VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-            [a.id, hashedToken],
-        );
-
+       await this.dataSource.query(
+  `INSERT INTO admin_refresh_tokens (admin_id, token_hash, expires_at)
+   VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
+  [a.id, hashedToken],
+);
         return {
             accessToken,
             refreshToken,

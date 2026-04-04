@@ -142,5 +142,22 @@ export class AuthController {
       );
     }
   }
+@Post('admin-register')
+  async adminRegister(@Body() dto: any) {
+    try {
+      const result = await this.authService.adminRegister(dto);
+      return {
+        status: 'success',
+        code: 201,
+        message: 'Admin registered successfully',
+        data: result,
+      };
+    } catch (error : any) {
+      console.error('Error during admin registration:', error); 
+
+    }
+
+
+  }
 
 }
