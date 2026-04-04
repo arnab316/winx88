@@ -1,4 +1,4 @@
-import { Body, Controller, Post,Get, Param, UnauthorizedException } from '@nestjs/common';
+import { Body, Controller, Post,Get, Param, UnauthorizedException, HttpException, HttpStatus } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { stat } from 'fs';
 import { Code } from 'typeorm';
@@ -99,6 +99,47 @@ export class AuthController {
         code: 500,
         message: 'Internal server error',
       };
+    }
+  }
+// New Login Register methods
+   // 🟢 Send OTP
+  @Post('send-otp')
+  async sendOtp(@Body() dto: any) {
+    try {
+      const result = await this.authService.initiateRegistration(dto);
+      return {
+        success: true,
+        message: result.message,
+      };
+    } catch (error:any) {
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Failed to send OTP',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
+    }
+  }
+
+  // 🔵 Verify OTP + Register
+  @Post('verify-otp-register')
+  async verifyOtpAndRegister(@Body() dto: any) {
+    try {
+      const result = await this.authService.verifyOtpAndRegister(dto);
+
+      return {
+        success: true,
+        message: result.message,
+      };
+    } catch (error:any) {
+      throw new HttpException(
+        {
+          success: false,
+          message: error.message || 'Registration failed',
+        },
+        HttpStatus.BAD_REQUEST,
+      );
     }
   }
 
