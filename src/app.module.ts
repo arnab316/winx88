@@ -8,6 +8,8 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { WalletModule } from './wallet/wallet.module';
 import { UserModule } from './user/user.module';
 import { GameModule } from './game/game.module';
+import { TwilioModule } from './twilio/twilio.module';
+import { CoinsModule } from './coins/coins.module';
 
 @Module({
   imports: [
@@ -30,7 +32,9 @@ import { GameModule } from './game/game.module';
     AuthModule,
     WalletModule,
     UserModule,
-    GameModule],
+    GameModule,
+    TwilioModule,
+    CoinsModule],
   controllers: [AppController],
   providers: [AppService],
 })

@@ -3,12 +3,16 @@ import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { generateUserCode, generateUsername } from './utils';
 import { JwtService } from '@nestjs/jwt';
+import { TwilioService } from '../twilio/twilio.service';
+import * as crypto from 'crypto';
 
 @Injectable()
 export class AuthService {
     constructor(
         private dataSource: DataSource
-        , private jwtService: JwtService) { }
+        , private jwtService: JwtService,
+        private twilioService: TwilioService,
+    ) { }
 
 
     // Old Register and Login methods (email + password)
@@ -292,50 +296,77 @@ async login(dto: any) {
         return result.length > 0;
     }
 
-    async initiateRegistration(dto: any) {
-        const { username, phone_number } = dto;
+async initiateRegistration(dto: any) {
+    const { username, phone_number } = dto;
 
-        // check username
-        const isTaken = await this.isUsernameTaken(username);
-        if (isTaken) {
-            throw new Error('Username already taken');
-        }
-
-        // check phone exists
-        const phoneExists = await this.dataSource.query(
-            `SELECT 1 FROM user_phone_numbers WHERE phone_number = $1 LIMIT 1`,
-            [phone_number],
-        );
-
-        if (phoneExists.length) {
-            throw new Error('Phone number already registered');
-        }
-
-        // generate OTP
-        const otp = '123456'; // 🔥 dev mode (later random)
-
-        // store OTP
-        // await this.dataSource.query(
-        //     `INSERT INTO user_otps (phone_number, otp, expires_at)
-        //  VALUES ($1, $2, NOW() + INTERVAL '5 minutes')`,
-        //     [phone_number, otp],
-        // );
-
-        const expiresAt = new Date(Date.now() + 5 * 60 * 1000); // 5 mins
-
-        await this.dataSource.query(
-            `INSERT INTO user_otps (phone_number, otp, expires_at)
-             VALUES ($1, $2, $3)`,
-            [phone_number, otp, expiresAt],
-        );
-
-        // TODO: WhatsApp send (Meta API)
-        console.log(`OTP for ${phone_number}: ${otp}`);
-
-        return {
-            message: 'OTP sent successfully',
-        };
+    // check username
+    const isTaken = await this.isUsernameTaken(username);
+    if (isTaken) {
+        throw new Error('Username already taken');
     }
+
+    // check phone exists
+    const phoneExists = await this.dataSource.query(
+        `SELECT 1 FROM user_phone_numbers WHERE phone_number = $1 LIMIT 1`,
+        [phone_number],
+    );
+
+    if (phoneExists.length) {
+        throw new Error('Phone number already registered');
+    }
+
+    // ⏱️ Rate limit: no new OTP if one was sent in the last 60 seconds
+    const recentOtp = await this.dataSource.query(
+        `SELECT created_at FROM user_otps
+         WHERE phone_number = $1
+         ORDER BY id DESC LIMIT 1`,
+        [phone_number],
+    );
+
+    if (recentOtp.length) {
+        const lastSentAt = new Date(recentOtp[0].created_at).getTime();
+        const cooldown = 60 * 1000; // 60 seconds
+        const timeLeft = cooldown - (Date.now() - lastSentAt);
+
+        if (timeLeft > 0) {
+            throw new Error(
+                `Please wait ${Math.ceil(timeLeft / 1000)} seconds before requesting another OTP`,
+            );
+        }
+    }
+
+    // 🔒 Daily limit: max 5 OTPs per phone per day
+    const dailyCount = await this.dataSource.query(
+        `SELECT COUNT(*) as count FROM user_otps
+         WHERE phone_number = $1
+         AND created_at > NOW() - INTERVAL '24 hours'`,
+        [phone_number],
+    );
+
+    if (parseInt(dailyCount[0].count) >= 3) {
+        throw new Error('Too many OTP requests today. Try again tomorrow.');
+    }
+
+    const otp = crypto.randomInt(100000, 999999).toString();
+    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+
+    await this.dataSource.query(
+        `INSERT INTO user_otps (phone_number, otp, expires_at)
+         VALUES ($1, $2, $3)`,
+        [phone_number, otp, expiresAt],
+    );
+
+    try {
+        await this.twilioService.sendWhatsAppOtp(phone_number, otp);
+    } catch (error) {
+        console.error('WhatsApp send failed:', error);
+        throw new Error('Failed to send OTP. Please try again.');
+    }
+
+    return {
+        message: 'OTP sent successfully',
+    };
+}
 
     async verifyOtpAndRegister(dto: any) {
         const queryRunner = this.dataSource.createQueryRunner();
