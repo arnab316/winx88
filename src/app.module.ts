@@ -10,6 +10,7 @@ import { UserModule } from './user/user.module';
 import { GameModule } from './game/game.module';
 import { TwilioModule } from './twilio/twilio.module';
 import { CoinsModule } from './coins/coins.module';
+import { AffiliateModule } from './affiliate/affiliate.module';
 
 @Module({
   imports: [
@@ -34,7 +35,8 @@ import { CoinsModule } from './coins/coins.module';
     UserModule,
     GameModule,
     TwilioModule,
-    CoinsModule],
+    CoinsModule,
+    AffiliateModule],
   controllers: [AppController],
   providers: [AppService],
 })
