@@ -7,6 +7,7 @@ import {
 import { DataSource } from 'typeorm';
 import { AdminAdjustmentDto, AdminDepositDecideDto, AdminWithdrawalDecideDto, DepositRequestDto, LedgerParams, WithdrawalRequestDto } from './dto';
 import { generateCode } from 'src/Utils';
+import { CoinsService } from 'src/coins/coins.service';
 
 
 
@@ -14,7 +15,8 @@ import { generateCode } from 'src/Utils';
 
 @Injectable()
 export class WalletService {
-  constructor(private dataSource: DataSource) {}
+  constructor(private dataSource: DataSource,
+    private coinsService: CoinsService) {}
 
   // ─── PRIVATE: lock wallet row ────────────────────────────────────────────
 
@@ -281,6 +283,18 @@ export class WalletService {
           createdByType: 'ADMIN',
           createdById:   dto.adminId,
         });
+
+        
+      const coinsToCredit = await this.coinsService.computeCoinsForDeposit(amt);
+          if (coinsToCredit > 0) {
+      await this.coinsService.creditCoins(queryRunner, {
+        userId:        dep.user_id,
+        coinsToCredit,
+        referenceType: 'DEPOSIT',
+        referenceId:   dto.depositId,
+        description:   `Earned ${coinsToCredit} coins for deposit of ${amt}`,
+      });
+}
 
         await queryRunner.commitTransaction();
         return { message: 'Deposit rejected.' };
