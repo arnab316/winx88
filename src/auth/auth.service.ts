@@ -50,97 +50,97 @@ export class AuthService {
 
 
 
-  
-async login(dto: any) {
-    try {
-        const { phone_number, email, password } = dto;
 
-        if (!password) {
-            throw new UnauthorizedException('Password is required');
-        }
+    async login(dto: any) {
+        try {
+            const { phone_number, email, password } = dto;
 
-        let user: any[];
+            if (!password) {
+                throw new UnauthorizedException('Password is required');
+            }
 
-        // ✅ Login with phone
-        if (phone_number) {
-            user = await this.dataSource.query(
-                `SELECT u.* FROM users u
+            let user: any[];
+
+            // ✅ Login with phone
+            if (phone_number) {
+                user = await this.dataSource.query(
+                    `SELECT u.* FROM users u
                  JOIN user_phone_numbers up 
                  ON u.id = up.user_id
                  WHERE up.phone_number = $1
                  AND up.is_primary = true
                  LIMIT 1`,
-                [phone_number],
-            );
-        }
+                    [phone_number],
+                );
+            }
 
-        // ✅ Login with email
-        else if (email) {
-            user = await this.dataSource.query(
-                `SELECT * FROM users WHERE email = $1 LIMIT 1`,
-                [email],
-            );
-        }
+            // ✅ Login with email
+            else if (email) {
+                user = await this.dataSource.query(
+                    `SELECT * FROM users WHERE email = $1 LIMIT 1`,
+                    [email],
+                );
+            }
 
-        // ❌ Neither provided
-        else {
-            throw new UnauthorizedException('Email or phone number is required');
-        }
+            // ❌ Neither provided
+            else {
+                throw new UnauthorizedException('Email or phone number is required');
+            }
 
-        if (!user || !user.length) {
-            throw new UnauthorizedException('User not found');
-        }
+            if (!user || !user.length) {
+                throw new UnauthorizedException('User not found');
+            }
 
-        const u = user[0];
+            const u = user[0];
 
-        // 🔒 Password check
-        const isValid = await bcrypt.compare(password, u.password);
-        if (!isValid) {
-            throw new UnauthorizedException('Invalid password');
-        }
+            // 🔒 Password check
+            const isValid = await bcrypt.compare(password, u.password);
+            if (!isValid) {
+                throw new UnauthorizedException('Invalid password');
+            }
 
-        // 🚫 Optional: check account status
-        if (u.account_status !== 'ACTIVE') {
-            throw new UnauthorizedException(`Account is ${u.account_status}`);
-        }
+            // 🚫 Optional: check account status
+            if (u.account_status !== 'ACTIVE') {
+                throw new UnauthorizedException(`Account is ${u.account_status}`);
+            }
 
-        // 🎟️ Generate tokens
-        const payload = {
-            sub: u.id,
-            role: 'USER',
-        };
+            // 🎟️ Generate tokens
+            const payload = {
+                sub: u.id,
+                role: 'USER',
+            };
 
-        const accessToken = this.jwtService.sign(payload, {
-            expiresIn: '15m',
-        });
+            const accessToken = this.jwtService.sign(payload, {
+                expiresIn: '15m',
+            });
 
-        const refreshToken = this.jwtService.sign(payload, {
-            expiresIn: '7d',
-        });
+            const refreshToken = this.jwtService.sign(payload, {
+                expiresIn: '7d',
+            });
 
-        const hashedToken = await bcrypt.hash(refreshToken, 10);
+            const hashedToken = await bcrypt.hash(refreshToken, 10);
 
-        // 💾 Store refresh token
-        await this.dataSource.query(
-            `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+            // 💾 Store refresh token
+            await this.dataSource.query(
+                `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
              VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-            [u.id, hashedToken],
-        );
+                [u.id, hashedToken],
+            );
 
-        return {
-            accessToken,
-            refreshToken,
-            user: {
-                id: u.id,
-                username: u.username,
-            },
-        };
+            return {
+                accessToken,
+                refreshToken,
+                user: {
+                    id: u.id,
+                    username: u.username,
+                },
+            };
 
-    } catch (error) {
-        console.error('Error during login:', error);
-        throw error;
+        } catch (error) {
+            console.error('Error during login:', error);
+            throw error;
+        }
     }
-}
 
 
     async refreshToken(dto: any) {
@@ -245,11 +245,11 @@ async login(dto: any) {
 
         const hashedToken = await bcrypt.hash(refreshToken, 10);
 
-       await this.dataSource.query(
-  `INSERT INTO admin_refresh_tokens (admin_id, token_hash, expires_at)
+        await this.dataSource.query(
+            `INSERT INTO admin_refresh_tokens (admin_id, token_hash, expires_at)
    VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-  [a.id, hashedToken],
-);
+            [a.id, hashedToken],
+        );
         return {
             accessToken,
             refreshToken,
@@ -296,77 +296,77 @@ async login(dto: any) {
         return result.length > 0;
     }
 
-async initiateRegistration(dto: any) {
-    const { username, phone_number } = dto;
+    async initiateRegistration(dto: any) {
+        const { username, phone_number } = dto;
 
-    // check username
-    const isTaken = await this.isUsernameTaken(username);
-    if (isTaken) {
-        throw new Error('Username already taken');
-    }
+        // check username
+        const isTaken = await this.isUsernameTaken(username);
+        if (isTaken) {
+            throw new Error('Username already taken');
+        }
 
-    // check phone exists
-    const phoneExists = await this.dataSource.query(
-        `SELECT 1 FROM user_phone_numbers WHERE phone_number = $1 LIMIT 1`,
-        [phone_number],
-    );
+        // check phone exists
+        const phoneExists = await this.dataSource.query(
+            `SELECT 1 FROM user_phone_numbers WHERE phone_number = $1 LIMIT 1`,
+            [phone_number],
+        );
 
-    if (phoneExists.length) {
-        throw new Error('Phone number already registered');
-    }
+        if (phoneExists.length) {
+            throw new Error('Phone number already registered');
+        }
 
-    // ⏱️ Rate limit: no new OTP if one was sent in the last 60 seconds
-    const recentOtp = await this.dataSource.query(
-        `SELECT created_at FROM user_otps
+        // ⏱️ Rate limit: no new OTP if one was sent in the last 60 seconds
+        const recentOtp = await this.dataSource.query(
+            `SELECT created_at FROM user_otps
          WHERE phone_number = $1
          ORDER BY id DESC LIMIT 1`,
-        [phone_number],
-    );
+            [phone_number],
+        );
 
-    if (recentOtp.length) {
-        const lastSentAt = new Date(recentOtp[0].created_at).getTime();
-        const cooldown = 60 * 1000; // 60 seconds
-        const timeLeft = cooldown - (Date.now() - lastSentAt);
+        if (recentOtp.length) {
+            const lastSentAt = new Date(recentOtp[0].created_at).getTime();
+            const cooldown = 60 * 1000; // 60 seconds
+            const timeLeft = cooldown - (Date.now() - lastSentAt);
 
-        if (timeLeft > 0) {
-            throw new Error(
-                `Please wait ${Math.ceil(timeLeft / 1000)} seconds before requesting another OTP`,
-            );
+            if (timeLeft > 0) {
+                throw new Error(
+                    `Please wait ${Math.ceil(timeLeft / 1000)} seconds before requesting another OTP`,
+                );
+            }
         }
-    }
 
-    // 🔒 Daily limit: max 5 OTPs per phone per day
-    const dailyCount = await this.dataSource.query(
-        `SELECT COUNT(*) as count FROM user_otps
+        // 🔒 Daily limit: max 5 OTPs per phone per day
+        const dailyCount = await this.dataSource.query(
+            `SELECT COUNT(*) as count FROM user_otps
          WHERE phone_number = $1
          AND created_at > NOW() - INTERVAL '24 hours'`,
-        [phone_number],
-    );
+            [phone_number],
+        );
 
-    if (parseInt(dailyCount[0].count) >= 3) {
-        throw new Error('Too many OTP requests today. Try again tomorrow.');
-    }
+        if (parseInt(dailyCount[0].count) >= 5) {
+            throw new Error('Too many OTP requests today. Try again tomorrow.');
+        }
 
-    const otp = crypto.randomInt(100000, 999999).toString();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+        const otp = crypto.randomInt(100000, 999999).toString();
+        const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
-    await this.dataSource.query(
-        `INSERT INTO user_otps (phone_number, otp, expires_at)
+        await this.dataSource.query(
+            `INSERT INTO user_otps (phone_number, otp, expires_at)
          VALUES ($1, $2, $3)`,
-        [phone_number, otp, expiresAt],
-    );
+            [phone_number, otp, expiresAt.toISOString()],
+        );
+        console.log(`Generated OTP for ${phone_number}: ${otp} })`);
+        try {
+            await this.twilioService.sendWhatsAppOtp(phone_number, otp);
+        } catch (error) {
+            console.error('WhatsApp send failed:', error);
+            throw new Error('Failed to send OTP. Please try again.');
+        }
 
-    try {
-        await this.twilioService.sendWhatsAppOtp(phone_number, otp);
-    } catch (error) {
-        console.error('WhatsApp send failed:', error);
-        throw new Error('Failed to send OTP. Please try again.');
+        return {
+            message: 'OTP sent successfully',
+        };
     }
-
-    return {
-        message: 'OTP sent successfully',
-    };
-}
 
     async verifyOtpAndRegister(dto: any) {
         const queryRunner = this.dataSource.createQueryRunner();
@@ -378,12 +378,15 @@ async initiateRegistration(dto: any) {
             const { phone_number, otp } = dto;
 
             // ✅ Step 1: Get latest OTP
+
             const otpRecord = await queryRunner.query(
-                `SELECT * FROM user_otps
-             WHERE phone_number = $1
-             AND is_used = false
-             ORDER BY id DESC LIMIT 1`,
-                [phone_number],
+                            `SELECT *,
+                    EXTRACT(EPOCH FROM (expires_at - NOW())) * 1000 AS ms_remaining
+                FROM user_otps
+                WHERE phone_number = $1
+                AND is_used = false
+                ORDER BY id DESC LIMIT 1`,
+                            [phone_number],
             );
 
             if (!otpRecord.length) {
@@ -392,13 +395,13 @@ async initiateRegistration(dto: any) {
 
             const record = otpRecord[0];
 
+
             // ✅ Step 2: Attempt limit
             if (record.attempts >= 5) {
                 throw new Error('Too many attempts. Try again later.');
             }
-
             // ✅ Step 3: Expiry check
-            if (Date.now() > new Date(record.expires_at).getTime()) {
+            if (parseFloat(record.ms_remaining) <= 0) {
                 throw new Error('OTP expired');
             }
 
@@ -477,10 +480,10 @@ async initiateRegistration(dto: any) {
             );
 
             await queryRunner.commitTransaction();
-
             return {
                 message: 'User registered successfully',
             };
+
 
         } catch (error) {
             await queryRunner.rollbackTransaction();

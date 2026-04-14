@@ -15,11 +15,28 @@ export class TwilioService {
   this.fromNumber = this.config.get('TWILIO_WHATSAPP_FROM')!;
   }
 
+  
   async sendWhatsAppOtp(phoneNumber: string, otp: string): Promise<void> {
-    await this.client.messages.create({
+    // await this.client.messages.create({
+    //   from: this.fromNumber,
+    //   to: `whatsapp:${phoneNumber}`,
+    //   body: `*${otp}* is your winx88 verification code. For your security, do not share this code.`,
+    // });
+  try {
+     await this.client.messages.create({
       from: this.fromNumber,
       to: `whatsapp:${phoneNumber}`,
       body: `*${otp}* is your winx88 verification code. For your security, do not share this code.`,
-    });
+    })
+    .then(console.log);
+    
+  } catch (error:any) {
+    console.error('Twilio ERROR:', error);
+    console.error('Twilio DATA:', error?.response?.data);
+    throw error;
+  }
+
+
+
   }
 }
