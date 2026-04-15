@@ -27,7 +27,7 @@ export class AuthGateway implements OnGatewayConnection, OnGatewayDisconnect {
   async handleCheckUsername(@MessageBody() username: string,
   @ConnectedSocket() client: Socket,
 ) {
-    if (!username || username.length < 3) {
+    if (!username || username.length < 5) {
       client.emit('usernameResult', {
         username,
         available: false,

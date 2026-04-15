@@ -11,6 +11,7 @@ import { GameModule } from './game/game.module';
 import { TwilioModule } from './twilio/twilio.module';
 import { CoinsModule } from './coins/coins.module';
 import { AffiliateModule } from './affiliate/affiliate.module';
+import { OtpCleanupService } from './auth/otpcleanup';
 
 @Module({
   imports: [
@@ -38,6 +39,6 @@ import { AffiliateModule } from './affiliate/affiliate.module';
     CoinsModule,
     AffiliateModule],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [AppService, OtpCleanupService],
 })
 export class AppModule {}

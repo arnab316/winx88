@@ -1,7 +1,8 @@
-import { Body, Controller, Post,Get, Param, UnauthorizedException, HttpException, HttpStatus } from '@nestjs/common';
+import { Body, Controller, Post,Get, Param, UnauthorizedException, HttpException, HttpStatus, Res, Req } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { stat } from 'fs';
 import { Code } from 'typeorm';
+import { Response } from 'express';
 
 @Controller('auth')
 export class AuthController {
@@ -24,9 +25,25 @@ export class AuthController {
         }
     }
     @Post('/login')
-    async login(@Body() dto: any) {
+    async login(@Body() dto: any,  @Res({ passthrough: true }) res: Response & typeof import('express').response) {
          try{
             const result = await this.authService.login(dto);
+
+             // Set accessToken in HttpOnly cookie
+      res.cookie('accessToken', result.accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production', // true in prod (HTTPS only)
+        sameSite: 'strict',
+        maxAge: 15 * 60 * 1000, // 15 minutes
+      });
+
+      // Set refreshToken in HttpOnly cookie
+      res.cookie('refreshToken', result.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+      });
              return {
                 status: 'success',
                 Code: 200,
@@ -39,18 +56,29 @@ export class AuthController {
         }
     }
 
-     @Post('refresh-token')
-  async refreshToken(@Body() dto: { refreshToken: string }) {
-    const result = await this.authService.refreshToken(dto);
-    return {
-      status: 'success',
-      ...result,
-    };
-  }
+@Post('refresh-token')
+async refreshToken(@Req() req: Request, @Res({ passthrough: true }) res: Response & typeof import('express').response) {
+  const token = (req as any).cookies?.refreshToken;
+  if (!token) throw new UnauthorizedException('No refresh token');
+
+  const result = await this.authService.refreshToken({ refreshToken: token });
+
+  res.cookie('accessToken', result.accessToken, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    sameSite: 'strict',
+    maxAge: 15 * 60 * 1000,
+  });
+
+  return { status: 'success' };
+}
 
    @Post('logout')
-  async logout(@Body() dto: { refreshToken: string }) {
+  async logout(@Body() dto: { refreshToken: string },  @Res({ passthrough: true }) res: Response & typeof import('express').response) {
     const result = await this.authService.logout(dto);
+
+     res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
     return {
       status: 'success',
       ...result,
@@ -74,9 +102,23 @@ export class AuthController {
 
 
    @Post('admin-login')
-  async loginAdmin(@Body() dto: any) {
+  async loginAdmin(@Body() dto: any, @Res({ passthrough: true }) res: Response & typeof import('express').response) {
     try {
       const result = await this.authService.adminLogin(dto);
+
+       res.cookie('accessToken', result.accessToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 15 * 60 * 1000,
+      });
+
+      res.cookie('refreshToken', result.refreshToken, {
+        httpOnly: true,
+        secure: process.env.NODE_ENV === 'production',
+        sameSite: 'strict',
+        maxAge: 7 * 24 * 60 * 60 * 1000,
+      });
       return {
         status: 'success',
         code: 200,
