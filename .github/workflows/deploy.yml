@@ -1,0 +1,50 @@
+name: Build & Deploy WinX88
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1. Checkout code
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. Login to Docker Hub
+      - name: Login to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_TOKEN }}
+
+      # 3. Build & Push Docker image
+      - name: Build and Push Docker Image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          push: true
+          tags: ${{ secrets.DOCKER_USERNAME }}/winx88:latest
+
+      # 4. SSH into server and deploy
+      - name: Deploy to Server via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.SERVER_HOST }}
+          username: ${{ secrets.SERVER_USER }}
+          key: ${{ secrets.SERVER_SSH_KEY }}
+          script: |
+            docker pull ${{ secrets.DOCKER_USERNAME }}/winx88:latest
+
+            docker stop winx88 || true
+            docker rm winx88 || true
+
+            docker run -d \
+              --name winx88 \
+              --restart always \
+              -p 3000:3000 \
+              --env-file /home/${{ secrets.SERVER_USER }}/winx88.env \
+              ${{ secrets.DOCKER_USERNAME }}/winx88:latest
