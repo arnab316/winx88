@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { generateUserCode, generateUsername } from './utils';
@@ -17,20 +17,42 @@ export class AuthService {
 
     // Old Register and Login methods (email + password)
     async register(dto: any) {
+        // Minimal validation — stops garbage input
+        if (!dto?.full_name || !dto?.email || !dto?.password) {
+            throw new BadRequestException('full_name, email, and password are required');
+        }
+        if (dto.password.length < 8) {
+            throw new BadRequestException('Password must be at least 8 characters');
+        }
+
         const queryRunner = this.dataSource.createQueryRunner();
         try {
             await queryRunner.connect();
             await queryRunner.startTransaction();
-            const saltRounds = 10;
-            const hashedPassword = await bcrypt.hash(dto.password, saltRounds);
+
+            // Check duplicate email up front (nicer error than a DB constraint violation)
+            const existing = await queryRunner.query(
+                `SELECT 1 FROM users WHERE email = $1 LIMIT 1`,
+                [dto.email],
+            );
+            if (existing.length) {
+                throw new BadRequestException('Email already registered');
+            }
+
+            const hashedPassword = await bcrypt.hash(dto.password, 10);
             const userCode = generateUserCode(dto.full_name);
             const username = generateUsername(dto.full_name, dto.email);
+
+            // ⬇️ THE FIX: add RETURNING id so result[0].id actually exists
             const result = await queryRunner.query(
-                'INSERT INTO users (full_name,email,  password, user_code, username) VALUES ($1, $2, $3, $4, $5)',
+                `INSERT INTO users (full_name, email, password, user_code, username)
+             VALUES ($1, $2, $3, $4, $5)
+             RETURNING id`,
                 [dto.full_name, dto.email, hashedPassword, userCode, username],
-            )
+            );
+
             const userId = result[0].id;
-            //  create wallet
+
             await queryRunner.query(
                 `INSERT INTO wallets (user_id) VALUES ($1)`,
                 [userId],
@@ -38,15 +60,16 @@ export class AuthService {
 
             await queryRunner.commitTransaction();
 
-
-
+            return { userId, userCode, username };
         } catch (error) {
-            // Handle errors and rollback transaction if necessary
             await queryRunner.rollbackTransaction();
             console.error('Error during registration:', error);
-            throw error; // Rethrow the error to be handled by the caller
+            throw error;
+        } finally {
+            await queryRunner.release();
         }
     }
+
 
 
 
@@ -182,7 +205,15 @@ export class AuthService {
     }
 
     async logout(dto: any) {
-        const decoded = this.jwtService.decode(dto.refreshToken) as any;
+        if (!dto?.refreshToken) {
+            throw new UnauthorizedException('Refresh token is required');
+        } let decoded: any;
+        try {
+            decoded = this.jwtService.verify(dto.refreshToken);
+
+        } catch (err) {
+            throw new UnauthorizedException('Invalid refresh token');
+        }
 
         await this.dataSource.query(
             `UPDATE refresh_tokens SET is_revoked = true WHERE user_id = $1`,
@@ -347,7 +378,7 @@ export class AuthService {
             throw new Error('Too many OTP requests today. Try again tomorrow.');
         }
 
-        const otp = crypto.randomInt(100000, 999999).toString();
+        const otp = this.generateOtp();
         const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
         await this.dataSource.query(
@@ -357,7 +388,13 @@ export class AuthService {
         );
         console.log(`Generated OTP for ${phone_number}: ${otp} })`);
         try {
-            await this.twilioService.sendWhatsAppOtp(phone_number, otp);
+            if (process.env.NODE_ENV !== 'production') {
+                console.log(`[DEV OTP] ${phone_number}: ${otp}`);
+            }
+            else {
+                await this.twilioService.sendWhatsAppOtp(phone_number, otp);
+
+            }
         } catch (error) {
             console.error('WhatsApp send failed:', error);
             throw new Error('Failed to send OTP. Please try again.');
@@ -366,6 +403,11 @@ export class AuthService {
         return {
             message: 'OTP sent successfully',
         };
+    }
+    private generateOtp(): string {
+        // Node's built-in crypto — no extra dependency needed
+        const crypto = require('crypto');
+        return crypto.randomInt(100000, 1000000).toString();
     }
 
     async verifyOtpAndRegister(dto: any) {
@@ -380,13 +422,13 @@ export class AuthService {
             // ✅ Step 1: Get latest OTP
 
             const otpRecord = await queryRunner.query(
-                            `SELECT *,
+                `SELECT *,
                     EXTRACT(EPOCH FROM (expires_at - NOW())) * 1000 AS ms_remaining
                 FROM user_otps
                 WHERE phone_number = $1
                 AND is_used = false
                 ORDER BY id DESC LIMIT 1`,
-                            [phone_number],
+                [phone_number],
             );
 
             if (!otpRecord.length) {
@@ -441,7 +483,7 @@ export class AuthService {
 
                 email = dto.email;
             }
-             if(dto.password.length < 6){
+            if (dto.password.length < 6) {
                 throw new Error('Password must be at least 6 characters long');
             }
             // ✅ Step 7: Hash password

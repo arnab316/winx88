@@ -1,8 +1,9 @@
-import { Body, Controller, Post,Get, Param, UnauthorizedException, HttpException, HttpStatus, Res, Req } from '@nestjs/common';
+import { Body, Controller, Post,Get, Param, UnauthorizedException, HttpException, HttpStatus, Res, Req, UseGuards } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { stat } from 'fs';
 import { Code } from 'typeorm';
 import { Response } from 'express';
+import { SuperAdminGuard } from 'src/common/guards/super-admin.guard';
 
 @Controller('auth')
 export class AuthController {
@@ -185,6 +186,8 @@ async refreshToken(@Req() req: Request, @Res({ passthrough: true }) res: Respons
     }
   }
 @Post('admin-register')
+@UseGuards(SuperAdminGuard)  // ← THE FIX: only SUPER_ADMIN can create admins
+
   async adminRegister(@Body() dto: any) {
     try {
       const result = await this.authService.adminRegister(dto);
