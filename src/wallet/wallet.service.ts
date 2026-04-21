@@ -141,7 +141,7 @@ export class WalletService {
 
       const deposit = await queryRunner.query(
         `INSERT INTO deposits
-           (deposit_code, user_id, gateway_id, amount, transaction_number, screenshot_url,
+           (deposit_code, user_id, gateway_id,agent_id, amount, transaction_number, screenshot_url,
             status, requested_at, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', NOW(), NOW(), NOW())
          RETURNING id`,
@@ -149,6 +149,7 @@ export class WalletService {
           generateCode('DEP'),
           dto.userId,
           dto.gatewayId,
+           dto.agentId,  
           dto.amount,
           dto.transactionNumber,
           dto.screenshotUrl,

@@ -17,7 +17,8 @@
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
     "test:debug": "node --inspect-brk -r tsconfig-paths/register -r ts-node/register node_modules/.bin/jest --runInBand",
-    "test:e2e": "jest --config ./test/jest-e2e.json"
+    "test:e2e": "jest --config ./test/jest-e2e.json",
+    "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1024.0",
@@ -31,7 +32,6 @@
     "@nestjs/terminus": "^11.1.1",
     "@nestjs/typeorm": "^11.0.0",
     "@nestjs/websockets": "^11.1.17",
-    "@types/multer": "^2.1.0",
     "bcrypt": "^6.0.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
@@ -41,7 +41,7 @@
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1",
     "twilio": "^5.13.1",
-    "typeorm": "^0.3.28"
+    "xlsx": "^0.18.5"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3.2.0",
@@ -52,6 +52,7 @@
     "@types/cookie-parser": "^1.4.10",
     "@types/express": "^5.0.6",
     "@types/jest": "^30.0.0",
+    "@types/multer": "^2.1.0",
     "@types/node": "^22.10.7",
     "@types/supertest": "^6.0.2",
     "eslint": "^9.18.0",
@@ -66,6 +67,7 @@
     "ts-loader": "^9.5.2",
     "ts-node": "^10.9.2",
     "tsconfig-paths": "^4.2.0",
+    "typeorm": "^0.3.28",
     "typescript": "^5.7.3",
     "typescript-eslint": "^8.20.0"
   },

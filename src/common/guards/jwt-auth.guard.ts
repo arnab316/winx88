@@ -43,7 +43,7 @@ export class JwtAuthGuard {
     const request = context.switchToHttp().getRequest();
 
     // ✅ Try cookie first, fallback to Authorization header
-    const token = request.cookies?.accessToken
+    const token = request.cookies?.refreshToken 
       || request.headers['authorization']?.split(' ')[1];
 
     if (!token) {

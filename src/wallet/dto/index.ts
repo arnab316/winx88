@@ -54,7 +54,8 @@ export interface DepositRequestDto {
   gatewayId: number;
   amount: number;
   transactionNumber: string;
-  screenshotUrl: string;    // S3 key/URL — uploaded before calling this
+  screenshotUrl: string;    // S3 key/URL — uploaded before calling this,
+  agentId?: number;        // Optional agent ID for tracking
 }
 
 export interface WithdrawalRequestDto {

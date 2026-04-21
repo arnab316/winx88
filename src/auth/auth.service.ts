@@ -441,7 +441,9 @@ export class AuthService {
 
                 email = dto.email;
             }
-
+             if(dto.password.length < 6){
+                throw new Error('Password must be at least 6 characters long');
+            }
             // ✅ Step 7: Hash password
             const hashedPassword = await bcrypt.hash(dto.password, 10);
 
