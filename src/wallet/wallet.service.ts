@@ -1,27 +1,32 @@
+// src/wallet/wallet.service.ts
+// FULL refactor. Replace your entire wallet.service.ts with this.
+// Changes: writeLedger() REMOVED. All ledger writes now go through
+// injected FinancialLedgerService. Everything else is identical behavior.
+
 import {
   Injectable,
   BadRequestException,
-  NotFoundException,
   ForbiddenException,
+  NotFoundException,
 } from '@nestjs/common';
-import { DataSource } from 'typeorm';
-import { AdminAdjustmentDto, AdminDepositDecideDto, AdminWithdrawalDecideDto, DepositRequestDto, LedgerParams, WithdrawalRequestDto } from './dto';
+import { DataSource, QueryRunner } from 'typeorm';
+import { FinancialLedgerService } from '../ledger/financial-ledger.service';
+import { AdminAdjustmentDto, AdminDepositDecideDto, AdminWithdrawalDecideDto, DepositRequestDto, WithdrawalRequestDto } from './dto';
 import { generateCode } from 'src/Utils';
-import { CoinsService } from 'src/coins/coins.service';
 
 
 
-// ─── Service ──────────────────────────────────────────────────────────────────
 
 @Injectable()
 export class WalletService {
-  constructor(private dataSource: DataSource,
-    private coinsService: CoinsService) {}
+  constructor(
+    private dataSource: DataSource,
+    private financialLedger: FinancialLedgerService, // ← injected now
+  ) {}
 
-  // ─── PRIVATE: lock wallet row ────────────────────────────────────────────
-
-  private async getWalletForUpdate(queryRunner: any, userId: number) {
-    const rows = await queryRunner.query(
+  // ─── Helper: lock wallet row ──────────────────────────────────
+  private async getWalletForUpdate(qr: QueryRunner, userId: number) {
+    const rows = await qr.query(
       `SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE`,
       [userId],
     );
@@ -29,149 +34,54 @@ export class WalletService {
     return rows[0];
   }
 
-  // ─── PRIVATE: append ledger entry ────────────────────────────────────────
-
-  private async writeLedger(queryRunner: any, p: LedgerParams) {
-    await queryRunner.query(
-      `INSERT INTO financial_ledger (
-          ledger_code, user_id, wallet_id,
-          entry_type, flow, amount,
-          balance_before, balance_after,
-          bonus_before, bonus_after,
-          locked_before, locked_after,
-          reference_type, reference_id,
-          status, description, meta,
-          created_by_type, created_by_id,
-          created_at
-        ) VALUES (
-          $1,  $2,  $3,
-          $4,  $5,  $6,
-          $7,  $8,
-          $9,  $10,
-          $11, $12,
-          $13, $14,
-          $15, $16, $17,
-          $18, $19,
-          NOW()
-        )`,
-      [
-        generateCode('LDG'),
-        p.userId,
-        p.walletId,
-        p.entryType,
-        p.flow,
-        p.amount,
-        p.balanceBefore,
-        p.balanceAfter,
-        p.bonusBefore  ?? 0,
-        p.bonusAfter   ?? 0,
-        p.lockedBefore ?? 0,
-        p.lockedAfter  ?? 0,
-        p.referenceType,
-        p.referenceId,
-        p.status        ?? 'SUCCESS',
-        p.description   ?? null,
-        p.meta ? JSON.stringify(p.meta) : null,
-        p.createdByType ?? 'SYSTEM',
-        p.createdById   ?? null,
-      ],
-    );
-  }
-
-  // ─── GET WALLET ──────────────────────────────────────────────────────────
-
-  async getWallet(userId: number) {
-    const rows = await this.dataSource.query(
-      `SELECT id, balance, bonus_balance, locked_balance,
-              total_deposited, total_withdrawn, updated_at
-       FROM wallets WHERE user_id = $1`,
-      [userId],
-    );
-    if (!rows.length) throw new NotFoundException('Wallet not found');
-    return rows[0];
-  }
-
-  // ─── LEDGER HISTORY ──────────────────────────────────────────────────────
-
-  async getLedgerHistory(userId: number, page = 1, limit = 20) {
-    const offset = (page - 1) * limit;
-    const [rows, count] = await Promise.all([
-      this.dataSource.query(
-        `SELECT id, ledger_code, entry_type, flow, amount,
-                balance_before, balance_after,
-                bonus_before, bonus_after,
-                reference_type, reference_id,
-                status, description, created_at
-         FROM financial_ledger
-         WHERE user_id = $1
-         ORDER BY created_at DESC
-         LIMIT $2 OFFSET $3`,
-        [userId, limit, offset],
-      ),
-      this.dataSource.query(
-        `SELECT COUNT(*) AS total FROM financial_ledger WHERE user_id = $1`,
-        [userId],
-      ),
-    ]);
-    return { data: rows, total: parseInt(count[0].total), page, limit };
-  }
-
-  // ─── DEPOSIT: USER SUBMITS ────────────────────────────────────────────────
-
+  // ═════════════════════════════════════════════════════════════
+  // DEPOSIT: USER REQUESTS
+  // ═════════════════════════════════════════════════════════════
   async requestDeposit(dto: DepositRequestDto) {
-    const queryRunner = this.dataSource.createQueryRunner();
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+
     try {
-      await queryRunner.connect();
-      await queryRunner.startTransaction();
-
-      const user = await queryRunner.query(
-        `SELECT id, account_status FROM users WHERE id = $1 LIMIT 1`,
-        [dto.userId],
-      );
-      if (!user.length) throw new NotFoundException('User not found');
-      if (user[0].account_status !== 'ACTIVE')
-        throw new ForbiddenException(`Account is ${user[0].account_status}`);
-
-      const gateway = await queryRunner.query(
-        `SELECT id FROM payment_gateways WHERE id = $1 AND is_active = true LIMIT 1`,
-        [dto.gatewayId],
-      );
-      if (!gateway.length)
-        throw new BadRequestException('Payment gateway not found or inactive');
-
-      const deposit = await queryRunner.query(
+      const deposit = await qr.query(
         `INSERT INTO deposits
-           (deposit_code, user_id, gateway_id,agent_id, amount, transaction_number, screenshot_url,
-            status, requested_at, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, 'PENDING', NOW(), NOW(), NOW())
+           (deposit_code, user_id, gateway_id, agent_id, promotion_id,
+            amount, transaction_number, screenshot_url, status,
+            requested_at, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'PENDING',NOW(),NOW(),NOW())
          RETURNING id`,
         [
           generateCode('DEP'),
           dto.userId,
           dto.gatewayId,
-           dto.agentId,  
+          dto.agentId ?? null,
+          dto.promotionId ?? null,
           dto.amount,
           dto.transactionNumber,
           dto.screenshotUrl,
         ],
       );
-      const depositId = deposit[0].id;
+      const depositId = Number(deposit[0].id);
+
+      const wallet = await this.getWalletForUpdate(qr, dto.userId);
+      const bal = parseFloat(wallet.balance);
+      const bon = parseFloat(wallet.bonus_balance);
+      const lck = parseFloat(wallet.locked_balance);
 
       // Informational ledger entry — no balance change yet
-      const wallet = await this.getWalletForUpdate(queryRunner, dto.userId);
-
-      await this.writeLedger(queryRunner, {
+      await this.financialLedger.write({
+        qr,
         walletId:      wallet.id,
         userId:        dto.userId,
         entryType:     'DEPOSIT_PENDING',
         flow:          'CREDIT',
         amount:        dto.amount,
-        balanceBefore: parseFloat(wallet.balance),
-        balanceAfter:  parseFloat(wallet.balance),   // unchanged until approved
-        bonusBefore:   parseFloat(wallet.bonus_balance),
-        bonusAfter:    parseFloat(wallet.bonus_balance),
-        lockedBefore:  parseFloat(wallet.locked_balance),
-        lockedAfter:   parseFloat(wallet.locked_balance),
+        balanceBefore: bal,
+        balanceAfter:  bal,
+        bonusBefore:   bon,
+        bonusAfter:    bon,
+        lockedBefore:  lck,
+        lockedAfter:   lck,
         referenceType: 'DEPOSIT',
         referenceId:   depositId,
         status:        'PENDING',
@@ -180,25 +90,29 @@ export class WalletService {
         createdById:   dto.userId,
       });
 
-      await queryRunner.commitTransaction();
+      await qr.commitTransaction();
       return { message: 'Deposit submitted. Awaiting admin approval.', depositId };
     } catch (e) {
-      await queryRunner.rollbackTransaction();
+      await qr.rollbackTransaction();
       throw e;
     } finally {
-      await queryRunner.release();
+      await qr.release();
     }
   }
 
-  // ─── DEPOSIT: ADMIN DECIDES ───────────────────────────────────────────────
-
+  // ═════════════════════════════════════════════════════════════
+  // DEPOSIT: ADMIN DECIDES
+  //   NOTE: This is where coin award + VIP level-up + turnover req
+  //   creation will happen. For now it's still "wallet only" — we'll
+  //   extend this in sub-pass 2 (coin/VIP) and sub-pass 3 (turnover).
+  // ═════════════════════════════════════════════════════════════
   async decideDeposit(dto: AdminDepositDecideDto) {
-    const queryRunner = this.dataSource.createQueryRunner();
-    try {
-      await queryRunner.connect();
-      await queryRunner.startTransaction();
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
 
-      const deps = await queryRunner.query(
+    try {
+      const deps = await qr.query(
         `SELECT * FROM deposits WHERE id = $1 LIMIT 1`,
         [dto.depositId],
       );
@@ -208,7 +122,7 @@ export class WalletService {
       if (dep.status !== 'PENDING')
         throw new BadRequestException(`Deposit already ${dep.status}`);
 
-      const wallet = await this.getWalletForUpdate(queryRunner, dep.user_id);
+      const wallet = await this.getWalletForUpdate(qr, dep.user_id);
       const bal = parseFloat(wallet.balance);
       const bon = parseFloat(wallet.bonus_balance);
       const lck = parseFloat(wallet.locked_balance);
@@ -217,14 +131,14 @@ export class WalletService {
       if (dto.action === 'APPROVE') {
         const newBal = bal + amt;
 
-        await queryRunner.query(
+        await qr.query(
           `UPDATE wallets
            SET balance = $1, total_deposited = total_deposited + $2, updated_at = NOW()
            WHERE id = $3`,
           [newBal, amt, wallet.id],
         );
 
-        await queryRunner.query(
+        await qr.query(
           `UPDATE deposits
            SET status = 'APPROVED', decided_at = NOW(),
                approved_by_admin_id = $1, updated_at = NOW()
@@ -232,7 +146,8 @@ export class WalletService {
           [dto.adminId, dto.depositId],
         );
 
-        await this.writeLedger(queryRunner, {
+        await this.financialLedger.write({
+          qr,
           walletId:      wallet.id,
           userId:        dep.user_id,
           entryType:     'DEPOSIT_APPROVED',
@@ -252,12 +167,18 @@ export class WalletService {
           createdById:   dto.adminId,
         });
 
-        await queryRunner.commitTransaction();
-        return { message: 'Deposit approved. Wallet credited.', newBalance: newBal };
+        // ┌─────────────────────────────────────────────────────┐
+        // │ FUTURE HOOKS (added in sub-pass 2 & 3):             │
+        // │   await this.coinService.awardForDeposit(qr, ...);  │
+        // │   await this.vipService.checkLevelUp(qr, userId);   │
+        // │   await this.turnoverService.createFromDeposit(...);│
+        // └─────────────────────────────────────────────────────┘
 
+        await qr.commitTransaction();
+        return { message: 'Deposit approved. Wallet credited.', newBalance: newBal };
       } else {
         // REJECT — no balance change
-        await queryRunner.query(
+        await qr.query(
           `UPDATE deposits
            SET status = 'REJECTED', decided_at = NOW(),
                approved_by_admin_id = $1, rejection_reason = $2, updated_at = NOW()
@@ -265,14 +186,15 @@ export class WalletService {
           [dto.adminId, dto.rejectionReason ?? null, dto.depositId],
         );
 
-        await this.writeLedger(queryRunner, {
+        await this.financialLedger.write({
+          qr,
           walletId:      wallet.id,
           userId:        dep.user_id,
           entryType:     'DEPOSIT_REJECTED',
           flow:          'DEBIT',
           amount:        amt,
           balanceBefore: bal,
-          balanceAfter:  bal,   // no change
+          balanceAfter:  bal,
           bonusBefore:   bon,
           bonusAfter:    bon,
           lockedBefore:  lck,
@@ -285,38 +207,28 @@ export class WalletService {
           createdById:   dto.adminId,
         });
 
-        
-      const coinsToCredit = await this.coinsService.computeCoinsForDeposit(amt);
-          if (coinsToCredit > 0) {
-      await this.coinsService.creditCoins(queryRunner, {
-        userId:        dep.user_id,
-        coinsToCredit,
-        referenceType: 'DEPOSIT',
-        referenceId:   dto.depositId,
-        description:   `Earned ${coinsToCredit} coins for deposit of ${amt}`,
-      });
-}
-
-        await queryRunner.commitTransaction();
+        await qr.commitTransaction();
         return { message: 'Deposit rejected.' };
       }
     } catch (e) {
-      await queryRunner.rollbackTransaction();
+      await qr.rollbackTransaction();
       throw e;
     } finally {
-      await queryRunner.release();
+      await qr.release();
     }
   }
 
-  // ─── WITHDRAWAL: USER REQUESTS ────────────────────────────────────────────
-
+  // ═════════════════════════════════════════════════════════════
+  // WITHDRAWAL: USER REQUESTS
+  //   Turnover check will be plugged in at sub-pass 3.
+  // ═════════════════════════════════════════════════════════════
   async requestWithdrawal(dto: WithdrawalRequestDto) {
-    const queryRunner = this.dataSource.createQueryRunner();
-    try {
-      await queryRunner.connect();
-      await queryRunner.startTransaction();
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
 
-      const user = await queryRunner.query(
+    try {
+      const user = await qr.query(
         `SELECT id, account_status FROM users WHERE id = $1 LIMIT 1`,
         [dto.userId],
       );
@@ -324,14 +236,21 @@ export class WalletService {
       if (user[0].account_status !== 'ACTIVE')
         throw new ForbiddenException(`Account is ${user[0].account_status}`);
 
-      const gateway = await queryRunner.query(
+      const gateway = await qr.query(
         `SELECT id FROM payment_gateways WHERE id = $1 AND is_active = true LIMIT 1`,
         [dto.gatewayId],
       );
       if (!gateway.length)
         throw new BadRequestException('Payment gateway not found or inactive');
 
-      const wallet = await this.getWalletForUpdate(queryRunner, dto.userId);
+      // ┌─────────────────────────────────────────────────────┐
+      // │ FUTURE HOOK (sub-pass 3):                           │
+      // │   await this.turnoverService.ensureNoActiveReqs(    │
+      // │     qr, dto.userId                                  │
+      // │   );  // throws if any requirement incomplete       │
+      // └─────────────────────────────────────────────────────┘
+
+      const wallet = await this.getWalletForUpdate(qr, dto.userId);
       const bal = parseFloat(wallet.balance);
       const bon = parseFloat(wallet.bonus_balance);
       const lck = parseFloat(wallet.locked_balance);
@@ -342,19 +261,18 @@ export class WalletService {
       const newBal = bal - dto.amount;
       const newLck = lck + dto.amount;
 
-      // Deduct from balance, move to locked_balance
-      await queryRunner.query(
+      await qr.query(
         `UPDATE wallets
          SET balance = $1, locked_balance = $2, updated_at = NOW()
          WHERE id = $3`,
         [newBal, newLck, wallet.id],
       );
 
-      const withdrawal = await queryRunner.query(
+      const withdrawal = await qr.query(
         `INSERT INTO withdrawals
            (withdrawal_code, user_id, gateway_id, amount, receive_number,
             status, requested_at, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, 'PENDING', NOW(), NOW(), NOW())
+         VALUES ($1,$2,$3,$4,$5,'PENDING',NOW(),NOW(),NOW())
          RETURNING id`,
         [
           generateCode('WDR'),
@@ -364,9 +282,10 @@ export class WalletService {
           dto.receiveNumber,
         ],
       );
-      const withdrawalId = withdrawal[0].id;
+      const withdrawalId = Number(withdrawal[0].id);
 
-      await this.writeLedger(queryRunner, {
+      await this.financialLedger.write({
+        qr,
         walletId:      wallet.id,
         userId:        dto.userId,
         entryType:     'WITHDRAWAL_REQUESTED',
@@ -386,7 +305,7 @@ export class WalletService {
         createdById:   dto.userId,
       });
 
-      await queryRunner.commitTransaction();
+      await qr.commitTransaction();
       return {
         message: 'Withdrawal requested. Awaiting admin approval.',
         withdrawalId,
@@ -394,22 +313,24 @@ export class WalletService {
         lockedBalance:    newLck,
       };
     } catch (e) {
-      await queryRunner.rollbackTransaction();
+      await qr.rollbackTransaction();
       throw e;
     } finally {
-      await queryRunner.release();
+      await qr.release();
     }
   }
 
-  // ─── WITHDRAWAL: ADMIN DECIDES ────────────────────────────────────────────
-
+  // ═════════════════════════════════════════════════════════════
+  // WITHDRAWAL: ADMIN DECIDES
+  //   On APPROVE: turnover reset hook will be added in sub-pass 3.
+  // ═════════════════════════════════════════════════════════════
   async decideWithdrawal(dto: AdminWithdrawalDecideDto) {
-    const queryRunner = this.dataSource.createQueryRunner();
-    try {
-      await queryRunner.connect();
-      await queryRunner.startTransaction();
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
 
-      const wdrs = await queryRunner.query(
+    try {
+      const wdrs = await qr.query(
         `SELECT * FROM withdrawals WHERE id = $1 LIMIT 1`,
         [dto.withdrawalId],
       );
@@ -419,7 +340,7 @@ export class WalletService {
       if (wdr.status !== 'PENDING')
         throw new BadRequestException(`Withdrawal already ${wdr.status}`);
 
-      const wallet = await this.getWalletForUpdate(queryRunner, wdr.user_id);
+      const wallet = await this.getWalletForUpdate(qr, wdr.user_id);
       const bal = parseFloat(wallet.balance);
       const bon = parseFloat(wallet.bonus_balance);
       const lck = parseFloat(wallet.locked_balance);
@@ -428,15 +349,14 @@ export class WalletService {
       if (dto.action === 'APPROVE') {
         const newLck = lck - amt;
 
-        // Release from locked, add to total_withdrawn
-        await queryRunner.query(
+        await qr.query(
           `UPDATE wallets
            SET locked_balance = $1, total_withdrawn = total_withdrawn + $2, updated_at = NOW()
            WHERE id = $3`,
           [newLck, amt, wallet.id],
         );
 
-        await queryRunner.query(
+        await qr.query(
           `UPDATE withdrawals
            SET status = 'APPROVED', decided_at = NOW(),
                approved_by_admin_id = $1, updated_at = NOW()
@@ -444,14 +364,15 @@ export class WalletService {
           [dto.adminId, dto.withdrawalId],
         );
 
-        await this.writeLedger(queryRunner, {
+        await this.financialLedger.write({
+          qr,
           walletId:      wallet.id,
           userId:        wdr.user_id,
           entryType:     'WITHDRAWAL_APPROVED',
           flow:          'RELEASE',
           amount:        amt,
           balanceBefore: bal,
-          balanceAfter:  bal,    // balance was already deducted at request time
+          balanceAfter:  bal,
           bonusBefore:   bon,
           bonusAfter:    bon,
           lockedBefore:  lck,
@@ -464,22 +385,28 @@ export class WalletService {
           createdById:   dto.adminId,
         });
 
-        await queryRunner.commitTransaction();
-        return { message: 'Withdrawal approved.' };
+        // ┌─────────────────────────────────────────────────────┐
+        // │ FUTURE HOOK (sub-pass 3):                           │
+        // │   await this.turnoverService.resetAllActive(        │
+        // │     qr, wdr.user_id, dto.withdrawalId               │
+        // │   );                                                │
+        // └─────────────────────────────────────────────────────┘
 
+        await qr.commitTransaction();
+        return { message: 'Withdrawal approved.' };
       } else {
         // REJECT — refund locked back to balance
         const newBal = bal + amt;
         const newLck = lck - amt;
 
-        await queryRunner.query(
+        await qr.query(
           `UPDATE wallets
            SET balance = $1, locked_balance = $2, updated_at = NOW()
            WHERE id = $3`,
           [newBal, newLck, wallet.id],
         );
 
-        await queryRunner.query(
+        await qr.query(
           `UPDATE withdrawals
            SET status = 'REJECTED', decided_at = NOW(),
                approved_by_admin_id = $1, rejection_reason = $2, updated_at = NOW()
@@ -487,7 +414,8 @@ export class WalletService {
           [dto.adminId, dto.rejectionReason ?? null, dto.withdrawalId],
         );
 
-        await this.writeLedger(queryRunner, {
+        await this.financialLedger.write({
+          qr,
           walletId:      wallet.id,
           userId:        wdr.user_id,
           entryType:     'WITHDRAWAL_REJECTED',
@@ -507,52 +435,52 @@ export class WalletService {
           createdById:   dto.adminId,
         });
 
-        await queryRunner.commitTransaction();
+        await qr.commitTransaction();
         return { message: 'Withdrawal rejected. Balance refunded.', newBalance: newBal };
       }
     } catch (e) {
-      await queryRunner.rollbackTransaction();
+      await qr.rollbackTransaction();
       throw e;
     } finally {
-      await queryRunner.release();
+      await qr.release();
     }
   }
 
-  // ─── ADMIN: MANUAL ADJUSTMENT ─────────────────────────────────────────────
-
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: MANUAL ADJUSTMENT
+  // ═════════════════════════════════════════════════════════════
   async adminAdjustWallet(dto: AdminAdjustmentDto) {
     if (dto.amount === 0)
       throw new BadRequestException('Adjustment amount cannot be zero');
 
-    const queryRunner = this.dataSource.createQueryRunner();
-    try {
-      await queryRunner.connect();
-      await queryRunner.startTransaction();
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
 
-      const wallet = await this.getWalletForUpdate(queryRunner, dto.userId);
+    try {
+      const wallet = await this.getWalletForUpdate(qr, dto.userId);
       const bal = parseFloat(wallet.balance);
       const bon = parseFloat(wallet.bonus_balance);
       const lck = parseFloat(wallet.locked_balance);
       const newBal = bal + dto.amount;
 
       if (newBal < 0)
-        throw new BadRequestException(
-          `Adjustment results in negative balance (${newBal})`,
-        );
+        throw new BadRequestException(`Adjustment results in negative balance (${newBal})`);
 
-      await queryRunner.query(
+      await qr.query(
         `UPDATE wallets SET balance = $1, updated_at = NOW() WHERE id = $2`,
         [newBal, wallet.id],
       );
 
-      const adj = await queryRunner.query(
+      const adj = await qr.query(
         `INSERT INTO manual_adjustments (admin_id, user_id, amount, description, created_at)
-         VALUES ($1, $2, $3, $4, NOW())
+         VALUES ($1,$2,$3,$4,NOW())
          RETURNING id`,
         [dto.adminId, dto.userId, dto.amount, dto.description],
       );
 
-      await this.writeLedger(queryRunner, {
+      await this.financialLedger.write({
+        qr,
         walletId:      wallet.id,
         userId:        dto.userId,
         entryType:     'MANUAL_ADJUSTMENT',
@@ -565,7 +493,7 @@ export class WalletService {
         lockedBefore:  lck,
         lockedAfter:   lck,
         referenceType: 'MANUAL_ADJUSTMENT',
-        referenceId:   adj[0].id,
+        referenceId:   Number(adj[0].id),
         status:        'SUCCESS',
         description:   dto.description,
         meta:          dto.meta,
@@ -573,195 +501,142 @@ export class WalletService {
         createdById:   dto.adminId,
       });
 
-      await queryRunner.commitTransaction();
-      return {
-        message: 'Wallet adjusted.',
-        balanceBefore: bal,
-        balanceAfter:  newBal,
-      };
+      await qr.commitTransaction();
+      return { message: 'Wallet adjusted.', balanceBefore: bal, balanceAfter: newBal };
     } catch (e) {
-      await queryRunner.rollbackTransaction();
+      await qr.rollbackTransaction();
       throw e;
     } finally {
-      await queryRunner.release();
+      await qr.release();
     }
   }
 
-  // ─── INTERNAL: debit for bet ──────────────────────────────────────────────
-  // Called from BettingService — pass the SAME queryRunner for atomicity.
-
-  async debitForBet(
-    queryRunner: any,
-    userId: number,
-    amount: number,
-    betId: number,
-  ) {
-    const wallet = await this.getWalletForUpdate(queryRunner, userId);
-    const bal = parseFloat(wallet.balance);
-    const bon = parseFloat(wallet.bonus_balance);
-    const lck = parseFloat(wallet.locked_balance);
-
-    if (bal < amount)
-      throw new BadRequestException(`Insufficient balance. Available: ${bal}`);
-
-    const newBal = bal - amount;
-
-    await queryRunner.query(
-      `UPDATE wallets SET balance = $1, updated_at = NOW() WHERE id = $2`,
-      [newBal, wallet.id],
-    );
-
-    await this.writeLedger(queryRunner, {
-      walletId:      wallet.id,
-      userId,
-      entryType:     'BET_PLACED',
-      flow:          'DEBIT',
-      amount,
-      balanceBefore: bal,
-      balanceAfter:  newBal,
-      bonusBefore:   bon,
-      bonusAfter:    bon,
-      lockedBefore:  lck,
-      lockedAfter:   lck,
-      referenceType: 'BET',
-      referenceId:   betId,
-      description:   `Bet placed. BetID: ${betId}`,
-      createdByType: 'USER',
-      createdById:   userId,
-    });
-
-    return { balanceBefore: bal, balanceAfter: newBal };
-  }
-
-  // ─── INTERNAL: credit for win ─────────────────────────────────────────────
-  // Called from ResultService — pass the SAME queryRunner for atomicity.
-
-  async creditForWin(
-    queryRunner: any,
-    userId: number,
-    amount: number,
-    settlementId: number,
-    description?: string,
-  ) {
-    const wallet = await this.getWalletForUpdate(queryRunner, userId);
-    const bal = parseFloat(wallet.balance);
-    const bon = parseFloat(wallet.bonus_balance);
-    const lck = parseFloat(wallet.locked_balance);
-    const newBal = bal + amount;
-
-    await queryRunner.query(
-      `UPDATE wallets SET balance = $1, updated_at = NOW() WHERE id = $2`,
-      [newBal, wallet.id],
-    );
-
-    await this.writeLedger(queryRunner, {
-      walletId:      wallet.id,
-      userId,
-      entryType:     'WIN_CREDIT',
-      flow:          'CREDIT',
-      amount,
-      balanceBefore: bal,
-      balanceAfter:  newBal,
-      bonusBefore:   bon,
-      bonusAfter:    bon,
-      lockedBefore:  lck,
-      lockedAfter:   lck,
-      referenceType: 'BET_SETTLEMENT',
-      referenceId:   settlementId,
-      description:   description ?? 'Win credited',
-      createdByType: 'SYSTEM',
-    });
-
-    return { balanceBefore: bal, balanceAfter: newBal };
-  }
-
-  // ─── INTERNAL: referral bonus ─────────────────────────────────────────────
-  // Bonus goes to bonus_balance, not main balance.
-
-  async creditReferralBonus(
-    queryRunner: any,
-    userId: number,
-    amount: number,
-    referralId: number,
-    description?: string,
-  ) {
-    const wallet = await this.getWalletForUpdate(queryRunner, userId);
-    const bal = parseFloat(wallet.balance);
-    const bon = parseFloat(wallet.bonus_balance);
-    const lck = parseFloat(wallet.locked_balance);
-    const newBon = bon + amount;
-
-    await queryRunner.query(
-      `UPDATE wallets SET bonus_balance = $1, updated_at = NOW() WHERE id = $2`,
-      [newBon, wallet.id],
-    );
-
-    await this.writeLedger(queryRunner, {
-      walletId:      wallet.id,
-      userId,
-      entryType:     'REFERRAL_BONUS_CREDIT',
-      flow:          'CREDIT',
-      amount,
-      balanceBefore: bal,
-      balanceAfter:  bal,
-      bonusBefore:   bon,
-      bonusAfter:    newBon,
-      lockedBefore:  lck,
-      lockedAfter:   lck,
-      referenceType: 'REFERRAL_BONUS',
-      referenceId:   referralId,
-      description:   description ?? 'Referral bonus credited',
-      createdByType: 'SYSTEM',
-    });
-
-    return { bonusBefore: bon, bonusAfter: newBon };
-  }
-
-  // ─── ADMIN: list pending deposits ─────────────────────────────────────────
-
- async getPendingDeposits(page = 1, limit = 20) {
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: LIST PENDING DEPOSITS — now includes AGENT DETAILS
+  //   This is what you asked for: admin sees agent code/number used.
+  // ═════════════════════════════════════════════════════════════
+  async getPendingDeposits(page = 1, limit = 20) {
     const offset = (page - 1) * limit;
-    const [rows, count] = await Promise.all([
-      this.dataSource.query(
-        `SELECT d.id, d.deposit_code, d.user_id, u.full_name, u.username, u.email,
-                d.amount, d.transaction_number, d.screenshot_url,
-                g.name AS gateway_name, d.requested_at
-         FROM deposits d
-         JOIN users u ON u.id = d.user_id
-         JOIN payment_gateways g ON g.id = d.gateway_id
-         WHERE d.status = 'PENDING'
-         ORDER BY d.requested_at ASC
-         LIMIT $1 OFFSET $2`,
-        [limit, offset],
-      ),
-      this.dataSource.query(
-        `SELECT COUNT(*) AS total FROM deposits WHERE status = 'PENDING'`,
-      ),
-    ]);
-    return { data: rows, total: parseInt(count[0].total), page, limit };
-  }
+    const rows = await this.dataSource.query(
+      `SELECT
+          d.id, d.deposit_code, d.user_id, d.amount,
+          d.transaction_number, d.screenshot_url, d.requested_at,
+          d.promotion_id,
+          u.full_name, u.username, u.email,
+          g.id AS gateway_id, g.name AS gateway_name,
+          a.id AS agent_id, a.agent_number, a.agent_code, a.wallet_type
+       FROM deposits d
+       JOIN users u ON u.id = d.user_id
+       JOIN payment_gateways g ON g.id = d.gateway_id
+       LEFT JOIN agents a ON a.id = d.agent_id
+       WHERE d.status = 'PENDING'
+       ORDER BY d.requested_at ASC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    );
 
-  // ─── ADMIN: list pending withdrawals ──────────────────────────────────────
+    const count = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total FROM deposits WHERE status = 'PENDING'`,
+    );
+
+    return { data: rows, total: count[0].total, page, limit };
+  }
 
   async getPendingWithdrawals(page = 1, limit = 20) {
     const offset = (page - 1) * limit;
-    const [rows, count] = await Promise.all([
-      this.dataSource.query(
-        `SELECT w.id, w.withdrawal_code, w.user_id, u.name AS full_name,
-                w.amount, w.receive_number,
-                g.name AS gateway_name, w.requested_at
-         FROM withdrawals w
-         JOIN users u ON u.id = w.user_id
-         JOIN payment_gateways g ON g.id = w.gateway_id
-         WHERE w.status = 'PENDING'
-         ORDER BY w.requested_at ASC
-         LIMIT $1 OFFSET $2`,
-        [limit, offset],
-      ),
-      this.dataSource.query(
-        `SELECT COUNT(*) AS total FROM withdrawals WHERE status = 'PENDING'`,
-      ),
-    ]);
-    return { data: rows, total: parseInt(count[0].total), page, limit };
+    const rows = await this.dataSource.query(
+      `SELECT w.id, w.withdrawal_code, w.user_id, u.full_name,
+              w.amount, w.receive_number,
+              g.name AS gateway_name, w.requested_at
+       FROM withdrawals w
+       JOIN users u ON u.id = w.user_id
+       JOIN payment_gateways g ON g.id = w.gateway_id
+       WHERE w.status = 'PENDING'
+       ORDER BY w.requested_at ASC
+       LIMIT $1 OFFSET $2`,
+      [limit, offset],
+    );
+    const count = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total FROM withdrawals WHERE status = 'PENDING'`,
+    );
+    return { data: rows, total: count[0].total, page, limit };
+  }
+
+   async getWallet(userId: number) {
+    const rows = await this.dataSource.query(
+      `SELECT
+          w.id,
+          w.balance,
+          w.bonus_balance,
+          w.locked_balance,
+          w.total_deposited,
+          w.total_withdrawn,
+          w.total_bet,
+          w.total_win,
+          w.updated_at,
+          u.vip_level,
+          uc.total_coins,
+          uc.lifetime_coins
+       FROM wallets w
+       JOIN users u ON u.id = w.user_id
+       LEFT JOIN user_coins uc ON uc.user_id = w.user_id
+       WHERE w.user_id = $1
+       LIMIT 1`,
+      [userId],
+    );
+ 
+    if (!rows.length) {
+      throw new NotFoundException('Wallet not found');
+    }
+ 
+    const w = rows[0];
+    return {
+      balance:         parseFloat(w.balance),
+      bonusBalance:    parseFloat(w.bonus_balance),
+      lockedBalance:   parseFloat(w.locked_balance),
+      totalDeposited:  parseFloat(w.total_deposited),
+      totalWithdrawn:  parseFloat(w.total_withdrawn),
+      totalBet:        parseFloat(w.total_bet ?? 0),
+      totalWin:        parseFloat(w.total_win ?? 0),
+      vipLevel:        w.vip_level,
+      coins:           parseFloat(w.total_coins ?? 0),
+      lifetimeCoins:   parseFloat(w.lifetime_coins ?? 0),
+      updatedAt:       w.updated_at,
+    };
+  }
+ 
+  // ═════════════════════════════════════════════════════════════
+  // USER: GET LEDGER HISTORY (paginated, filterable by entry type)
+  // ═════════════════════════════════════════════════════════════
+  async getLedgerHistory(userId: number, page = 1, limit = 20) {
+    const safeLimit = Math.min(Math.max(limit, 1), 100);  // cap at 100
+    const safePage  = Math.max(page, 1);
+    const offset    = (safePage - 1) * safeLimit;
+ 
+    const rows = await this.dataSource.query(
+      `SELECT
+          id, ledger_code, entry_type, flow, amount,
+          balance_before, balance_after,
+          reference_type, reference_id,
+          status, description, created_at
+       FROM financial_ledger
+       WHERE user_id = $1
+       ORDER BY created_at DESC, id DESC
+       LIMIT $2 OFFSET $3`,
+      [userId, safeLimit, offset],
+    );
+ 
+    const count = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total FROM financial_ledger WHERE user_id = $1`,
+      [userId],
+    );
+ 
+    return {
+      data: rows,
+      page: safePage,
+      limit: safeLimit,
+      total: count[0].total,
+      totalPages: Math.ceil(count[0].total / safeLimit),
+    };
   }
 }

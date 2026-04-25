@@ -1,5 +1,3 @@
-// ─── Types ───────────────────────────────────────────────────────────────────
-
 export type EntryType =
   | 'DEPOSIT_PENDING'
   | 'DEPOSIT_APPROVED'
@@ -55,7 +53,8 @@ export interface DepositRequestDto {
   amount: number;
   transactionNumber: string;
   screenshotUrl: string;    // S3 key/URL — uploaded before calling this,
-  agentId?: number;        // Optional agent ID for tracking
+  agentId?: number;        // Optional agent ID for tracking,
+  promotionId?: number;    // Optional promotion ID for tracking,
 }
 
 export interface WithdrawalRequestDto {

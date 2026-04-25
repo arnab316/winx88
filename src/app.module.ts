@@ -13,6 +13,7 @@ import { CoinsModule } from './coins/coins.module';
 import { AffiliateModule } from './affiliate/affiliate.module';
 import { OtpCleanupService } from './auth/otpcleanup';
 import { AgentsModule } from './agents/agents.module';
+import { LedgerModule } from './ledger/ledger.module';
 
 @Module({
   imports: [
@@ -39,7 +40,8 @@ import { AgentsModule } from './agents/agents.module';
     TwilioModule,
     CoinsModule,
     AffiliateModule,
-    AgentsModule],
+    AgentsModule,
+    LedgerModule],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
 })
