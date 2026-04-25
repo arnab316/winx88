@@ -1,25 +1,41 @@
-export interface CreditCoinsParams {
-  userId:        number;
-  coinsToCredit: number;
-  referenceType: string;
-  referenceId:   number;
-  description:   string;
-}
+// src/coin/dto/coin.dto.ts
+import { IsNumber, IsOptional, IsString, IsBoolean, Min, Length } from 'class-validator';
 
-export interface UpdateCoinSettingsDto {
-  adminId:           number;
-  coinsPerUnit:      number;
-  depositUnit:       number;
-  minDepositAmount:  number;
+export class UpdateCoinSettingsDto {
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  coinsPerUnit?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(1)
+  depositUnit?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  minDepositAmount?: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
   maxDepositAmount?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  isActive?: boolean;
 }
 
-export interface UpsertVipLevelDto {
-  adminId:        number;
-  level:          number;
-  levelName:      string;
-  groupName?:     string;
-  coinsRequired:  number;
-  badgeIconUrl?:  string;
-  benefits?:      Record<string, any>;
+export class AdminAdjustCoinsDto {
+  @IsNumber()
+  userId: number;
+
+  /** Signed: +100 to credit, -50 to debit */
+  @IsNumber()
+  amount: number;
+
+  @IsString()
+  @Length(3, 500)
+  reason: string;
 }

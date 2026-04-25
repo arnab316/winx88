@@ -13,6 +13,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { FinancialLedgerService } from '../ledger/financial-ledger.service';
 import { AdminAdjustmentDto, AdminDepositDecideDto, AdminWithdrawalDecideDto, DepositRequestDto, WithdrawalRequestDto } from './dto';
 import { generateCode } from 'src/Utils';
+import { CoinsService } from 'src/coins/coins.service';
 
 
 
@@ -22,6 +23,7 @@ export class WalletService {
   constructor(
     private dataSource: DataSource,
     private financialLedger: FinancialLedgerService, // ← injected now
+     private coinService: CoinsService
   ) {}
 
   // ─── Helper: lock wallet row ──────────────────────────────────
@@ -173,9 +175,23 @@ export class WalletService {
         // │   await this.vipService.checkLevelUp(qr, userId);   │
         // │   await this.turnoverService.createFromDeposit(...);│
         // └─────────────────────────────────────────────────────┘
+         // ─── COIN AWARD (Sub-pass 2) ─────────────────────────────
+      // VIP level-up is auto-triggered inside CoinService after credit.
+       const coinResult = await this.coinService.awardForDeposit(
+        qr,
+        dep.user_id,
+        amt,
+        dto.depositId,
+      );
+
 
         await qr.commitTransaction();
-        return { message: 'Deposit approved. Wallet credited.', newBalance: newBal };
+        return { 
+          message: 'Deposit approved. Wallet credited.', 
+          newBalance: newBal ,
+          coinsEarned: coinResult?.awarded ?? 0,
+         totalCoins: coinResult?.newTotal ?? null,
+        };
       } else {
         // REJECT — no balance change
         await qr.query(
