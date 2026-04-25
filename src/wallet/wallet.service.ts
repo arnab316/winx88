@@ -14,7 +14,8 @@ import { FinancialLedgerService } from '../ledger/financial-ledger.service';
 import { AdminAdjustmentDto, AdminDepositDecideDto, AdminWithdrawalDecideDto, DepositRequestDto, WithdrawalRequestDto } from './dto';
 import { generateCode } from 'src/Utils';
 import { CoinsService } from 'src/coins/coins.service';
-
+import { TurnoverService } from '../turnover/turnover.service';
+import { GameValidationService } from '../game/game-validation.service';
 
 
 
@@ -23,7 +24,9 @@ export class WalletService {
   constructor(
     private dataSource: DataSource,
     private financialLedger: FinancialLedgerService, // ← injected now
-     private coinService: CoinsService
+     private coinService: CoinsService,
+      private turnoverService: TurnoverService,
+  private gameValidation: GameValidationService
   ) {}
 
   // ─── Helper: lock wallet row ──────────────────────────────────
@@ -185,12 +188,22 @@ export class WalletService {
       );
 
 
+      const turnoverResult = await this.turnoverService.createFromDeposit(
+        qr,
+        dep.user_id,
+        dto.depositId,
+        amt,
+        dep.promotion_id,
+      );
+
+
         await qr.commitTransaction();
         return { 
           message: 'Deposit approved. Wallet credited.', 
           newBalance: newBal ,
           coinsEarned: coinResult?.awarded ?? 0,
          totalCoins: coinResult?.newTotal ?? null,
+         turnoverRequirement: turnoverResult,
         };
       } else {
         // REJECT — no balance change
@@ -265,7 +278,9 @@ export class WalletService {
       // │     qr, dto.userId                                  │
       // │   );  // throws if any requirement incomplete       │
       // └─────────────────────────────────────────────────────┘
+      await this.gameValidation.ensureNoPendingBets(qr, dto.userId);
 
+      await this.turnoverService.ensureNoActiveReqs(qr, dto.userId);
       const wallet = await this.getWalletForUpdate(qr, dto.userId);
       const bal = parseFloat(wallet.balance);
       const bon = parseFloat(wallet.bonus_balance);
@@ -407,7 +422,15 @@ export class WalletService {
         // │     qr, wdr.user_id, dto.withdrawalId               │
         // │   );                                                │
         // └─────────────────────────────────────────────────────┘
+         // Per Q2 of design: reset all turnover progress on approved withdrawal.
+      await this.turnoverService.resetAllActive(
+        qr,
+        wdr.user_id,
+        dto.withdrawalId,
+      );
 
+      
+      // ⬆️ END ADD ⬆️
         await qr.commitTransaction();
         return { message: 'Withdrawal approved.' };
       } else {

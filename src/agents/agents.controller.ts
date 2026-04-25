@@ -45,9 +45,10 @@ export class AgentsController {
     @Req() req: any,
     @Query('gatewayId', ParseIntPipe) gatewayId: number,
   ) {
-    // const userId = req.user.sub;
+    console.log('getDepositAgent called with gatewayId:', gatewayId);
+    const userId = req.user.sub;
     // Fix: need to verify the token to extract userId, because JwtAuthGuard only checks validity but doesn't attach user info to req
-    const userId = 7; 
+    // const userId = 7; 
     const result = await this.agentService.getAgentForDeposit(userId, gatewayId);
     return { status: 'success', data: result };
   }

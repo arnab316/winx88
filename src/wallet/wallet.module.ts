@@ -6,11 +6,14 @@ import { AuthModule } from 'src/auth/auth.module';
 import { S3Service } from './s3.service';
 import { MulterModule } from '@nestjs/platform-express';
 import { CoinsModule } from 'src/coins/coins.module';
+import { GameModule } from 'src/game/game.module';
+import { TurnoverModule } from 'src/turnover/turnover.module';
 
 @Module({
-   imports: [  MulterModule.register({}),AuthModule, CoinsModule],
+  imports: [MulterModule.register({}), AuthModule, CoinsModule, TurnoverModule,
+    GameModule,],
   controllers: [WalletController],
-  providers: [WalletService, S3Service, JwtAuthGuard],
+  providers: [WalletService, S3Service, JwtAuthGuard,TurnoverModule],
   exports: [JwtAuthGuard],
 })
-export class WalletModule {}
+export class WalletModule { }

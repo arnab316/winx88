@@ -32,7 +32,7 @@ export class CoinsController {
   }
 
   // GET /coins/me/history?page=1&limit=20
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard)  
   @Get('me/history')
   getMyCoinHistory(
     @Req() req: any,

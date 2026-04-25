@@ -276,6 +276,8 @@ export class WalletController {
         `Deposit request: file=${screenshot?.originalname ?? 'NONE'}, body=${JSON.stringify(body)}`,
       );
     }
+       
+
  
     if (!screenshot) {
       throw new BadRequestException(

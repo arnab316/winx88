@@ -153,4 +153,16 @@ export class UserController {
       };
     }
   }
+  @Get('/all')
+  async getAllUsers() {
+    try {
+      const users = await this.userService.getAllUsers();
+      return {
+        success: true,
+        message: 'Users retrieved successfully',
+        data: users,
+      };
+    } catch (error) {
+      throw error;
+    }}
 }

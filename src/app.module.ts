@@ -15,6 +15,7 @@ import { OtpCleanupService } from './auth/otpcleanup';
 import { AgentsModule } from './agents/agents.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { VipModule } from './vip/vip.module';
+import { TurnoverModule } from './turnover/turnover.module';
 
 @Module({
   imports: [
@@ -43,7 +44,8 @@ import { VipModule } from './vip/vip.module';
     AffiliateModule,
     AgentsModule,
     LedgerModule,
-    VipModule],
+    VipModule,
+    TurnoverModule],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
 })

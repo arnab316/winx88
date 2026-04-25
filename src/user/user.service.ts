@@ -251,6 +251,15 @@ export class UserService {
             phones,
         };
     }
+    async getAllUsers() {
+        const users = await this.dataSource.query(
+            `SELECT to_jsonb(users) - 'password' AS user
+FROM users`);  
 
+        for (const user of users) {
+            delete user.password;
+        }
+        return users;
+    }
 
 }
