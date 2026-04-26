@@ -16,6 +16,7 @@ import { AgentsModule } from './agents/agents.module';
 import { LedgerModule } from './ledger/ledger.module';
 import { VipModule } from './vip/vip.module';
 import { TurnoverModule } from './turnover/turnover.module';
+import { MemberGroupModule } from './member-group/member-group.module';
 
 @Module({
   imports: [
@@ -45,7 +46,8 @@ import { TurnoverModule } from './turnover/turnover.module';
     AgentsModule,
     LedgerModule,
     VipModule,
-    TurnoverModule],
+    TurnoverModule,
+    MemberGroupModule],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
 })
