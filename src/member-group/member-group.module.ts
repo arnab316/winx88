@@ -1,9 +1,12 @@
 import { Module } from '@nestjs/common';
 import { MemberGroupService } from './member-group.service';
 import { MemberGroupController } from './member-group.controller';
+import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
+import { AuthModule } from 'src/auth/auth.module';
 
 @Module({
-  providers: [MemberGroupService],
-  controllers: [MemberGroupController]
+  imports: [AuthModule],
+  providers: [MemberGroupService, JwtAuthGuard],
+  controllers: [MemberGroupController],
 })
 export class MemberGroupModule {}

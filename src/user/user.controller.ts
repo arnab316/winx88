@@ -153,7 +153,7 @@ export class UserController {
       };
     }
   }
-  @Get('/all')
+  @Get('all')
   async getAllUsers() {
     try {
       const users = await this.userService.getAllUsers();
