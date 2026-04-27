@@ -15,8 +15,8 @@ import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 @UseGuards(JwtAuthGuard)
 @Controller('user')
 export class UserController {
-    constructor(private userService: UserService) { }
-
+  constructor(private userService: UserService) { }
+  
     @Get('profile')
     async getProfile(@Req() req) {
         try {
@@ -165,4 +165,20 @@ export class UserController {
     } catch (error) {
       throw error;
     }}
+  @Get('user-details/:userId')
+    async getUserDetailsByAdmin(@Req() req, @Param('userId') userId: string) {
+        try {
+            const result = await this.userService.getUserDetailsByAdmin(
+                Number(userId),
+            );  
+            return {
+                status: 'success',
+                code: 200,  
+                message: 'User details retrieved successfully',
+                data: result,
+            };
+        } catch (error:any) {
+            console.error('Error retrieving user details:', error); 
+        }
+      }
 }

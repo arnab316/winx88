@@ -167,7 +167,7 @@ export class UserService {
     }
 
     // ---------------- DELETE PHONE ----------------
-    async deletePhone(userId: number, phoneId: number) {
+    async   deletePhone(userId: number, phoneId: number) {
         const queryRunner = this.dataSource.createQueryRunner();
 
         await queryRunner.connect();
@@ -179,7 +179,7 @@ export class UserService {
                 [userId],
             );
 
-            const phone = phones.find(p => p.id === phoneId);
+            const phone = phones.find(p => p.id === String(phoneId));
 
             if (!phone) {
                 throw new NotFoundException('Phone not found');
@@ -256,9 +256,7 @@ export class UserService {
             `SELECT to_jsonb(users) - 'password' AS user
 FROM users`);  
 
-        for (const user of users) {
-            delete user.password;
-        }
+        
         return users;
     }
 
