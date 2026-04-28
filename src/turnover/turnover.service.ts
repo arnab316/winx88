@@ -239,9 +239,9 @@ export class TurnoverService {
   }
 
   // ═════════════════════════════════════════════════════════════
-  // PRIVATE: INSERT NEW REQUIREMENT
+  // PRIVATE: INSERT NEW REQUIREMENT  use by PromotionEngineService when applying a promotion.
   // ═════════════════════════════════════════════════════════════
-  private async insertRequirement(
+   async insertRequirement(
     qr: QueryRunner,
     data: {
       userId: number;

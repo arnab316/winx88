@@ -8,5 +8,6 @@ import { AuthModule } from 'src/auth/auth.module';
   imports: [AuthModule],
   providers: [MemberGroupService, JwtAuthGuard],
   controllers: [MemberGroupController],
+  exports: [MemberGroupService],
 })
 export class MemberGroupModule {}

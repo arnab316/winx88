@@ -1,4 +1,4 @@
-import { MigrationInterface, QueryRunner } from 'typeorm';
+import type { MigrationInterface, QueryRunner } from 'typeorm';
 
 export class CreatePromotionEngine1680000000004 implements MigrationInterface {
   name = 'CreatePromotionEngine1680000000004';
