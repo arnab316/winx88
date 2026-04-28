@@ -5,6 +5,7 @@ import { generateUserCode, generateUsername } from './utils';
 import { JwtService } from '@nestjs/jwt';
 import { TwilioService } from '../twilio/twilio.service';
 import * as crypto from 'crypto';
+import { PromotionEngineService } from '../promotion/promotion-engine.service';
 
 @Injectable()
 export class AuthService {
@@ -12,6 +13,7 @@ export class AuthService {
         private dataSource: DataSource
         , private jwtService: JwtService,
         private twilioService: TwilioService,
+        private promotionEngine: PromotionEngineService, 
     ) { }
 
 
@@ -522,6 +524,9 @@ export class AuthService {
                 `INSERT INTO wallets (user_id) VALUES ($1)`,
                 [userId],
             );
+            // ✅ Step 12: Initialize promotion engine
+            const signupBonus = await this.promotionEngine.tryAwardSignupBonus(queryRunner, userId);
+
 
             await queryRunner.commitTransaction();
             return {

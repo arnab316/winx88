@@ -65,4 +65,46 @@ async uploadDepositScreenshot(file: Express.Multer.File): Promise<string> {
     throw new InternalServerErrorException(`S3 upload failed: ${err.message}`);
   }
 }
+
+  async uploadPromotionBanner(
+    file: Express.Multer.File,
+    cmsId: number,
+    lang: string,        // 'en' | 'bn'
+    size: string,        // 'large' | 'small'
+  ): Promise<string> {
+    const { v4: uuidv4 } = require('uuid');
+ 
+    // Derive extension from mimetype
+    const ext =
+      file.mimetype === 'image/jpeg' ? 'jpg'
+      : file.mimetype === 'image/png' ? 'png'
+      : file.mimetype === 'image/webp' ? 'webp'
+      : 'bin';
+ 
+    const key = `promotions/cms/${cmsId}/${lang}_${size}_${uuidv4()}.${ext}`;
+ 
+    // Reuse the same S3 upload pattern you already have for deposits.
+    // If your existing uploadDepositScreenshot uses something like:
+    //
+    //   await this.s3Client.send(new PutObjectCommand({
+    //     Bucket: this.bucket,
+    //     Key: key,
+    //     Body: file.buffer,
+    //     ContentType: file.mimetype,
+    //   }));
+    //   return `https://${this.bucket}.s3.amazonaws.com/${key}`;
+    //
+    // ...just copy that here with the new `key` value.
+ 
+    await this.s3.send(new PutObjectCommand({
+      Bucket: this.bucket,
+      Key: key,
+      Body: file.buffer,
+      ContentType: file.mimetype,
+    }));
+ 
+    // Return whatever your deposit screenshot returns —
+    // either public URL or just the S3 key (frontend builds the URL)
+    return `https://${this.bucket}.s3.amazonaws.com/${key}`;
+  }
 }

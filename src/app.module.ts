@@ -18,6 +18,7 @@ import { VipModule } from './vip/vip.module';
 import { TurnoverModule } from './turnover/turnover.module';
 import { MemberGroupModule } from './member-group/member-group.module';
 import { PromotionModule } from './promotion/promotion.module';
+import { PromotionCmsModule } from './promotion-cms/promotion-cms.module';
 
 @Module({
   imports: [
@@ -49,7 +50,8 @@ import { PromotionModule } from './promotion/promotion.module';
     VipModule,
     TurnoverModule,
     MemberGroupModule,
-    PromotionModule],
+    PromotionModule,
+    PromotionCmsModule],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
 })

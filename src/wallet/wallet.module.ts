@@ -8,10 +8,11 @@ import { MulterModule } from '@nestjs/platform-express';
 import { CoinsModule } from 'src/coins/coins.module';
 import { GameModule } from 'src/game/game.module';
 import { TurnoverModule } from 'src/turnover/turnover.module';
+import { PromotionModule } from 'src/promotion/promotion.module';
 
 @Module({
   imports: [MulterModule.register({}), AuthModule, CoinsModule, TurnoverModule,
-    GameModule,],
+    GameModule,PromotionModule],
   controllers: [WalletController],
   providers: [WalletService, S3Service, JwtAuthGuard,TurnoverModule],
   exports: [JwtAuthGuard],
