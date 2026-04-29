@@ -1,25 +1,24 @@
-# Stage 1: Build React App
-FROM node:20-alpine AS build
+# ---- Build Stage ----
+FROM node:20-alpine AS builder
 
 WORKDIR /app
 
 COPY package*.json ./
-
-RUN npm install
+RUN npm ci
 
 COPY . .
-
 RUN npm run build
 
-# Stage 2: Serve dist files
-FROM node:20-alpine
+# ---- Production Stage ----
+FROM node:20-alpine AS production
 
 WORKDIR /app
 
-RUN npm install -g serve
+COPY package*.json ./
+RUN npm ci --omit=dev
 
-COPY --from=build /app/dist ./dist
+COPY --from=builder /app/dist ./dist
 
-EXPOSE 5174
+EXPOSE 3000
 
-CMD ["serve", "-s", "dist", "-l", "5174"]
+CMD ["node", "dist/main"]
