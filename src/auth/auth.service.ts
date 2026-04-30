@@ -78,7 +78,7 @@ export class AuthService {
 
     async login(dto: any) {
         try {
-            const { phone_number, email, password } = dto;
+            const { phone_number, email, username, password } = dto;
 
             if (!password) {
                 throw new UnauthorizedException('Password is required');
@@ -105,11 +105,18 @@ export class AuthService {
                     `SELECT * FROM users WHERE email = $1 LIMIT 1`,
                     [email],
                 );
-            }
+            }else if (username) {
+                    user = await this.dataSource.query(
+                        `SELECT * FROM users 
+                        WHERE username = $1 
+                        LIMIT 1`,
+                        [username],
+                    );
+                }
 
             // ❌ Neither provided
             else {
-                throw new UnauthorizedException('Email or phone number is required');
+                throw new UnauthorizedException('Email, phone number, or username is required');
             }
 
             if (!user || !user.length) {

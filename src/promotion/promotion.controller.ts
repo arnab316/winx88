@@ -28,11 +28,15 @@ import {
   PromotionKind,
   PROMOTION_KINDS,
 } from './dto/promotion.dto';
+import { PromotionStatsService } from './promotion-stats.service';
+import { StatsQueryDto } from './dto/promotion-stats.dto';
 @Controller('promotion')
 export class PromotionController {
 
 
-    constructor(private readonly engine: PromotionEngineService) {}
+    constructor(private readonly engine: PromotionEngineService
+      ,   private readonly statsService: PromotionStatsService, 
+    ) {}
 
 
     // ─── USER ────────────────────────────────────────────────────
@@ -67,7 +71,30 @@ export class PromotionController {
   }
  
   // ─── ADMIN ───────────────────────────────────────────────────
- 
+   // GET /promotion/admin/stats/overview?preset=THIS_MONTH
+  // Single-row dashboard summary
+  @UseGuards(AdminGuard)
+  @Get('admin/stats/overview')
+  statsOverview(@Query() q: StatsQueryDto) {
+    return this.statsService.getOverview(q);
+  }
+  
+    // GET /promotion/admin/stats/summary?preset=LAST_MONTH&currency=BDT&status=ACTIVE
+  // Per-promotion table — matches screenshot 5
+  @UseGuards(AdminGuard)
+  @Get('admin/stats/summary')
+  statsSummary(@Query() q: StatsQueryDto) {
+    return this.statsService.getStatsSummary(q);
+  }
+
+  @UseGuards(AdminGuard)
+  @Get('admin/:id/stats')
+  statsForPromotion(
+    @Param('id', ParseIntPipe) id: number,
+    @Query() q: StatsQueryDto,
+  ) {
+    return this.statsService.getPromotionStats(id, q);
+  }
   // GET /promotions/admin?kind=DEPOSIT&isActive=true&page=1
   @UseGuards(AdminGuard)
   @Get('admin')
