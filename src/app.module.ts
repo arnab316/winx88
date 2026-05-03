@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { TerminusModule } from '@nestjs/terminus';
+import { LoggerModule } from './logger/logger.module';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
@@ -19,11 +20,13 @@ import { TurnoverModule } from './turnover/turnover.module';
 import { MemberGroupModule } from './member-group/member-group.module';
 import { PromotionModule } from './promotion/promotion.module';
 import { PromotionCmsModule } from './promotion-cms/promotion-cms.module';
+import { JackpotModule } from './jackpot/jackpot.module';
 
 @Module({
   imports: [
-     ConfigModule.forRoot({ isGlobal: true }),
-     TerminusModule,
+    ConfigModule.forRoot({ isGlobal: true }),
+    LoggerModule,
+    TerminusModule,
     TypeOrmModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
@@ -51,7 +54,8 @@ import { PromotionCmsModule } from './promotion-cms/promotion-cms.module';
     TurnoverModule,
     MemberGroupModule,
     PromotionModule,
-    PromotionCmsModule],
+    PromotionCmsModule,
+    JackpotModule],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
 })

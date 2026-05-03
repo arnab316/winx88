@@ -13,7 +13,8 @@ export type FinancialEntryType =
   | 'WITHDRAWAL_APPROVED'
   | 'WITHDRAWAL_REJECTED'
   | 'MANUAL_ADJUSTMENT'
-  | 'PROMOTION_BONUS';
+  | 'PROMOTION_BONUS'
+  | 'JACKPOT_PRIZE';
 
 export type FinancialFlow = 'CREDIT' | 'DEBIT' | 'LOCK' | 'RELEASE';
 export type ActorType = 'SYSTEM' | 'ADMIN' | 'USER';
