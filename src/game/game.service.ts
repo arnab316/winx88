@@ -20,6 +20,8 @@ import {
 import { DataSource } from 'typeorm';
 import { FinancialLedgerService } from '../ledger/financial-ledger.service';
 import { TurnoverService } from '../turnover/turnover.service';
+import { GamesGateway } from './games.gateway';
+
 import {
   UpdateGameFlagsDto,
   CreateHotNumberDto,
@@ -37,6 +39,8 @@ export class GameService {
     private readonly dataSource: DataSource,
     private readonly financialLedger: FinancialLedgerService,
     private readonly turnoverService: TurnoverService,
+      private readonly gateway: GamesGateway,   
+
   ) {}
 
   // ═════════════════════════════════════════════════════════════
@@ -57,11 +61,25 @@ export class GameService {
   // ═════════════════════════════════════════════════════════════
   async createRound(payload: any) {
     const { game_id, round_code, open_time, close_time, draw_time } = payload;
-    return this.dataSource.query(
+    const rows = await this.dataSource.query(
       `INSERT INTO game_rounds (game_id, round_code, open_time, close_time, draw_time)
        VALUES ($1,$2,$3,$4,$5) RETURNING *`,
       [game_id, round_code, open_time, close_time, draw_time],
     );
+ 
+    const round = rows[0];
+    if (round) {
+      // Fire WebSocket event so subscribers see the new round instantly
+      this.gateway.emitRoundOpened({
+        gameId:    Number(round.game_id),
+        roundId:   Number(round.id),
+        roundCode: round.round_code,
+        openTime:  round.open_time,
+        closeTime: round.close_time,
+        drawTime:  round.draw_time,
+      });
+    }
+    return rows;        // preserves your current return shape (array)
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -98,7 +116,14 @@ export class GameService {
         `UPDATE game_rounds SET status = 'RESULT_PUBLISHED' WHERE id = $1`,
         [round_id],
       );
+      const gameIdForEmit = Number(round[0].game_id);
       await qr.commitTransaction();
+       // Fire AFTER commit — only emit if DB write actually succeeded.
+      this.gateway.emitResultPublished({
+        gameId: gameIdForEmit,
+        roundId: round_id,
+        resultNumber: result_number,
+      });
       return { message: 'Result published' };
     } catch (err) {
       await qr.rollbackTransaction();
@@ -376,6 +401,19 @@ export class GameService {
       );
 
       await qr.commitTransaction();
+       const r = await this.dataSource.query(
+        `SELECT game_id FROM game_rounds WHERE id = $1`,
+        [round_id],
+      );
+      if (r.length) {
+        this.gateway.emitRoundSettled({
+          gameId: Number(r[0].game_id),
+          roundId: round_id,
+          betsSettled: bets.length,
+          winners,
+          losers,
+        });
+      }
       return {
         message: 'Round settled successfully',
         betsSettled: bets.length,

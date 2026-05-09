@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>WinX88 Games WebSocket Tester</title>
+<style>
+  body { font-family: -apple-system, sans-serif; max-width: 900px; margin: 20px auto; padding: 0 16px; }
+  h1 { font-size: 22px; margin: 0 0 8px; }
+  .status { padding: 8px 12px; border-radius: 6px; margin: 12px 0; font-weight: 600; }
+  .status.connected { background: #d4edda; color: #155724; }
+  .status.disconnected { background: #f8d7da; color: #721c24; }
+  .controls { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 12px 0; }
+  input { padding: 8px 12px; border: 1px solid #ccc; border-radius: 6px; width: 100px; }
+  button { padding: 8px 16px; background: #2563eb; color: white; border: 0; border-radius: 6px; cursor: pointer; }
+  button:hover { background: #1d4ed8; }
+  button.danger { background: #dc2626; }
+  #log { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px; font-family: ui-monospace, monospace; font-size: 13px; height: 480px; overflow-y: auto; white-space: pre-wrap; }
+  .log-line { padding: 2px 0; border-bottom: 1px dotted #334155; }
+  .log-line.event { color: #fbbf24; }
+  .log-line.error { color: #fca5a5; }
+  .log-line.info  { color: #93c5fd; }
+  .log-line.send  { color: #86efac; }
+  .ev { background: #fef3c7; padding: 2px 6px; border-radius: 4px; color: #78350f; font-family: monospace; font-size: 12px; }
+  ul { margin: 8px 0; padding-left: 20px; font-size: 14px; color: #475569; }
+</style>
+</head>
+<body>
+
+<h1>WinX88 Games WebSocket Tester</h1>
+<p>Quick way to verify the gateway is broadcasting events.</p>
+
+<div id="status" class="status disconnected">Disconnected</div>
+
+<div class="controls">
+  <input id="server" value="http://localhost:3000" style="width:240px" />
+  <button id="connectBtn" onclick="connect()">Connect</button>
+  <button class="danger" onclick="disconnect()">Disconnect</button>
+</div>
+
+<div class="controls">
+  <label>Game ID:</label>
+  <input id="gameId" type="number" value="1" />
+  <button onclick="subscribe()">Subscribe</button>
+  <button onclick="unsubscribe()">Unsubscribe</button>
+  <button onclick="sendPing()">Ping</button>
+  <button onclick="clearLog()">Clear Log</button>
+</div>
+
+<p>Listens for these events on subscribed games:</p>
+<ul>
+  <li><span class="ev">round:opened</span> — admin called <code>POST /games/round</code></li>
+  <li><span class="ev">round:closing-soon</span> — round close_time within 30s (cron-driven)</li>
+  <li><span class="ev">round:closed</span> — round close_time hit (cron-driven)</li>
+  <li><span class="ev">round:result-published</span> — admin called <code>POST /games/result/:id</code></li>
+  <li><span class="ev">round:settled</span> — admin called <code>POST /games/settle/:id</code></li>
+</ul>
+
+<div id="log"></div>
+
+<script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script>
+let socket = null;
+
+function log(text, cls = '') {
+  const div = document.createElement('div');
+  div.className = 'log-line ' + cls;
+  const ts = new Date().toLocaleTimeString();
+  div.textContent = `[${ts}] ${text}`;
+  document.getElementById('log').appendChild(div);
+  document.getElementById('log').scrollTop = 1e9;
+}
+
+function setStatus(on) {
+  const el = document.getElementById('status');
+  el.className = 'status ' + (on ? 'connected' : 'disconnected');
+  el.textContent = on ? 'Connected ✓' : 'Disconnected';
+}
+
+function connect() {
+  if (socket?.connected) { log('Already connected', 'info'); return; }
+  const server = document.getElementById('server').value.replace(/\/+$/, '');
+  const url = server + '/ws/games';
+  log(`Connecting to ${url}...`, 'info');
+
+  socket = io(url, { transports: ['websocket', 'polling'] });
+
+  socket.on('connect', () => {
+    setStatus(true);
+    log(`Connected. Socket ID: ${socket.id}`, 'info');
+  });
+
+  socket.on('disconnect', (reason) => {
+    setStatus(false);
+    log(`Disconnected: ${reason}`, 'error');
+  });
+
+  socket.on('connect_error', (err) => {
+    setStatus(false);
+    log(`Connect error: ${err.message}`, 'error');
+  });
+
+  socket.on('connected',           d => log('connected → ' + JSON.stringify(d), 'info'));
+  socket.on('subscribed',          d => log('subscribed → ' + JSON.stringify(d), 'info'));
+  socket.on('unsubscribed',        d => log('unsubscribed → ' + JSON.stringify(d), 'info'));
+  socket.on('pong',                d => log('pong → ' + JSON.stringify(d), 'info'));
+  socket.on('error',               d => log('error → ' + JSON.stringify(d), 'error'));
+
+  socket.on('round:opened',           d => log('🟢 round:opened → ' + JSON.stringify(d), 'event'));
+  socket.on('round:closing-soon',     d => log('🟡 round:closing-soon → ' + JSON.stringify(d), 'event'));
+  socket.on('round:closed',           d => log('🔴 round:closed → ' + JSON.stringify(d), 'event'));
+  socket.on('round:result-published', d => log('🎯 round:result-published → ' + JSON.stringify(d), 'event'));
+  socket.on('round:settled',          d => log('✅ round:settled → ' + JSON.stringify(d), 'event'));
+}
+
+function disconnect() {
+  if (socket) { socket.disconnect(); socket = null; }
+}
+
+function subscribe() {
+  if (!socket?.connected) return log('Not connected', 'error');
+  const gameId = Number(document.getElementById('gameId').value);
+  socket.emit('subscribe-game', { gameId });
+  log(`→ subscribe-game { gameId: ${gameId} }`, 'send');
+}
+
+function unsubscribe() {
+  if (!socket?.connected) return log('Not connected', 'error');
+  const gameId = Number(document.getElementById('gameId').value);
+  socket.emit('unsubscribe-game', { gameId });
+  log(`→ unsubscribe-game { gameId: ${gameId} }`, 'send');
+}
+
+function sendPing() {
+  if (!socket?.connected) return log('Not connected', 'error');
+  socket.emit('ping');
+  log('→ ping', 'send');
+}
+
+function clearLog() { document.getElementById('log').innerHTML = ''; }
+</script>
+
+</body>
+</html>

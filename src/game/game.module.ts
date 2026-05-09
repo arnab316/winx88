@@ -6,6 +6,8 @@ import { GameValidationService } from './game-validation.service';
 import { TurnoverModule } from 'src/turnover/turnover.module';
 import { AuthModule } from 'src/auth/auth.module';
 import { TurnoverService } from 'src/turnover/turnover.service';
+import { RoundWatcherService } from './round-watcher.service';
+import { GamesGateway } from './games.gateway';
 
 @Module({
      imports: [AuthModule, TurnoverModule],
@@ -13,7 +15,9 @@ import { TurnoverService } from 'src/turnover/turnover.service';
     GameService,
     GameValidationService,                                            // ← ADD
     JwtAuthGuard,
-    TurnoverService
+    TurnoverService,
+    GamesGateway,           // ← new
+    RoundWatcherService,    // ← new
   ],
   controllers: [GameController],
    exports: [GameValidationService],
