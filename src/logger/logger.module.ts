@@ -8,9 +8,13 @@ const devFormat = combine(
   colorize({ all: true }),
   timestamp({ format: 'YYYY-MM-DD HH:mm:ss' }),
   errors({ stack: true }),
-  printf(({ level, message, timestamp, context, stack }) => {
-    return `${timestamp} [${context ?? 'App'}] ${level}: ${stack ?? message}`;
-  }),
+ printf(({ level, message, timestamp, context, stack, ...meta }) => {
+  return `${timestamp} [${context ?? 'App'}] ${level}: ${
+    stack ?? message
+  } ${
+    Object.keys(meta).length ? JSON.stringify(meta) : ''
+  }`;
+}),
 );
 
 const prodFormat = combine(
