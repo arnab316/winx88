@@ -9,28 +9,59 @@ import {
   UseGuards,
   BadRequestException,
   Get,
+  Inject,
 } from '@nestjs/common';
 import { UserService } from './user.service';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
+import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { Logger } from 'winston';
+import type { Request, Response } from 'express';
+
 @UseGuards(JwtAuthGuard)
 @Controller('user')
 export class UserController {
-  constructor(private userService: UserService) { }
-  
-    @Get('profile')
-    async getProfile(@Req() req) {
-        try {
-            const userId = req.user?.sub;
-            const user = await this.userService.getProfile(userId);
-            return {
-                success: true,
-                message: 'User profile retrieved successfully',
-                data: user,
-            }
-        } catch (error) {
-            throw error;
-        }
-    }
+  constructor(
+    private userService: UserService,
+    @Inject(WINSTON_MODULE_PROVIDER)
+    private readonly logger: Logger,
+  ) { }
+
+@Get('profile')
+async getProfile(@Req() req) {
+  try {
+    const userId = req.user?.sub;
+
+    this.logger.info('Profile fetch started', {
+      context: UserController.name,
+      userId,
+      ip: (req as any).ip,
+    });
+
+    const user = await this.userService.getProfile(userId);
+
+    this.logger.info('Profile fetched successfully', {
+      context: UserController.name,
+      userId,
+      ip: (req as any).ip,
+    });
+
+    return {
+      success: true,
+      message: 'User profile retrieved successfully',
+      data: user,
+    };
+  } catch (error: any) {
+    this.logger.error('Profile fetch failed', {
+      context: UserController.name,
+      userId: req.user?.sub,
+      ip: (req as any).ip,
+      message: error.message,
+      stack: error.stack,
+    });
+
+    throw error;
+  }
+}
     @Post('update-profile')
     async updateProfile(@Req() req, @Body() dto: any) {
         try {
@@ -123,36 +154,62 @@ export class UserController {
     }
   }
 
-  // ---------------- VERIFY PHONE ----------------
   @Patch('phone/:phoneId/verify')
-  async verifyPhone(@Req() req, @Param('phoneId') phoneId: string) {
-    try {
-      const userId = req.user?.sub;
+async verifyPhone(@Req() req, @Param('phoneId') phoneId: string) {
+  try {
+    const userId = req.user?.sub;
 
-      if (!userId) {
-        throw new BadRequestException('User not authenticated');
-      }
+    this.logger.info('Phone verification started', {
+      context: UserController.name,
+      userId,
+      phoneId,
+      ip: (req as any).ip,
+    });
 
-      const result = await this.userService.verifyPhone(
-        userId,
-        Number(phoneId),
-      );
+    if (!userId) {
+      this.logger.warn('Unauthenticated phone verification attempt', {
+        context: UserController.name,
+        phoneId,
+        ip: (req as any).ip,
+      });
 
-      return {
-        status: 'success',
-        code: 200,
-        message: result.message,
-      };
-    } catch (error:any) {
-      console.error('Error verifying phone:', error);
-
-      return {
-        status: 'error',
-        code: error.status || 500,
-        message: error.message || 'Internal server error',
-      };
+      throw new BadRequestException('User not authenticated');
     }
+
+    const result = await this.userService.verifyPhone(
+      userId,
+      Number(phoneId),
+    );
+
+    this.logger.info('Phone verified successfully', {
+      context: UserController.name,
+      userId,
+      phoneId,
+      ip: (req as any).ip,
+    });
+
+    return {
+      status: 'success',
+      code: 200,
+      message: result.message,
+    };
+  } catch (error: any) {
+    this.logger.error('Phone verification failed', {
+      context: UserController.name,
+      userId: req.user?.sub,
+      phoneId,
+      ip: (req as any).ip,
+      message: error.message,
+      stack: error.stack,
+    });
+
+    return {
+      status: 'error',
+      code: error.status || 500,
+      message: error.message || 'Internal server error',
+    };
   }
+}
   @Get('all')
   async getAllUsers() {
     try {

@@ -16,6 +16,7 @@ import {
   BadRequestException,
   UsePipes,
   ValidationPipe,
+  Inject,
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { AgentsService } from './agents.service';
@@ -26,11 +27,17 @@ import {
 } from './dto/agent.dto';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
-
+import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
+import { Logger } from 'winston';
+import type { Request, Response } from 'express';
 @Controller('agents')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class AgentsController {
-  constructor(private agentService: AgentsService) {}
+  constructor(
+    private agentService: AgentsService,
+    @Inject(WINSTON_MODULE_PROVIDER)
+    private readonly logger: Logger,
+  ) {}
 
   // ════════════════════════════════════════════════════════════
   // USER ROUTES
@@ -45,7 +52,12 @@ export class AgentsController {
     @Req() req: any,
     @Query('gatewayId', ParseIntPipe) gatewayId: number,
   ) {
-    console.log('getDepositAgent called with gatewayId:', gatewayId);
+     this.logger.info('Deposit agent fetch started', {
+      context: AgentsController.name,
+      userId: req.user?.sub,
+      gatewayId,
+      ip: (req as any).ip,
+    });
     const userId = req.user.sub;
     // Fix: need to verify the token to extract userId, because JwtAuthGuard only checks validity but doesn't attach user info to req
     // const userId = 7; 
@@ -60,9 +72,26 @@ export class AgentsController {
   // GET /agents/admin?status=ACTIVE&gatewayId=1&page=1&limit=20
   // @UseGuards(AdminGuard)
   @Get('admin')
-  async list(@Query() q: ListAgentsQueryDto) {
-    const result = await this.agentService.listAgents(q);
+  async list(@Query() q: ListAgentsQueryDto, @Req() req: any) {
+    
+   try {
+     this.logger.info('Agent list fetch started', {
+      context: AgentsController.name,
+      userId: req.user?.sub,  
+      query: q,
+      ip: (req as any).ip,
+    });
+     const result = await this.agentService.listAgents(q);
     return { status: 'success', ...result };
+   } catch (error:any) {
+    this.logger.error('Error occurred while listing agents', {
+      context: AgentsController.name,
+      ip: (req as any).ip,
+      message: error.message,
+      stack: error.stack,
+    });
+    throw error;
+   }
   }
 
   // POST /agents/admin
