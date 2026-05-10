@@ -189,7 +189,7 @@ export class GameService {
         [round_id],
       );
       if (!rounds.length) throw new BadRequestException('Round not found');
-      if (rounds[0].status !== 'OPEN' && rounds[0].status !== 'PENDING') {
+      if (rounds[0].status !== 'OPEN' && rounds[0].status !== 'PLACED') {
         throw new BadRequestException(`Round is ${rounds[0].status}, cannot bet`);
       }
       if (rounds[0].close_time && new Date(rounds[0].close_time) < new Date()) {
@@ -241,7 +241,7 @@ export class GameService {
         `INSERT INTO bets
           (bet_code, user_id, game_id, round_id, bet_number,
            bet_amount, payout_multiplier, potential_payout, result_status)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'PENDING')
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'PLACED')
          RETURNING *`,
         [betCode, user_id, game_id, round_id, bet_number,
          amount, multiplier, potentialPayout],
@@ -299,6 +299,7 @@ export class GameService {
     await qr.startTransaction();
 
     try {
+      // Save result if not already saved
       const existing = await qr.query(
         `SELECT id FROM game_results WHERE round_id = $1`,
         [round_id],
@@ -317,10 +318,11 @@ export class GameService {
         );
       }
 
+      // Get all unsettled bets for this round
       const bets = await qr.query(
         `SELECT * FROM bets
          WHERE round_id = $1
-           AND result_status IN ('PENDING','OPEN')`,
+           AND result_status IN ('PLACED')`,
         [round_id],
       );
 
@@ -387,6 +389,9 @@ export class GameService {
           );
         }
 
+        // 🎯 TURNOVER CONTRIBUTION (Sub-pass 3 revised)
+        //   Per business rule: bet amount counts whether won or lost.
+        //   Skips silently if user has no active turnover reqs.
         await this.turnoverService.contributeFromSettledBet(
           qr,
           bet.user_id,
@@ -401,19 +406,6 @@ export class GameService {
       );
 
       await qr.commitTransaction();
-       const r = await this.dataSource.query(
-        `SELECT game_id FROM game_rounds WHERE id = $1`,
-        [round_id],
-      );
-      if (r.length) {
-        this.gateway.emitRoundSettled({
-          gameId: Number(r[0].game_id),
-          roundId: round_id,
-          betsSettled: bets.length,
-          winners,
-          losers,
-        });
-      }
       return {
         message: 'Round settled successfully',
         betsSettled: bets.length,
@@ -883,4 +875,514 @@ export class GameService {
     );
     return result[0];
   }
+
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: ROUND NUMBER STATS
+  //   Shows every number that has been bet on in this round,
+  //   sorted by potential payout (highest risk first).
+  //   Admin uses this to decide what result number to publish.
+  //
+  //   GET /games/admin/rounds/:roundId/stats
+  // ═════════════════════════════════════════════════════════════
+  async getRoundStats(roundId: number) {
+    // 1. Get round + game info
+    const roundRows = await this.dataSource.query(
+      `SELECT
+         gr.id, gr.round_code, gr.game_id, gr.status,
+         gr.open_time, gr.close_time, gr.draw_time,
+         g.name AS game_name, g.digit_length,
+         g.payout_multiplier, g.max_payout_per_round
+       FROM game_rounds gr
+       JOIN games g ON g.id = gr.game_id
+       WHERE gr.id = $1`,
+      [roundId],
+    );
+    if (!roundRows.length) throw new NotFoundException('Round not found');
+    const round = roundRows[0];
+    const multiplier = parseFloat(round.payout_multiplier);
+ 
+    // 2. Number breakdown from game_number_stats
+    //    Joined with hot_numbers so admin sees which are "hot"
+    const stats = await this.dataSource.query(
+      `SELECT
+         gns.bet_number,
+         gns.total_bets,
+         gns.total_amount::numeric                        AS total_staked,
+         (gns.total_amount * $2)::numeric                 AS potential_payout,
+         hn.id IS NOT NULL                                AS is_hot_number,
+         hn.note                                          AS hot_note
+       FROM game_number_stats gns
+       LEFT JOIN game_hot_numbers hn
+         ON hn.game_id = gns.game_id
+        AND hn.number  = gns.bet_number
+        AND hn.is_active = TRUE
+       WHERE gns.round_id = $1
+       ORDER BY (gns.total_amount * $2) DESC`,   
+      [roundId, multiplier],
+    );
+ 
+    // 3. Totals across all numbers
+    const totals = await this.dataSource.query(
+      `SELECT
+         COUNT(DISTINCT b.user_id)::int                   AS unique_bettors,
+         COUNT(b.id)::int                                 AS total_bets,
+         COALESCE(SUM(b.bet_amount), 0)::numeric          AS total_staked,
+         COALESCE(SUM(b.potential_payout), 0)::numeric    AS max_total_payout,
+         COUNT(DISTINCT b.bet_number)::int                AS unique_numbers_bet
+       FROM bets b
+       WHERE b.round_id = $1
+         AND b.result_status IN ('PENDING', 'OPEN')`,
+      [roundId],
+    );
+ 
+    // 4. Safest number to pick (lowest payout liability)
+    //    Useful hint — not a mandate
+    const safest = stats.length
+      ? stats[stats.length - 1]   // last row = lowest liability (sorted DESC above)
+      : null;
+ 
+    // 5. Highest risk number
+    const riskiest = stats.length ? stats[0] : null;
+ 
+    return {
+      round: {
+        id:               Number(round.id),
+        roundCode:        round.round_code,
+        gameId:           Number(round.game_id),
+        gameName:         round.game_name,
+        digitLength:      Number(round.digit_length),
+        payoutMultiplier: multiplier,
+        maxPayoutPerRound: round.max_payout_per_round
+          ? parseFloat(round.max_payout_per_round) : null,
+        status:    round.status,
+        openTime:  round.open_time,
+        closeTime: round.close_time,
+        drawTime:  round.draw_time,
+      },
+      summary: {
+        uniqueBettors:      totals[0].unique_bettors,
+        totalBets:          totals[0].total_bets,
+        totalStaked:        parseFloat(totals[0].total_staked),
+        maxTotalPayout:     parseFloat(totals[0].max_total_payout),
+        uniqueNumbersBet:   totals[0].unique_numbers_bet,
+        capRemaining: round.max_payout_per_round
+          ? Math.max(0, parseFloat(round.max_payout_per_round) - parseFloat(totals[0].max_total_payout))
+          : null,
+      },
+      insight: {
+        riskiestNumber: riskiest ? {
+          number:         riskiest.bet_number,
+          potentialPayout: parseFloat(riskiest.potential_payout),
+          totalBets:      Number(riskiest.total_bets),
+        } : null,
+        safestNumber: safest && safest !== riskiest ? {
+          number:         safest.bet_number,
+          potentialPayout: parseFloat(safest.potential_payout),
+          totalBets:      Number(safest.total_bets),
+        } : null,
+      },
+      // Full number-by-number breakdown sorted by payout liability (highest first)
+      numbers: stats.map((s: any) => ({
+        number:          s.bet_number,
+        totalBets:       Number(s.total_bets),
+        totalStaked:     parseFloat(s.total_staked),
+        potentialPayout: parseFloat(s.potential_payout),
+        isHotNumber:     s.is_hot_number,
+        hotNote:         s.hot_note ?? null,
+      })),
+    };
+  }
+ 
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: ALL ROUNDS STATS FOR A GAME (overview list)
+  //   Shows all rounds with their betting summary.
+  //   Admin picks which round to inspect in detail.
+  //
+  //   GET /games/admin/:gameId/rounds-overview
+  // ═════════════════════════════════════════════════════════════
+  async getGameRoundsOverview(gameId: number, status?: string) {
+    const game = await this.dataSource.query(
+      `SELECT id, name, payout_multiplier FROM games WHERE id = $1`,
+      [gameId],
+    );
+    if (!game.length) throw new NotFoundException('Game not found');
+ 
+    const where = status
+      ? `WHERE gr.game_id = $1 AND gr.status = $2`
+      : `WHERE gr.game_id = $1`;
+    const params = status ? [gameId, status] : [gameId];
+ 
+    const rounds = await this.dataSource.query(
+      `SELECT
+         gr.id, gr.round_code, gr.status,
+         gr.open_time, gr.close_time, gr.draw_time,
+         res.result_number,
+         COUNT(b.id)::int                              AS total_bets,
+         COUNT(DISTINCT b.user_id)::int                AS unique_bettors,
+         COALESCE(SUM(b.bet_amount), 0)::numeric       AS total_staked,
+         COALESCE(SUM(b.potential_payout), 0)::numeric AS max_payout_liability,
+         COUNT(DISTINCT b.bet_number)::int             AS unique_numbers
+       FROM game_rounds gr
+       LEFT JOIN bets b
+         ON b.round_id = gr.id AND b.result_status IN ('PENDING','OPEN','WON','LOST')
+       LEFT JOIN game_results res ON res.round_id = gr.id
+       ${where}
+       GROUP BY gr.id, res.result_number
+       ORDER BY gr.open_time DESC
+       LIMIT 50`,
+      params,
+    );
+ 
+    return {
+      gameId:   Number(gameId),
+      gameName: game[0].name,
+      rounds:   rounds.map((r: any) => ({
+        roundId:           Number(r.id),
+        roundCode:         r.round_code,
+        status:            r.status,
+        openTime:          r.open_time,
+        closeTime:         r.close_time,
+        drawTime:          r.draw_time,
+        resultNumber:      r.result_number ?? null,
+        totalBets:         Number(r.total_bets),
+        uniqueBettors:     Number(r.unique_bettors),
+        totalStaked:       parseFloat(r.total_staked),
+        maxPayoutLiability: parseFloat(r.max_payout_liability),
+        uniqueNumbers:     Number(r.unique_numbers),
+      })),
+    };
+  
+  }
+
+
+   async createGameWithRound(payload: {
+    // Game fields
+    code: string;
+    name: string;
+    digit_length: number;
+    min_bet: number;
+    max_bet: number;
+    payout_multiplier: number;
+    // Optional game fields (G1)
+    description?: string;
+    thumbnail_url?: string;
+    display_category?: string;
+    max_payout_per_round?: number;
+    // Round fields
+    round_code: string;
+    open_time: string;
+    close_time: string;
+    draw_time: string;
+  }) {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+ 
+    try {
+      // 1. Create game
+      const gameRows = await qr.query(
+        `INSERT INTO games
+           (code, name, digit_length, min_bet, max_bet, payout_multiplier,
+            description, thumbnail_url, display_category, max_payout_per_round,
+            is_active)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,true)
+         RETURNING *`,
+        [
+          payload.code,
+          payload.name,
+          payload.digit_length,
+          payload.min_bet,
+          payload.max_bet,
+          payload.payout_multiplier,
+          payload.description     ?? null,
+          payload.thumbnail_url   ?? null,
+          payload.display_category ?? 'REGULAR',
+          payload.max_payout_per_round ?? null,
+        ],
+      );
+      const game = gameRows[0];
+ 
+      // 2. Validate times
+      const openTime  = new Date(payload.open_time);
+      const closeTime = new Date(payload.close_time);
+      const drawTime  = new Date(payload.draw_time);
+ 
+      if (closeTime <= openTime) {
+        throw new BadRequestException('close_time must be after open_time');
+      }
+      if (drawTime < closeTime) {
+        throw new BadRequestException('draw_time must be >= close_time');
+      }
+ 
+      // 3. Create first round
+      const roundRows = await qr.query(
+        `INSERT INTO game_rounds
+           (game_id, round_code, open_time, close_time, draw_time, status)
+         VALUES ($1,$2,$3,$4,$5,'OPEN')
+         RETURNING *`,
+        [
+          game.id,
+          payload.round_code,
+          payload.open_time,
+          payload.close_time,
+          payload.draw_time,
+        ],
+      );
+      const round = roundRows[0];
+ 
+      await qr.commitTransaction();
+ 
+      // Emit WS event after commit
+      this.gateway.emitRoundOpened({
+        gameId:    Number(game.id),
+        roundId:   Number(round.id),
+        roundCode: round.round_code,
+        openTime:  round.open_time,
+        closeTime: round.close_time,
+        drawTime:  round.draw_time,
+      });
+ 
+      return { game, round };
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+  }
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: CREATE ROUND FOR EXISTING GAME
+  //   Standalone — admin adds more rounds after the first one.
+  //   POST /games/admin/create-round
+  // ═════════════════════════════════════════════════════════════
+  async adminCreateRound(payload: {
+    game_id: number;
+    round_code: string;
+    open_time: string;
+    close_time: string;
+    draw_time: string;
+  }) {
+    // Verify game exists
+    const game = await this.dataSource.query(
+      `SELECT id, name FROM games WHERE id = $1 AND is_active = true`,
+      [payload.game_id],
+    );
+    if (!game.length) throw new NotFoundException('Game not found or inactive');
+ 
+    // Validate times
+    const openTime  = new Date(payload.open_time);
+    const closeTime = new Date(payload.close_time);
+    const drawTime  = new Date(payload.draw_time);
+ 
+    if (closeTime <= openTime) {
+      throw new BadRequestException('close_time must be after open_time');
+    }
+    if (drawTime < closeTime) {
+      throw new BadRequestException('draw_time must be >= close_time');
+    }
+ 
+    // Check for duplicate round_code on this game
+    const dup = await this.dataSource.query(
+      `SELECT id FROM game_rounds WHERE game_id = $1 AND round_code = $2`,
+      [payload.game_id, payload.round_code],
+    );
+    if (dup.length) {
+      throw new BadRequestException(`Round code "${payload.round_code}" already exists for this game`);
+    }
+ 
+    const rows = await this.dataSource.query(
+      `INSERT INTO game_rounds
+         (game_id, round_code, open_time, close_time, draw_time, status)
+       VALUES ($1,$2,$3,$4,$5,'OPEN')
+       RETURNING *`,
+      [payload.game_id, payload.round_code, payload.open_time, payload.close_time, payload.draw_time],
+    );
+    const round = rows[0];
+ 
+    // Emit WS
+    this.gateway.emitRoundOpened({
+      gameId:    Number(round.game_id),
+      roundId:   Number(round.id),
+      roundCode: round.round_code,
+      openTime:  round.open_time,
+      closeTime: round.close_time,
+      drawTime:  round.draw_time,
+    });
+ 
+    return { game: game[0], round };
+  }
+ // ═════════════════════════════════════════════════════════════
+  // ADMIN: LIST ALL GAMES WITH ROUND INFO
+  //   Returns each game with:
+  //     - latest round (id, status, open/close/draw times)
+  //     - active round count
+  //     - total bets + staked across all rounds
+  //     - quick stats for the UI table
+  //
+  //   GET /games/admin/list
+  // ═════════════════════════════════════════════════════════════
+  async adminListGames() {
+    const games = await this.dataSource.query(
+      `SELECT
+         g.id, g.code, g.name, g.digit_length,
+         g.min_bet, g.max_bet, g.payout_multiplier,
+         g.max_payout_per_round,
+         g.is_hot, g.is_jackpot_badge, g.display_category,
+         g.is_active, g.created_at,
+ 
+         -- Latest round info (most recently created)
+         lr.id            AS latest_round_id,
+         lr.round_code    AS latest_round_code,
+         lr.status        AS latest_round_status,
+         lr.open_time     AS latest_round_open,
+         lr.close_time    AS latest_round_close,
+         lr.draw_time     AS latest_round_draw,
+ 
+         -- Counts
+         (SELECT COUNT(*)::int FROM game_rounds gr
+           WHERE gr.game_id = g.id)                              AS total_rounds,
+         (SELECT COUNT(*)::int FROM game_rounds gr
+           WHERE gr.game_id = g.id AND gr.status = 'OPEN'
+             AND gr.close_time > NOW())                          AS active_rounds,
+         (SELECT COUNT(*)::int FROM game_rounds gr
+           WHERE gr.game_id = g.id AND gr.status = 'CLOSED')    AS closed_rounds,
+ 
+         -- Bet stats across ALL rounds (lifetime)
+         (SELECT COUNT(*)::int FROM bets b
+           WHERE b.game_id = g.id)                              AS total_bets_all_time,
+         (SELECT COALESCE(SUM(b.bet_amount),0)::numeric FROM bets b
+           WHERE b.game_id = g.id)                              AS total_staked_all_time,
+ 
+         -- Bet stats for latest round only
+         (SELECT COUNT(*)::int FROM bets b
+           WHERE b.round_id = lr.id)                            AS latest_round_bets,
+         (SELECT COALESCE(SUM(b.bet_amount),0)::numeric FROM bets b
+           WHERE b.round_id = lr.id AND b.result_status = 'PLACED') AS latest_round_staked,
+         (SELECT COUNT(DISTINCT b.bet_number)::int FROM bets b
+           WHERE b.round_id = lr.id AND b.result_status = 'PLACED') AS latest_round_unique_numbers
+ 
+       FROM games g
+       -- Get the most recently created round per game
+       LEFT JOIN LATERAL (
+         SELECT * FROM game_rounds gr
+         WHERE gr.game_id = g.id
+         ORDER BY gr.created_at DESC
+         LIMIT 1
+       ) lr ON true
+ 
+       ORDER BY g.is_active DESC, g.created_at DESC`,
+    );
+ 
+    return games.map((g: any) => ({
+      // Game core
+      id:                  Number(g.id),
+      code:                g.code,
+      name:                g.name,
+      digitLength:         Number(g.digit_length),
+      minBet:              parseFloat(g.min_bet),
+      maxBet:              parseFloat(g.max_bet),
+      payoutMultiplier:    parseFloat(g.payout_multiplier),
+      maxPayoutPerRound:   g.max_payout_per_round ? parseFloat(g.max_payout_per_round) : null,
+      isHot:               g.is_hot,
+      isJackpotBadge:      g.is_jackpot_badge,
+      displayCategory:     g.display_category,
+      isActive:            g.is_active,
+      createdAt:           g.created_at,
+ 
+      // Round summary
+      rounds: {
+        total:   Number(g.total_rounds),
+        active:  Number(g.active_rounds),
+        closed:  Number(g.closed_rounds),
+      },
+ 
+      // Latest round — what admin sees in the UI table
+      latestRound: g.latest_round_id ? {
+        id:         Number(g.latest_round_id),
+        roundCode:  g.latest_round_code,
+        status:     g.latest_round_status,
+        openTime:   g.latest_round_open,
+        closeTime:  g.latest_round_close,
+        drawTime:   g.latest_round_draw,
+        bets:       Number(g.latest_round_bets),
+        staked:     parseFloat(g.latest_round_staked),
+        uniqueNumbers: Number(g.latest_round_unique_numbers),
+      } : null,
+ 
+      // Lifetime stats
+      allTime: {
+        totalBets:   Number(g.total_bets_all_time),
+        totalStaked: parseFloat(g.total_staked_all_time),
+      },
+    }));
+  }
+   // ═════════════════════════════════════════════════════════════
+  // ADMIN: DELETE GAME
+  //   Soft delete (is_active = false) by default.
+  //   Hard delete only if game has zero bets ever — otherwise
+  //   it would destroy financial history.
+  //
+  //   DELETE /games/admin/:id           → soft delete
+  //   DELETE /games/admin/:id?hard=true → hard delete (blocked if bets exist)
+  // ═════════════════════════════════════════════════════════════
+  async deleteGame(gameId: number, hard = false) {
+    const existing = await this.dataSource.query(
+      `SELECT id, name, is_active FROM games WHERE id = $1`,
+      [gameId],
+    );
+    if (!existing.length) throw new NotFoundException('Game not found');
+ 
+    if (hard) {
+      // Block hard delete if any bets exist for this game
+      const betCount = await this.dataSource.query(
+        `SELECT COUNT(*)::int AS cnt FROM bets WHERE game_id = $1`,
+        [gameId],
+      );
+      if (betCount[0].cnt > 0) {
+        throw new BadRequestException(
+          `Cannot hard delete — game has ${betCount[0].cnt} bet(s) on record. ` +
+          `Use soft delete (remove ?hard=true) to deactivate instead.`,
+        );
+      }
+ 
+      // Also delete rounds and hot numbers (no bets = safe to clean up)
+      await this.dataSource.query(
+        `DELETE FROM game_hot_numbers WHERE game_id = $1`, [gameId],
+      );
+      await this.dataSource.query(
+        `DELETE FROM game_number_stats WHERE game_id = $1`, [gameId],
+      );
+      await this.dataSource.query(
+        `DELETE FROM game_rounds WHERE game_id = $1`, [gameId],
+      );
+      await this.dataSource.query(
+        `DELETE FROM games WHERE id = $1`, [gameId],
+      );
+ 
+      return { message: `Game "${existing[0].name}" permanently deleted`, gameId };
+    }
+ 
+    // Soft delete — also closes all open rounds so no new bets come in
+    await this.dataSource.query(
+      `UPDATE game_rounds
+       SET status = 'CLOSED'
+       WHERE game_id = $1 AND status = 'OPEN'`,
+      [gameId],
+    );
+    await this.dataSource.query(
+      `UPDATE games SET is_active = false, updated_at = NOW() WHERE id = $1`,
+      [gameId],
+    );
+ 
+    return {
+      message: `Game "${existing[0].name}" deactivated. All open rounds closed.`,
+      gameId,
+      tip: 'Use PATCH /games/admin/:id/flags with { "isActive": true } to reactivate.',
+    };
+  }
+
+  
+
+
 }

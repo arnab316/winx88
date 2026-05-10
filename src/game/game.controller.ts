@@ -433,4 +433,233 @@ export class GameController {
       );
     }
   }
+
+
+  
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: ROUND STATS (number breakdown before publishing result)
+  //   GET /games/admin/rounds/:roundId/stats
+  //
+  //   Returns every bet number with:
+  //     - total bets on it
+  //     - total amount staked
+  //     - potential payout liability (amount × multiplier)
+  //     - whether it's a hot number
+  //   Sorted highest liability first.
+  //   Includes safest/riskiest number hint.
+  // ═════════════════════════════════════════════════════════════
+  @UseGuards(AdminGuard)
+  @Get('admin/rounds/:roundId/stats')
+  async roundStats(@Param('roundId', ParseIntPipe) roundId: number) {
+    try {
+      const data = await this.gameService.getRoundStats(roundId);
+      return { statusCode: HttpStatus.OK, message: 'Round stats', data };
+    } catch (error: any) {
+      throw new HttpException(
+        { statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          message: error?.message || 'Failed to fetch round stats' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+ 
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: GAME ROUNDS OVERVIEW (list of rounds with summaries)
+  //   GET /games/admin/:gameId/rounds-overview?status=CLOSED
+  //
+  //   Returns last 50 rounds for a game with betting summary.
+  //   Filter by status: OPEN | CLOSED | RESULT_PUBLISHED | SETTLED
+  //   Admin picks which round to inspect via the stats endpoint above.
+  // ═════════════════════════════════════════════════════════════
+  @UseGuards(AdminGuard)
+  @Get('admin/:gameId/rounds-overview')
+  async gameRoundsOverview(
+    @Param('gameId', ParseIntPipe) gameId: number,
+    @Query('status') status?: string,
+  ) {
+    try {
+      const data = await this.gameService.getGameRoundsOverview(gameId, status);
+      return { statusCode: HttpStatus.OK, message: 'Rounds overview', data };
+    } catch (error: any) {
+      throw new HttpException(
+        { statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          message: error?.message || 'Failed to fetch rounds overview' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+
+   // ═════════════════════════════════════════════════════════════
+  // ADMIN: LIST ALL GAMES WITH ROUND INFO
+  //   GET /games/admin/list
+  //
+  //   Returns all games. Each game includes:
+  //     - latestRound: { id, roundCode, status, openTime, closeTime,
+  //                      bets, staked, uniqueNumbers }
+  //     - rounds: { total, active, closed }
+  //     - allTime: { totalBets, totalStaked }
+  //
+  //   The latestRound.id is what admin passes to
+  //   GET /games/admin/rounds/:roundId/stats to see full breakdown.
+  // ═════════════════════════════════════════════════════════════
+  @UseGuards(AdminGuard)
+  @Get('admin/list')
+  async adminListGames() {
+    try {
+      const data = await this.gameService.adminListGames();
+      return {
+        statusCode: HttpStatus.OK,
+        message: 'Games list',
+        count: data.length,
+        data,
+      };
+    } catch (error: any) {
+      throw new HttpException(
+        { statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          message: error?.message || 'Failed to fetch games list' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+ 
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: CREATE GAME + FIRST ROUND (single call)
+  //   POST /games/admin/create-with-round
+  //
+  //   Body:
+  //   {
+  //     // Game
+  //     "code": "WX3D",
+  //     "name": "WinX 3-Digit",
+  //     "digit_length": 3,
+  //     "min_bet": 10,
+  //     "max_bet": 5000,
+  //     "payout_multiplier": 90,
+  //     "display_category": "REGULAR",       // optional
+  //     "max_payout_per_round": 100000,      // optional
+  //     "description": "Pick 3 digits",      // optional
+  //     // Round
+  //     "round_code": "R20260510-001",
+  //     "open_time": "2026-05-10T00:00:00Z",
+  //     "close_time": "2026-05-10T23:59:00Z",
+  //     "draw_time": "2026-05-11T00:30:00Z"
+  //   }
+  //
+  //   Returns: { game: {...}, round: {...} }
+  // ═════════════════════════════════════════════════════════════
+  @UseGuards(AdminGuard)
+  @Post('admin/create-with-round')
+  async createGameWithRound(@Body() body: any) {
+    try {
+      if (!body.code || !body.name || !body.digit_length) {
+        throw new BadRequestException('code, name, digit_length are required');
+      }
+      if (!body.round_code || !body.open_time || !body.close_time || !body.draw_time) {
+        throw new BadRequestException('round_code, open_time, close_time, draw_time are required');
+      }
+ 
+      const result = await this.gameService.createGameWithRound({
+        code:                body.code,
+        name:                body.name,
+        digit_length:        Number(body.digit_length),
+        min_bet:             Number(body.min_bet    ?? 10),
+        max_bet:             Number(body.max_bet    ?? 10000),
+        payout_multiplier:   Number(body.payout_multiplier ?? 90),
+        description:         body.description,
+        thumbnail_url:       body.thumbnail_url,
+        display_category:    body.display_category,
+        max_payout_per_round: body.max_payout_per_round
+          ? Number(body.max_payout_per_round) : undefined,
+        round_code:  body.round_code,
+        open_time:   body.open_time,
+        close_time:  body.close_time,
+        draw_time:   body.draw_time,
+      });
+ 
+      return {
+        statusCode: HttpStatus.CREATED,
+        message: 'Game and first round created successfully',
+        data: result,
+      };
+    } catch (error: any) {
+      throw new HttpException(
+        { statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          message: error?.message || 'Failed to create game with round' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+ 
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: CREATE ADDITIONAL ROUND FOR EXISTING GAME
+  //   POST /games/admin/create-round
+  //
+  //   Body:
+  //   {
+  //     "game_id": 1,
+  //     "round_code": "R20260511-001",
+  //     "open_time": "2026-05-11T00:00:00Z",
+  //     "close_time": "2026-05-11T23:59:00Z",
+  //     "draw_time": "2026-05-12T00:30:00Z"
+  //   }
+  //
+  //   Returns: { game: { id, name }, round: {...} }
+  // ═════════════════════════════════════════════════════════════
+  @UseGuards(AdminGuard)
+  @Post('admin/create-round')
+  async adminCreateRound(@Body() body: any) {
+    try {
+      if (!body.game_id || !body.round_code || !body.open_time ||
+          !body.close_time || !body.draw_time) {
+        throw new BadRequestException(
+          'game_id, round_code, open_time, close_time, draw_time are required',
+        );
+      }
+ 
+      const result = await this.gameService.adminCreateRound({
+        game_id:    Number(body.game_id),
+        round_code: body.round_code,
+        open_time:  body.open_time,
+        close_time: body.close_time,
+        draw_time:  body.draw_time,
+      });
+ 
+      return {
+        statusCode: HttpStatus.CREATED,
+        message: 'Round created successfully',
+        data: result,
+      };
+    } catch (error: any) {
+      throw new HttpException(
+        { statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          message: error?.message || 'Failed to create round' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════
+// PATCH: Add to game.controller.ts (before closing })
+// ═══════════════════════════════════════════════════════════════
+ 
+  // DELETE /games/admin/:id           → soft delete (deactivate)
+  // DELETE /games/admin/:id?hard=true → hard delete (only if no bets)
+  @UseGuards(AdminGuard)
+  @Delete('admin/:id')
+  async deleteGame(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('hard') hard?: string,
+  ) {
+    try {
+      const result = await this.gameService.deleteGame(id, hard === 'true');
+      return { statusCode: HttpStatus.OK, ...result };
+    } catch (error: any) {
+      throw new HttpException(
+        { statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          message: error?.message || 'Failed to delete game' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
