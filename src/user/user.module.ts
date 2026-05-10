@@ -8,7 +8,7 @@ import { AuthModule } from 'src/auth/auth.module';
   imports: [AuthModule],
   controllers: [UserController],
   providers: [UserService, JwtAuthGuard],
-  exports: [JwtAuthGuard],
+  exports: [JwtAuthGuard, UserService],
 
 })
 export class UserModule {}

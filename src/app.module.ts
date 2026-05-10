@@ -22,6 +22,7 @@ import { MemberGroupModule } from './member-group/member-group.module';
 import { PromotionModule } from './promotion/promotion.module';
 import { PromotionCmsModule } from './promotion-cms/promotion-cms.module';
 import { JackpotModule } from './jackpot/jackpot.module';
+import { AdminModule } from './admin/admin.module';
 
 @Module({
   imports: [
@@ -57,7 +58,8 @@ import { JackpotModule } from './jackpot/jackpot.module';
     MemberGroupModule,
     PromotionModule,
     PromotionCmsModule,
-    JackpotModule],
+    JackpotModule,
+    AdminModule],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
 })

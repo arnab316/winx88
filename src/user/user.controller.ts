@@ -238,4 +238,6 @@ async verifyPhone(@Req() req, @Param('phoneId') phoneId: string) {
             console.error('Error retrieving user details:', error); 
         }
       }
+
+      
 }

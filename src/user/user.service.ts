@@ -259,5 +259,20 @@ FROM users`);
         
         return users;
     }
+ async searchUser(search: string) {
+  try {
+    const user = await this.dataSource.query(
+      `SELECT to_jsonb(users) - 'password' AS user
+       FROM users
+       WHERE full_name ILIKE $1
+       OR username ILIKE $1
+       OR email ILIKE $1`,
+      [`%${search}%`],
+    );
 
+    return user;
+  } catch (error) {
+    throw new Error('Error searching user');
+  }
+}
 }
