@@ -86,3 +86,14 @@ export interface AdminAdjustmentDto {
   meta?: Record<string, any>;
 }
 
+
+export interface DepositListQuery {
+  status?:     'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL';
+  search?:     string;    // matches username, full_name, deposit_code, transaction_number
+  gatewayId?:  number;
+  userId?:     number;    // filter to one user's deposits
+  dateFrom?:   string;    // ISO date e.g. "2026-05-01"
+  dateTo?:     string;    // ISO date e.g. "2026-05-10"
+  page?:       number;
+  limit?:      number;
+}

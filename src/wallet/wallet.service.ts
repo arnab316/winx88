@@ -17,6 +17,7 @@ import {
   AdminAdjustmentDto,
   AdminDepositDecideDto,
   AdminWithdrawalDecideDto,
+  DepositListQuery,
   DepositRequestDto,
   WithdrawalRequestDto,
 } from './dto';
@@ -595,33 +596,151 @@ export class WalletService {
   // ═════════════════════════════════════════════════════════════
   // ADMIN: LIST PENDING DEPOSITS (with agent + promo info)
   // ═════════════════════════════════════════════════════════════
-  async getPendingDeposits(page = 1, limit = 20) {
-    const offset = (page - 1) * limit;
+async getPendingDeposits(q: DepositListQuery = {}) {
+    const status    = q.status   ?? 'PENDING';
+    const page      = Math.max(q.page  ?? 1, 1);
+    const limit     = Math.min(q.limit ?? 20, 100);
+    const offset    = (page - 1) * limit;
+ 
+    const where: string[] = [];
+    const params: any[]   = [];
+    let i = 1;
+ 
+    // Status filter — 'ALL' skips the status WHERE clause
+    if (status !== 'ALL') {
+      where.push(`d.status = $${i++}`);
+      params.push(status);
+    }
+ 
+    // Search — matches deposit_code, transaction_number, username, full_name,
+    //          date in YYYY-MM-DD or DD-MM-YYYY format
+    if (q.search?.trim()) {
+      const term = `%${q.search.trim()}%`;
+      where.push(
+        `(d.deposit_code ILIKE $${i}
+          OR d.transaction_number ILIKE $${i}
+          OR u.username ILIKE $${i}
+          OR u.full_name ILIKE $${i}
+          OR TO_CHAR(d.requested_at, 'YYYY-MM-DD') ILIKE $${i}
+          OR TO_CHAR(d.requested_at, 'DD-MM-YYYY') ILIKE $${i})`,
+      );
+      params.push(term);
+      i++;
+    }
+ 
+    // Gateway filter
+    if (q.gatewayId) {
+      where.push(`d.gateway_id = $${i++}`);
+      params.push(q.gatewayId);
+    }
+ 
+    // Single user filter (admin viewing one user's deposits)
+    if (q.userId) {
+      where.push(`d.user_id = $${i++}`);
+      params.push(q.userId);
+    }
+ 
+    // Date range on requested_at
+    if (q.dateFrom) {
+      where.push(`d.requested_at >= $${i++}::date`);
+      params.push(q.dateFrom);
+    }
+    if (q.dateTo) {
+      where.push(`d.requested_at < ($${i++}::date + INTERVAL '1 day')`);
+      params.push(q.dateTo);
+    }
+ 
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+ 
     const rows = await this.dataSource.query(
       `SELECT
-          d.id, d.deposit_code, d.user_id, d.amount,
-          d.transaction_number, d.screenshot_url, d.requested_at,
-          d.promotion_id,
-          u.full_name, u.username, u.email,
-          g.id AS gateway_id, g.name AS gateway_name,
-          a.id AS agent_id, a.agent_number, a.agent_code, a.wallet_type,
-          p.title AS promotion_title, p.code AS promotion_code, p.kind AS promotion_kind
+         d.id,
+         d.deposit_code,
+         d.user_id,
+         d.amount,
+         d.status,
+         d.transaction_number,
+         d.screenshot_url,
+         d.requested_at,
+         d.decided_at,
+         d.rejection_reason,
+         d.promotion_id,
+         -- User info
+         u.full_name,
+         u.username,
+         u.email,
+         -- Gateway
+         g.id   AS gateway_id,
+         g.name AS gateway_name,
+         -- Agent (where user sent money)
+         a.id           AS agent_id,
+         a.agent_number,
+         a.agent_code,
+         a.wallet_type,
+         -- Promotion (if attached)
+         p.title AS promotion_title,
+         p.code  AS promotion_code,
+         p.kind  AS promotion_kind,
+         -- Approving admin
+         adm.name  AS decided_by_name,
+         adm.email AS decided_by_email
+       FROM deposits d
+       JOIN users u           ON u.id   = d.user_id
+       JOIN payment_gateways g ON g.id  = d.gateway_id
+       LEFT JOIN agents a      ON a.id  = d.agent_id
+       LEFT JOIN promotions p  ON p.id  = d.promotion_id
+       LEFT JOIN admin_users adm ON adm.id = d.approved_by_admin_id
+       ${whereSql}
+       ORDER BY d.requested_at DESC
+       LIMIT $${i} OFFSET $${i + 1}`,
+      [...params, limit, offset],
+    );
+ 
+    const countRows = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total
        FROM deposits d
        JOIN users u ON u.id = d.user_id
-       JOIN payment_gateways g ON g.id = d.gateway_id
-       LEFT JOIN agents a ON a.id = d.agent_id
-       LEFT JOIN promotions p ON p.id = d.promotion_id
-       WHERE d.status = 'PENDING'
-       ORDER BY d.requested_at ASC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset],
+       ${whereSql}`,
+      params,
     );
-
-    const count = await this.dataSource.query(
-      `SELECT COUNT(*)::int AS total FROM deposits WHERE status = 'PENDING'`,
+ 
+    return {
+      data:  rows,
+      total: countRows[0].total,
+      page,
+      limit,
+      filters: {
+        status,
+        search:    q.search    ?? null,
+        gatewayId: q.gatewayId ?? null,
+        userId:    q.userId    ?? null,
+        dateFrom:  q.dateFrom  ?? null,
+        dateTo:    q.dateTo    ?? null,
+      },
+    };
+  }
+ 
+  // ─── ADD getDepositById() ────────────────────────────────────
+  async getDepositById(depositId: number) {
+    const rows = await this.dataSource.query(
+      `SELECT
+         d.*,
+         u.full_name, u.username, u.email,
+         g.name AS gateway_name,
+         a.agent_number, a.agent_code, a.wallet_type,
+         p.title AS promotion_title, p.code AS promotion_code,
+         adm.name AS decided_by_name
+       FROM deposits d
+       JOIN users u            ON u.id  = d.user_id
+       JOIN payment_gateways g ON g.id  = d.gateway_id
+       LEFT JOIN agents a      ON a.id  = d.agent_id
+       LEFT JOIN promotions p  ON p.id  = d.promotion_id
+       LEFT JOIN admin_users adm ON adm.id = d.approved_by_admin_id
+       WHERE d.id = $1`,
+      [depositId],
     );
-
-    return { data: rows, total: count[0].total, page, limit };
+    if (!rows.length) throw new NotFoundException('Deposit not found');
+    return rows[0];
   }
 
   // ═════════════════════════════════════════════════════════════
