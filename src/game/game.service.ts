@@ -1605,6 +1605,143 @@ export class GameService {
       }),
     };
   }
-
+ 
+  // ═════════════════════════════════════════════════════════════
+  // USER: MY BET HISTORY
+  //   Paginated list of all bets the logged-in user has placed.
+  //
+  //   GET /games/my-bets
+  //   GET /games/my-bets?status=WON
+  //   GET /games/my-bets?gameId=1
+  //   GET /games/my-bets?page=1&limit=20
+  // ═════════════════════════════════════════════════════════════
+  async getUserBetHistory(userId: number, q: {
+    status?:  string;   // WON | LOST | PLACED | CANCELLED
+    gameId?:  number;
+    page?:    number;
+    limit?:   number;
+  }) {
+    const page  = Math.max(q.page  ?? 1, 1);
+    const limit = Math.min(q.limit ?? 20, 100);
+    const offset = (page - 1) * limit;
+ 
+    const where: string[] = [`b.user_id = $1`];
+    const params: any[]   = [userId];
+    let i = 2;
+ 
+    if (q.status) {
+      where.push(`b.result_status = $${i++}`);
+      params.push(q.status.toUpperCase());
+    }
+    if (q.gameId) {
+      where.push(`b.game_id = $${i++}`);
+      params.push(q.gameId);
+    }
+ 
+    params.push(limit, offset);
+ 
+    const rows = await this.dataSource.query(
+      `SELECT
+         b.id             AS bet_id,
+         b.bet_code,
+         b.bet_number,
+         b.bet_amount,
+         b.payout_multiplier,
+         b.potential_payout,
+         b.result_status,
+         b.placed_at,
+         b.settled_at,
+         -- Game info
+         g.id             AS game_id,
+         g.name           AS game_name,
+         g.digit_length,
+         -- Round info
+         gr.id            AS round_id,
+         gr.round_code,
+         gr.draw_time,
+         gr.status        AS round_status,
+         -- Result (null if not announced yet)
+         res.result_number,
+         -- Did user win this bet?
+         CASE
+           WHEN b.result_status = 'WON'  THEN b.potential_payout
+           WHEN b.result_status = 'LOST' THEN 0
+           ELSE NULL
+         END AS actual_payout
+       FROM bets b
+       JOIN games g        ON g.id  = b.game_id
+       JOIN game_rounds gr ON gr.id = b.round_id
+       LEFT JOIN game_results res ON res.round_id = b.round_id
+       WHERE ${where.join(' AND ')}
+       ORDER BY b.placed_at DESC
+       LIMIT $${i} OFFSET $${i + 1}`,
+      params,
+    );
+ 
+      const countRows = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total
+       FROM bets b
+       WHERE ${where.join(' AND ')}`,
+      params.slice(0, -2),
+    );
+ 
+    // Summary stats for this filter set
+    const statsRows = await this.dataSource.query(
+      `SELECT
+         COUNT(*)::int                                                  AS total_bets,
+         COUNT(*) FILTER (WHERE b.result_status = 'WON')::int          AS total_wins,
+         COUNT(*) FILTER (WHERE b.result_status = 'LOST')::int         AS total_losses,
+         COUNT(*) FILTER (WHERE b.result_status = 'PLACED')::int       AS total_pending,
+         COALESCE(SUM(b.bet_amount), 0)::numeric                       AS total_staked,
+         COALESCE(SUM(b.potential_payout)
+           FILTER (WHERE b.result_status = 'WON'), 0)::numeric         AS total_won
+       FROM bets b
+       WHERE ${where.join(' AND ')}`,
+      params.slice(0, -2),
+    );
+ 
+    const stats = statsRows[0];
+ 
+    return {
+      data: rows.map((r: any) => ({
+        betId:           Number(r.bet_id),
+        betCode:         r.bet_code,
+        betNumber:       r.bet_number,
+        betAmount:       parseFloat(r.bet_amount),
+        payoutMultiplier: parseFloat(r.payout_multiplier),
+        potentialPayout: parseFloat(r.potential_payout),
+        actualPayout:    r.actual_payout !== null ? parseFloat(r.actual_payout) : null,
+        status:          r.result_status,
+        placedAt:        r.placed_at,
+        settledAt:       r.settled_at,
+        game: {
+          id:          Number(r.game_id),
+          name:        r.game_name,
+          digitLength: Number(r.digit_length),
+        },
+        round: {
+          id:           Number(r.round_id),
+          roundCode:    r.round_code,
+          drawTime:     r.draw_time,
+          status:       r.round_status,
+          resultNumber: r.result_number ?? null,
+        },
+      })),
+      page,
+      limit,
+      total: countRows[0].total,
+      totalPages: Math.ceil(countRows[0].total / limit),
+      summary: {
+        totalBets:    Number(stats.total_bets),
+        totalWins:    Number(stats.total_wins),
+        totalLosses:  Number(stats.total_losses),
+        totalPending: Number(stats.total_pending),
+        totalStaked:  parseFloat(stats.total_staked),
+        totalWon:     parseFloat(stats.total_won),
+        netPL:        parseFloat(stats.total_won) - parseFloat(stats.total_staked),
+      },
+    };
+  }
+ 
 
 }

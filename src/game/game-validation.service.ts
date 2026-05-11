@@ -27,7 +27,7 @@ export class GameValidationService {
    * Pass the caller's QueryRunner if inside a transaction
    * (so the read is consistent with the rest of the txn).
    */
-  async ensureNoPendingBets(
+ async ensureNoPendingBets(
     qrOrNull: QueryRunner | null,
     userId: number,
   ): Promise<void> {
@@ -35,15 +35,15 @@ export class GameValidationService {
 
     const rows = await runner.query(
       `SELECT b.id, b.bet_code, b.bet_amount, b.bet_number,
-              b.created_at,
+              b.placed_at,
               gr.round_code, gr.status AS round_status,
               g.name AS game_name
        FROM bets b
        JOIN game_rounds gr ON gr.id = b.round_id
        JOIN games g       ON g.id = b.game_id
        WHERE b.user_id = $1
-         AND b.result_status IN ('PENDING', 'OPEN')
-       ORDER BY b.created_at ASC
+         AND b.result_status = 'PLACED'
+       ORDER BY b.placed_at ASC
        LIMIT 5`,
       [userId],
     );
@@ -65,6 +65,7 @@ export class GameValidationService {
       })),
     });
   }
+
 
   /**
    * Lightweight version for UI hints — returns count, doesn't throw.
