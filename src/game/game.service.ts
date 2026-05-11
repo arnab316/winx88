@@ -428,54 +428,132 @@ export class GameService {
   // PUBLIC: LIST GAMES (filterable — main listing endpoint)
   //   Filters: isActive, isHot, isJackpotBadge, category, digitLength
   // ═════════════════════════════════════════════════════════════
-  async listGames(q: ListGamesQueryDto) {
+
+ async listGames(q: ListGamesQueryDto) {
     const where: string[] = [];
     const params: any[] = [];
     let i = 1;
-
-    // Default to active-only for public consumption
+ 
     if (q.isActive !== undefined) {
-      where.push(`is_active = $${i++}`);
+      where.push(`g.is_active = $${i++}`);
       params.push(q.isActive);
     } else {
-      where.push(`is_active = TRUE`);
+      where.push(`g.is_active = TRUE`);
     }
     if (q.isHot !== undefined) {
-      where.push(`is_hot = $${i++}`);
+      where.push(`g.is_hot = $${i++}`);
       params.push(q.isHot);
     }
     if (q.isJackpotBadge !== undefined) {
-      where.push(`is_jackpot_badge = $${i++}`);
+      where.push(`g.is_jackpot_badge = $${i++}`);
       params.push(q.isJackpotBadge);
     }
     if (q.category) {
-      where.push(`display_category = $${i++}`);
+      where.push(`g.display_category = $${i++}`);
       params.push(q.category);
     }
     if (q.digitLength) {
-      where.push(`digit_length = $${i++}`);
+      where.push(`g.digit_length = $${i++}`);
       params.push(q.digitLength);
     }
-
+ 
     const whereSql = `WHERE ${where.join(' AND ')}`;
-
-    return this.dataSource.query(
-      `SELECT id, code, name, description, thumbnail_url,
-              digit_length, min_bet, max_bet, payout_multiplier,
-              max_payout_per_round, result_mode,
-              is_hot, hot_priority, is_jackpot_badge,
-              display_category, is_active, created_at, updated_at
-       FROM games
+ 
+    const rows = await this.dataSource.query(
+      `SELECT
+         g.id, g.code, g.name, g.description, g.thumbnail_url,
+         g.digit_length, g.min_bet, g.max_bet, g.payout_multiplier,
+         g.max_payout_per_round, g.result_mode,
+         g.is_hot, g.hot_priority, g.is_jackpot_badge,
+         g.display_category, g.is_active, g.created_at, g.updated_at,
+ 
+         -- Active round (where user can bet RIGHT NOW)
+         ar.id                                                    AS active_round_id,
+         ar.round_code                                            AS active_round_code,
+         ar.open_time                                             AS active_round_open,
+         ar.close_time                                            AS active_round_close,
+         ar.draw_time                                             AS active_round_draw,
+         EXTRACT(EPOCH FROM (ar.close_time - NOW()))::int         AS active_round_seconds_left,
+ 
+         -- Jackpot pool (if game has jackpot badge + active pool)
+         jp.id            AS jackpot_pool_id,
+         jp.name_en       AS jackpot_pool_name,
+         jp.prize_amount  AS jackpot_prize_amount,
+         jp.currency      AS jackpot_currency,
+         jp.ends_at       AS jackpot_ends_at
+ 
+       FROM games g
+ 
+       -- Closest OPEN round that hasn't closed yet
+       LEFT JOIN LATERAL (
+         SELECT id, round_code, open_time, close_time, draw_time
+         FROM game_rounds
+         WHERE game_id = g.id
+           AND status = 'OPEN'
+           AND close_time > NOW()
+         ORDER BY close_time ASC
+         LIMIT 1
+       ) ar ON true
+ 
+       -- Active jackpot pool (only for jackpot-badged games)
+       LEFT JOIN LATERAL (
+         SELECT id, name_en, prize_amount, currency, ends_at
+         FROM jackpot_pools
+         WHERE status = 'ACTIVE'
+           AND starts_at <= NOW()
+           AND ends_at > NOW()
+         ORDER BY ends_at ASC
+         LIMIT 1
+       ) jp ON g.is_jackpot_badge = TRUE
+ 
        ${whereSql}
        ORDER BY
-         is_hot DESC,
-         hot_priority DESC,
-         display_category ASC,
-         id ASC`,
+         g.is_hot DESC,
+         g.hot_priority DESC,
+         g.display_category ASC,
+         g.id ASC`,
       params,
     );
+ 
+    return rows.map((g: any) => ({
+      id:               Number(g.id),
+      code:             g.code,
+      name:             g.name,
+      description:      g.description,
+      thumbnailUrl:     g.thumbnail_url,
+      digitLength:      Number(g.digit_length),
+      minBet:           parseFloat(g.min_bet),
+      maxBet:           parseFloat(g.max_bet),
+      payoutMultiplier: parseFloat(g.payout_multiplier),
+      maxPayoutPerRound: g.max_payout_per_round ? parseFloat(g.max_payout_per_round) : null,
+      isHot:            g.is_hot,
+      hotPriority:      g.hot_priority,
+      isJackpotBadge:   g.is_jackpot_badge,
+      displayCategory:  g.display_category,
+      isActive:         g.is_active,
+ 
+      // ← THE KEY ADDITION: active round info
+      // activeRound is null if game has no open round right now
+      activeRound: g.active_round_id ? {
+        id:              Number(g.active_round_id),   // ← pass this as round_id in POST /games/bet
+        roundCode:       g.active_round_code,
+        openTime:        g.active_round_open,
+        closeTime:       g.active_round_close,
+        drawTime:        g.active_round_draw,
+        secondsUntilClose: Number(g.active_round_seconds_left),
+        canBet:          Number(g.active_round_seconds_left) > 0,
+      } : null,
+ 
+      // Jackpot pool info
+      jackpot: g.jackpot_pool_id ? {
+        poolId:      Number(g.jackpot_pool_id),
+        name:        g.jackpot_pool_name,
+        prizeAmount: parseFloat(g.jackpot_prize_amount),
+        currency:    g.jackpot_currency,
+        endsAt:      g.jackpot_ends_at,
+      } : null,
+    }));
   }
-
   // ═════════════════════════════════════════════════════════════
   // PUBLIC: GET ONE GAME (detail page)
   //   Returns the game + a small summary block (active rounds count,
@@ -563,38 +641,69 @@ export class GameService {
   // PUBLIC: LIST ROUNDS FOR A GAME
   //   Filterable by status (OPEN, CLOSED, RESULT_PUBLISHED, SETTLED)
   // ═════════════════════════════════════════════════════════════
-  async listRoundsForGame(gameId: number, q: ListRoundsQueryDto) {
-    // Verify game exists
+   async listRoundsForGame(gameId: number, q: ListRoundsQueryDto) {
     const game = await this.dataSource.query(
       `SELECT id FROM games WHERE id = $1`, [gameId],
     );
     if (!game.length) throw new NotFoundException('Game not found');
-
+ 
     const where: string[] = [`gr.game_id = $1`];
     const params: any[] = [gameId];
     let i = 2;
-
+ 
     if (q.status) {
       where.push(`gr.status = $${i++}`);
       params.push(q.status);
     }
-
-    const limit = q.limit ?? 20;
+ 
+    // Date filter — 'today' shortcut or explicit YYYY-MM-DD
+    if ((q as any).date) {
+      const dateVal: string = (q as any).date;
+      let targetDate: string;
+ 
+      if (dateVal.toLowerCase() === 'today') {
+        targetDate = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+      } else if (/^\d{4}-\d{2}-\d{2}$/.test(dateVal)) {
+        targetDate = dateVal;
+      } else {
+        throw new BadRequestException('date must be "today" or YYYY-MM-DD format');
+      }
+ 
+      // Match rounds whose draw_time falls on the target date (server timezone UTC)
+      where.push(`gr.draw_time::date = $${i++}::date`);
+      params.push(targetDate);
+    }
+ 
+    const limit = Math.min(q.limit ?? 50, 200);
     params.push(limit);
-
-    return this.dataSource.query(
-      `SELECT gr.id, gr.game_id, gr.round_code, gr.open_time,
-              gr.close_time, gr.draw_time, gr.status, gr.created_at,
-              res.result_number AS result_number,
-              res.created_at    AS result_announced_at,
-              (SELECT COUNT(*)::int FROM bets b WHERE b.round_id = gr.id) AS total_bets
+ 
+    const rows = await this.dataSource.query(
+      `SELECT
+         gr.id, gr.game_id, gr.round_code,
+         gr.open_time, gr.close_time, gr.draw_time,
+         gr.status, gr.created_at,
+         res.result_number,
+         res.created_at AS result_announced_at,
+         (SELECT COUNT(*)::int FROM bets b WHERE b.round_id = gr.id) AS total_bets,
+         -- Derive UI-friendly status label
+         CASE
+           WHEN gr.status = 'SETTLED' THEN 'Completed'
+           WHEN gr.status = 'RESULT_PUBLISHED' THEN 'Completed'
+           WHEN gr.status = 'CLOSED' THEN 'Processing'
+           WHEN gr.status = 'OPEN' AND gr.open_time > NOW() THEN 'Upcoming'
+           WHEN gr.status = 'OPEN' AND gr.close_time > NOW() THEN 'Live'
+           WHEN gr.status = 'OPEN' AND gr.close_time <= NOW() THEN 'Closing'
+           ELSE gr.status
+         END AS display_status
        FROM game_rounds gr
        LEFT JOIN game_results res ON res.round_id = gr.id
        WHERE ${where.join(' AND ')}
-       ORDER BY gr.open_time DESC
+       ORDER BY gr.draw_time ASC
        LIMIT $${i}`,
       params,
     );
+ 
+    return rows;
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -1382,7 +1491,120 @@ export class GameService {
     };
   }
 
-  
+   async getPublicResultsFeed(q: {
+    hours?: number;
+    gameId?: number;
+    digitLength?: number;
+    limit?: number;
+  }) {
+    // Clamp hours: default 24, max 168 (7 days)
+    const hours   = Math.min(Math.max(Number(q.hours ?? 24), 1), 168);
+    const limit   = Math.min(Math.max(Number(q.limit ?? 50), 1), 200);
+ 
+    const where: string[] = [
+      `res.created_at >= NOW() - ($1 || ' hours')::interval`,
+      `gr.status IN ('RESULT_PUBLISHED', 'SETTLED')`,
+    ];
+    const params: any[] = [hours];
+    let i = 2;
+ 
+    if (q.gameId) {
+      where.push(`res.game_id = $${i++}`);
+      params.push(q.gameId);
+    }
+    if (q.digitLength) {
+      where.push(`g.digit_length = $${i++}`);
+      params.push(q.digitLength);
+    }
+ 
+    params.push(limit);
+ 
+    const rows = await this.dataSource.query(
+      `SELECT
+         -- Game info
+         g.id               AS game_id,
+         g.name             AS game_name,
+         g.digit_length,
+         g.payout_multiplier,
+ 
+         -- Round info
+         gr.id              AS round_id,
+         gr.round_code,
+         gr.close_time,
+         gr.draw_time,
+         gr.status          AS round_status,
+ 
+         -- Result
+         res.result_number,
+         res.created_at     AS result_announced_at,
+ 
+         -- Bet stats for this round
+         COUNT(b.id)::int                                              AS total_bets,
+         COUNT(b.id) FILTER (WHERE b.result_status = 'WON')::int      AS total_winners,
+         COALESCE(SUM(b.bet_amount), 0)::numeric                      AS total_staked,
+         COALESCE(SUM(b.potential_payout)
+           FILTER (WHERE b.result_status = 'WON'), 0)::numeric        AS total_paid_out
+ 
+       FROM game_results res
+       JOIN game_rounds gr ON gr.id = res.round_id
+       JOIN games g        ON g.id  = res.game_id
+       LEFT JOIN bets b    ON b.round_id = res.round_id
+ 
+       WHERE ${where.join(' AND ')}
+ 
+       GROUP BY
+         g.id, g.name, g.digit_length, g.payout_multiplier,
+         gr.id, gr.round_code, gr.close_time, gr.draw_time, gr.status,
+         res.result_number, res.created_at
+ 
+       ORDER BY res.created_at DESC
+       LIMIT $${i}`,
+      params,
+    );
+ 
+    const multiplier = 0; // placeholder — set per row below
+ 
+    return {
+      hoursShown: hours,
+      count: rows.length,
+      results: rows.map((r: any) => {
+        const mult = parseFloat(r.payout_multiplier);
+        // Example win calculation — "if you bet ৳100 on the winning number"
+        const exampleBet = 100;
+        const examplePayout = exampleBet * mult;
+ 
+        return {
+          gameId:       Number(r.game_id),
+          gameName:     r.game_name,
+          gameType:     `${r.digit_length}D`,       // "1D", "3D", "4D", "5D"
+          digitLength:  Number(r.digit_length),
+ 
+          roundId:      Number(r.round_id),
+          roundCode:    r.round_code,
+          drawTime:     r.draw_time,
+          announcedAt:  r.result_announced_at,
+ 
+          resultNumber: r.result_number,
+ 
+          // Payout info — what users care about most
+          multiplier:   mult,
+          exampleWin: {
+            betAmount:     exampleBet,
+            resultAmount:  examplePayout,
+            label: `Bet ৳${exampleBet} → Win ৳${examplePayout}`,
+          },
+ 
+          // Round stats
+          stats: {
+            totalBets:    Number(r.total_bets),
+            totalWinners: Number(r.total_winners),
+            totalStaked:  parseFloat(r.total_staked),
+            totalPaidOut: parseFloat(r.total_paid_out),
+          },
+        };
+      }),
+    };
+  }
 
 
 }

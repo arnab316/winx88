@@ -92,7 +92,12 @@ export class ListGamesQueryDto {
 export class ListRoundsQueryDto {
   @IsOptional() @IsIn(ROUND_STATUSES)
   status?: RoundStatus;
-
+ 
+  @IsOptional() @IsString()
+  date?: string;          // 'today' | 'YYYY-MM-DD'
+ 
   @IsOptional() @IsInt() @Min(1) @Max(200)
-  limit?: number = 20;
+  limit?: number = 50;
 }
+ 
+ 

@@ -662,4 +662,41 @@ export class GameController {
       );
     }
   }
+
+
+  
+  // GET /games/results/feed
+  // GET /games/results/feed?hours=48&gameId=1&digitLength=3&limit=50
+  //
+  // Public — no auth needed.
+  // Shows last 24hrs of settled results by default (max 7 days).
+  //
+  // Query params:
+  //   hours        = 1–168    (default 24)
+  //   gameId       = number   (filter to one game)
+  //   digitLength  = 1|3|4|5  (filter to game type)
+  //   limit        = 1–200    (default 50)
+  @Get('results/feed')
+  async publicResultsFeed(
+    @Query('hours',       new DefaultValuePipe(24),  ParseIntPipe) hours:       number,
+    @Query('gameId',      new DefaultValuePipe(0),   ParseIntPipe) gameId:      number,
+    @Query('digitLength', new DefaultValuePipe(0),   ParseIntPipe) digitLength: number,
+    @Query('limit',       new DefaultValuePipe(50),  ParseIntPipe) limit:       number,
+  ) {
+    try {
+      const data = await this.gameService.getPublicResultsFeed({
+        hours,
+        gameId:      gameId      > 0 ? gameId      : undefined,
+        digitLength: digitLength > 0 ? digitLength : undefined,
+        limit,
+      });
+      return { statusCode: HttpStatus.OK, ...data };
+    } catch (error: any) {
+      throw new HttpException(
+        { statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          message: error?.message || 'Failed to fetch results feed' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
 }
