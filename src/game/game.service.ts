@@ -1743,5 +1743,176 @@ export class GameService {
     };
   }
  
-
+// ═══════════════════════════════════════════════════════════════
+// PATCH 1: ADD to game.service.ts — paste before closing }
+//
+// Two new methods:
+//   getAllActiveRounds()     — all open rounds across all games
+//   getGamesWithActiveRounds() — games that have at least 1 open round
+// ═══════════════════════════════════════════════════════════════
+ 
+  // ═════════════════════════════════════════════════════════════
+  // PUBLIC: ALL ACTIVE ROUNDS (across all games)
+  //   Shows every OPEN round that hasn't closed yet.
+  //   Used by frontend homepage / betting lobby.
+  //
+  //   GET /games/active-rounds
+  //   GET /games/active-rounds?digitLength=3    ← filter by game type
+  //   GET /games/active-rounds?gameId=1         ← filter to one game
+  // ═════════════════════════════════════════════════════════════
+  async getAllActiveRounds(q: {
+    digitLength?: number;
+    gameId?:      number;
+  } = {}) {
+    const where: string[] = [
+      `gr.status = 'OPEN'`,
+      `gr.close_time > NOW()`,
+      `g.is_active = TRUE`,
+    ];
+    const params: any[] = [];
+    let i = 1;
+ 
+    if (q.gameId) {
+      where.push(`gr.game_id = $${i++}`);
+      params.push(q.gameId);
+    }
+    if (q.digitLength) {
+      where.push(`g.digit_length = $${i++}`);
+      params.push(q.digitLength);
+    }
+ 
+    const rows = await this.dataSource.query(
+      `SELECT
+         -- Round info
+         gr.id                                                        AS round_id,
+         gr.round_code,
+         gr.open_time,
+         gr.close_time,
+         gr.draw_time,
+         EXTRACT(EPOCH FROM (gr.close_time - NOW()))::int             AS seconds_until_close,
+ 
+         -- Game info (everything frontend needs to render a betting card)
+         g.id                                                         AS game_id,
+         g.name                                                       AS game_name,
+         g.code                                                       AS game_code,
+         g.digit_length,
+         g.min_bet,
+         g.max_bet,
+         g.payout_multiplier,
+         g.max_payout_per_round,
+         g.is_hot,
+         g.is_jackpot_badge,
+         g.display_category,
+         g.thumbnail_url,
+ 
+         -- Live betting stats for this round
+         COUNT(b.id)::int                                             AS total_bets,
+         COUNT(DISTINCT b.user_id)::int                               AS unique_bettors,
+         COALESCE(SUM(b.bet_amount), 0)::numeric                      AS total_staked,
+ 
+         -- Hot numbers for this game (active ones only)
+         (
+           SELECT json_agg(json_build_object(
+             'number', hn.number,
+             'note',   hn.note,
+             'priority', hn.priority
+           ) ORDER BY hn.priority DESC)
+           FROM game_hot_numbers hn
+           WHERE hn.game_id = g.id AND hn.is_active = TRUE
+         ) AS hot_numbers
+ 
+       FROM game_rounds gr
+       JOIN games g ON g.id = gr.game_id
+       LEFT JOIN bets b
+         ON b.round_id = gr.id
+        AND b.result_status = 'PLACED'
+       WHERE ${where.join(' AND ')}
+       GROUP BY gr.id, g.id
+       ORDER BY
+         g.is_hot DESC,
+         g.hot_priority DESC,
+         gr.close_time ASC`,
+      params,
+    );
+ 
+    return rows.map((r: any) => ({
+      roundId:          Number(r.round_id),
+      roundCode:        r.round_code,
+      openTime:         r.open_time,
+      closeTime:        r.close_time,
+      drawTime:         r.draw_time,
+      secondsUntilClose: Number(r.seconds_until_close),
+      isClosingSoon:    Number(r.seconds_until_close) <= 300,  // <= 5 min warning
+ 
+      game: {
+        id:               Number(r.game_id),
+        name:             r.game_name,
+        code:             r.game_code,
+        digitLength:      Number(r.digit_length),
+        minBet:           parseFloat(r.min_bet),
+        maxBet:           parseFloat(r.max_bet),
+        payoutMultiplier: parseFloat(r.payout_multiplier),
+        maxPayoutPerRound: r.max_payout_per_round
+          ? parseFloat(r.max_payout_per_round) : null,
+        isHot:            r.is_hot,
+        isJackpotBadge:   r.is_jackpot_badge,
+        displayCategory:  r.display_category,
+        thumbnailUrl:     r.thumbnail_url,
+      },
+ 
+      liveStats: {
+        totalBets:     Number(r.total_bets),
+        uniqueBettors: Number(r.unique_bettors),
+        totalStaked:   parseFloat(r.total_staked),
+      },
+ 
+      hotNumbers: r.hot_numbers ?? [],
+    }));
+  }
+ 
+  // ═════════════════════════════════════════════════════════════
+  // PUBLIC: GAMES WITH ACTIVE ROUNDS ONLY
+  //   Same as listGames() but only returns games that currently
+  //   have at least one OPEN round. Shows the soonest-closing
+  //   round per game.
+  //
+  //   GET /games/with-active-rounds
+  // ═════════════════════════════════════════════════════════════
+  async getGamesWithActiveRounds() {
+    return this.dataSource.query(
+      `SELECT
+         g.id, g.code, g.name, g.description, g.thumbnail_url,
+         g.digit_length, g.min_bet, g.max_bet, g.payout_multiplier,
+         g.max_payout_per_round, g.is_hot, g.is_jackpot_badge,
+         g.display_category,
+ 
+         -- Soonest-closing open round
+         ar.id              AS active_round_id,
+         ar.round_code      AS active_round_code,
+         ar.open_time       AS active_round_open,
+         ar.close_time      AS active_round_close,
+         ar.draw_time       AS active_round_draw,
+         EXTRACT(EPOCH FROM (ar.close_time - NOW()))::int AS seconds_until_close,
+ 
+         -- Count of open rounds for this game
+         (SELECT COUNT(*)::int FROM game_rounds gr2
+          WHERE gr2.game_id = g.id
+            AND gr2.status = 'OPEN'
+            AND gr2.close_time > NOW()) AS open_rounds_count
+ 
+       FROM games g
+       -- Only games that have at least 1 open round
+       JOIN LATERAL (
+         SELECT id, round_code, open_time, close_time, draw_time
+         FROM game_rounds
+         WHERE game_id = g.id
+           AND status = 'OPEN'
+           AND close_time > NOW()
+         ORDER BY close_time ASC
+         LIMIT 1
+       ) ar ON true
+       WHERE g.is_active = TRUE
+       ORDER BY g.is_hot DESC, g.hot_priority DESC, ar.close_time ASC`,
+    );
+  }
 }
