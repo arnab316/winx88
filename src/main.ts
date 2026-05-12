@@ -23,9 +23,11 @@ async function bootstrap() {
       'http://15.207.97.72:5173',
       'http://15.207.97.72:4173',
       'https://winx-88.com',
+      'https://www.winx-88.com',
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-    credentials: true,
+    // credentials: true,
+    credentials: 'include',
     allowedHeaders: ['Content-Type', 'Authorization'],
   });
 
