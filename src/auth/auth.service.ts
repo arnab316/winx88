@@ -808,6 +808,10 @@ export class AuthService {
        WHERE p.phone_number = $1 AND p.is_primary = true LIMIT 1`,
       [loginId],
     );
+   // check  account status 
+      if (userRows.length && userRows[0].account_status !== 'ACTIVE') {
+        throw new UnauthorizedException(`Account is ${userRows[0].account_status}`);
+      }
 
     // Try email
     if (!userRows.length) {
@@ -842,7 +846,7 @@ export class AuthService {
     );
     const phoneVerified    = phoneRow.length ? Boolean(phoneRow[0].is_verified) : false;
     const primaryPhone     = phoneRow.length ? phoneRow[0].phone_number : null;
-
+   
     // Update last login
     await this.dataSource.query(
       `UPDATE users SET last_login_at = NOW() WHERE id = $1`, [u.id],

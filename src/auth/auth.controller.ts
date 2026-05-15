@@ -604,4 +604,18 @@ export class AuthController {
   async verifyOtpAndRegister(@Body() dto: any) {
     return this.register(dto, { ip: 'legacy' } as any);
   }
+  @Get('isuername-taken/:username')
+  async isUsernameTaken(@Param('username') username: string) {
+    try {
+      const result = await this.authService.isUsernameTaken(username);
+      return { success: true, code: 200, message: 'Check completed', data: { isTaken: result } };
+    } catch (error: any) {
+      throw new HttpException(
+        { success: false, message: error.message || 'Failed to check username' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    } 
+  }
+
+
 }
