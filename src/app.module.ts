@@ -23,6 +23,7 @@ import { PromotionModule } from './promotion/promotion.module';
 import { PromotionCmsModule } from './promotion-cms/promotion-cms.module';
 import { JackpotModule } from './jackpot/jackpot.module';
 import { AdminModule } from './admin/admin.module';
+import { HeroBannerModule } from './hero-banner/hero-banner.module';
 
 @Module({
   imports: [
@@ -59,7 +60,8 @@ import { AdminModule } from './admin/admin.module';
     PromotionModule,
     PromotionCmsModule,
     JackpotModule,
-    AdminModule],
+    AdminModule,
+    HeroBannerModule],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
 })
