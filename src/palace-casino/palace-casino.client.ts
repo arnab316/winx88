@@ -54,7 +54,7 @@ export class PalaceCasinoClient {
       return data as T;
     } catch (err: any) {
      this.logger.error(
-    `Palace API failed [${path}]: ${JSON.stringify(err.response?.data ?? err.message)}`
+    `Palace API failed [${path}]: ${JSON.stringify(err.response ?? err.message)}`
   );
   this.logger.error(`Status: ${err.response?.status} | URL: ${this.baseUrl}${path}`);
   this.logger.error(`Token used: ${this.token?.slice(0, 8)}...`);

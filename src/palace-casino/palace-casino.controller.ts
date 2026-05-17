@@ -24,24 +24,23 @@ import {
  * All routes require JWT auth (the user must be logged in to your platform).
  */
 @Controller('slot')
-@UseGuards(JwtAuthGuard)
 export class PalaceCasinoController {
   private readonly logger = new Logger(PalaceCasinoController.name);
 
   constructor(
     private readonly palace: PalaceCasinoClient,
     private readonly dataSource: DataSource,
-    
-  ) {}
+
+  ) { }
 
   // ─── Game catalog ──────────────────────────────────────────────────────
   @Get('providers')
   async providers(@Query('lang') lang?: string) {
-    try{
+    try {
       const list = await this.palace.providerList(lang ? Number(lang) : 1);
       this.logger.log(`Fetched ${list} providers from Palace`);
       return list;
-    }catch(err:any){
+    } catch (err: any) {
       this.logger.error(`Error fetching providers: ${JSON.stringify(err)}`);
       throw err;
     }
@@ -58,8 +57,10 @@ export class PalaceCasinoController {
    * 2. Generate the game URL
    * 3. Return URL to frontend, which loads it in an iframe / webview
    */
+  @UseGuards(JwtAuthGuard)
   @Post('launch')
   async launch(@Req() req: any, @Body() body: LaunchGameDto) {
+    console.log('Launch body received:', body);
     const userId = req.user.sub;
     const palaceUserCode = await this.ensurePalaceUser(userId);
 
@@ -87,6 +88,7 @@ export class PalaceCasinoController {
    * If you use Seamless / Callback mode (the default Palace integration),
    * you don't need this — bet/win callbacks handle the wallet directly.
    */
+  @UseGuards(JwtAuthGuard)
   @Post('wallet/deposit')
   async depositToPalace(@Req() req: any, @Body() body: TransferDto) {
     const userId = req.user.sub;
@@ -128,6 +130,7 @@ export class PalaceCasinoController {
   }
 
   /** Pull all funds from Palace back to player's main wallet. */
+  @UseGuards(JwtAuthGuard)
   @Post('wallet/withdraw-all')
   async withdrawAllFromPalace(@Req() req: any) {
     const userId = req.user.sub;
@@ -148,6 +151,7 @@ export class PalaceCasinoController {
 
   // ─── Transaction history ───────────────────────────────────────────────
   @Get('transactions')
+  @UseGuards(JwtAuthGuard)
   async transactions(@Req() req: any) {
     const userId = req.user.sub;
     const rows = await this.dataSource.query(
