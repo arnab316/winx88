@@ -148,7 +148,7 @@ export class PalaceCasinoController {
 
     return { status: 'success', code: 200, data: result.data };
   }
-
+ 
   // ─── Transaction history ───────────────────────────────────────────────
   @Get('transactions')
   @UseGuards(JwtAuthGuard)
