@@ -584,83 +584,110 @@ export class AuthService {
   //   User can log in right away.
   //   OTP verification is a separate step done later.
   // ═════════════════════════════════════════════════════════════
-  async register(dto: any) {
-    const { full_name, username, phone_number, password, email } = dto;
+async register(dto: any) {
+  const { full_name, username, phone_number, password, email } = dto;
 
-    if (!full_name || !username || !phone_number || !password) {
-      throw new BadRequestException('full_name, username, phone_number, password are required');
-    }
-    if (password.length < 6) {
-      throw new BadRequestException('Password must be at least 6 characters');
-    }
-
-    const qr = this.dataSource.createQueryRunner();
-    await qr.connect();
-    await qr.startTransaction();
-
-    try {
-      // Check username not taken
-      const usernameTaken = await qr.query(
-        `SELECT 1 FROM users WHERE username = $1 LIMIT 1`, [username],
-      );
-      if (usernameTaken.length) throw new BadRequestException('Username already taken');
-
-      // Check phone not already registered
-      const phoneTaken = await qr.query(
-        `SELECT 1 FROM user_phone_numbers WHERE phone_number = $1 LIMIT 1`, [phone_number],
-      );
-      if (phoneTaken.length) throw new BadRequestException('Phone number already registered');
-
-      // Check email if provided
-      if (email) {
-        const emailTaken = await qr.query(
-          `SELECT 1 FROM users WHERE email = $1 LIMIT 1`, [email],
-        );
-        if (emailTaken.length) throw new BadRequestException('Email already in use');
-      }
-
-      const hashedPassword = await bcrypt.hash(password, 10);
-      const userCode = generateUserCode(full_name);
-
-      // Create user
-      const result = await qr.query(
-        `INSERT INTO users (full_name, email, password, user_code, username)
-         VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-        [full_name, email ?? null, hashedPassword, userCode, username],
-      );
-      const userId = result[0].id;
-
-      // Add phone as UNVERIFIED (is_verified = false)
-      await qr.query(
-        `INSERT INTO user_phone_numbers (user_id, phone_number, is_primary, is_verified)
-         VALUES ($1,$2,true,false)`,
-        [userId, phone_number],
-      );
-
-      // Create wallet
-      await qr.query(`INSERT INTO wallets (user_id) VALUES ($1)`, [userId]);
-
-      // Signup bonus if applicable
-      await this.promotionEngine.tryAwardSignupBonus(qr, userId);
-
-      await qr.commitTransaction();
-
-      this.logger.log(`User registered: userId=${userId} username=${username} phone=${phone_number}`);
-
-      return {
-        message: 'Account created successfully. Please verify your phone number.',
-        userId,
-        username,
-        userCode,
-        phoneVerified: false,
-      };
-    } catch (e) {
-      await qr.rollbackTransaction();
-      throw e;
-    } finally {
-      await qr.release();
-    }
+  if (!full_name || !username || !phone_number || !password) {
+    throw new BadRequestException('full_name, username, phone_number, password are required');
   }
+  if (password.length < 6) {
+    throw new BadRequestException('Password must be at least 6 characters');
+  }
+
+  const qr = this.dataSource.createQueryRunner();
+  await qr.connect();
+  await qr.startTransaction();
+
+  try {
+    // Check username not taken
+    const usernameTaken = await qr.query(
+      `SELECT 1 FROM users WHERE username = $1 LIMIT 1`, [username],
+    );
+    if (usernameTaken.length) throw new BadRequestException('Username already taken');
+
+    // Check phone not already registered
+    const phoneTaken = await qr.query(
+      `SELECT 1 FROM user_phone_numbers WHERE phone_number = $1 LIMIT 1`, [phone_number],
+    );
+    if (phoneTaken.length) throw new BadRequestException('Phone number already registered');
+
+    // Check email if provided
+    if (email) {
+      const emailTaken = await qr.query(
+        `SELECT 1 FROM users WHERE email = $1 LIMIT 1`, [email],
+      );
+      if (emailTaken.length) throw new BadRequestException('Email already in use');
+    }
+
+    const hashedPassword = await bcrypt.hash(password, 10);
+    const userCode = generateUserCode(full_name);
+
+    // Create user
+    const result = await qr.query(
+      `INSERT INTO users (full_name, email, password, user_code, username)
+       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
+      [full_name, email ?? null, hashedPassword, userCode, username],
+    );
+    const userId = result[0].id;
+
+    // Add phone as UNVERIFIED
+    await qr.query(
+      `INSERT INTO user_phone_numbers (user_id, phone_number, is_primary, is_verified)
+       VALUES ($1,$2,true,false)`,
+      [userId, phone_number],
+    );
+
+    // Create wallet
+    await qr.query(`INSERT INTO wallets (user_id) VALUES ($1)`, [userId]);
+
+    // Signup bonus if applicable
+    await this.promotionEngine.tryAwardSignupBonus(qr, userId);
+
+    // ✅ Generate tokens — auto-login after register (inside transaction so it rolls back on failure)
+    const payload = { sub: userId, role: 'USER' };
+    const accessToken  = this.jwtService.sign(payload, { expiresIn: '7d' });
+    const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
+    const hashedToken  = await bcrypt.hash(refreshToken, 10);
+
+    await qr.query(
+      `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+       VALUES ($1,$2,NOW() + INTERVAL '7 days')`,
+      [userId, hashedToken],
+    );
+
+    await qr.commitTransaction();
+
+    this.logger.log(
+      `User registered + auto-logged-in: userId=${userId} username=${username} phone=${phone_number}`,
+    );
+
+    return {
+      message: 'Account created successfully. Please verify your phone number.',
+      userId,
+      username,
+      userCode,
+      phoneVerified: false,
+      accessToken,
+      refreshToken,
+      user: {
+        id:            userId,
+        username,
+        fullName:      full_name,
+        accountStatus: 'ACTIVE',
+        phoneVerified: false,
+        primaryPhone:  phone_number,
+      },
+    };
+  } catch (e) {
+    await qr.rollbackTransaction();
+    this.logger.error(
+      `Registration failed for username=${username} phone=${phone_number}: ${(e as any).message}`,
+    );
+    throw e;
+  } finally {
+    await qr.release();
+  }
+}
 
   // ═════════════════════════════════════════════════════════════
   // SEND OTP — for phone verification (after registration)

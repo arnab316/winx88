@@ -24,6 +24,7 @@ import { PromotionCmsModule } from './promotion-cms/promotion-cms.module';
 import { JackpotModule } from './jackpot/jackpot.module';
 import { AdminModule } from './admin/admin.module';
 import { HeroBannerModule } from './hero-banner/hero-banner.module';
+import { PalaceCasinoModule } from './palace-casino/palace-casino.module';
 
 @Module({
   imports: [
@@ -61,7 +62,9 @@ import { HeroBannerModule } from './hero-banner/hero-banner.module';
     PromotionCmsModule,
     JackpotModule,
     AdminModule,
-    HeroBannerModule],
+    HeroBannerModule,
+  PalaceCasinoModule,
+  ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
 })

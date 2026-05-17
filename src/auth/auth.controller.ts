@@ -281,35 +281,65 @@ export class AuthController {
   //   body: { full_name, username, phone_number, password, email? }
   // ═════════════════════════════════════════════════════════════
   @Post('register')
-  async register(@Body() dto: any, @Req() req: Request) {
-    this.logger.info('Registration attempt', {
+async register(
+  @Body() dto: any,
+  @Req() req: Request,
+  @Res({ passthrough: true }) res: Response & typeof import('express').response,
+) {
+  this.logger.info('Registration attempt', {
+    context: AuthController.name,
+    username: dto.username,
+    phone: dto.phone_number,
+    ip: req.ip,
+  });
+
+  try {
+    const result = await this.authService.register(dto);
+
+    // 🍪 Set cookies — user is immediately authenticated after register
+    res.cookie('accessToken', result.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+    res.cookie('refreshToken', result.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    });
+
+    this.logger.info('Registration + auto-login successful', {
+      context: AuthController.name,
+      userId: result.userId,
+      username: result.username,
+      phoneVerified: result.phoneVerified,
+      ip: req.ip,
+    });
+
+    return {
+      success: true,
+      code: 201,
+      message: result.message,
+      data: result,
+    };
+  } catch (error: any) {
+    this.logger.error('Registration failed', {
       context: AuthController.name,
       username: dto.username,
       phone: dto.phone_number,
       ip: req.ip,
+      message: error.message,
+      stack: error.stack,
     });
-    try {
-      const result = await this.authService.register(dto);
-      this.logger.info('Registration successful', {
-        context: AuthController.name,
-        userId: result.userId,
-        username: result.username,
-        ip: req.ip,
-      });
-      return { success: true, code: 201, message: result.message, data: result };
-    } catch (error: any) {
-      this.logger.error('Registration failed', {
-        context: AuthController.name,
-        username: dto.username,
-        ip: req.ip,
-        message: error.message,
-      });
-      throw new HttpException(
-        { success: false, message: error.message || 'Registration failed' },
-        error?.status || HttpStatus.BAD_REQUEST,
-      );
-    }
+    throw new HttpException(
+      { success: false, message: error.message || 'Registration failed' },
+      error?.status || HttpStatus.BAD_REQUEST,
+    );
   }
+}
+
 
   // ═════════════════════════════════════════════════════════════
   // SEND OTP — request phone verification after signup
@@ -601,8 +631,9 @@ export class AuthController {
   // Old flow: verify-otp-register kept so existing Postman tests don't break
   // Now simply calls register() internally
   @Post('verify-otp-register')
-  async verifyOtpAndRegister(@Body() dto: any) {
-    return this.register(dto, { ip: 'legacy' } as any);
+  async verifyOtpAndRegister(@Body() dto: any, @Req() req: Request, @Res({ passthrough: true }) res: Response & typeof import('express').response) {
+
+  return this.register(dto, req, res);
   }
   @Get('isuername-taken/:username')
   async isUsernameTaken(@Param('username') username: string) {
