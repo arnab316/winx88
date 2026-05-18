@@ -3,13 +3,15 @@
 // Status: complete through Sub-pass 4c (Promotion wire-in)
 // Integrations: financial ledger, coin service, turnover service,
 //               game validation, promotion engine
-
+import { WalletGateway } from './wallet.gateway';
 import {
   Injectable,
   BadRequestException,
   ForbiddenException,
   NotFoundException,
   Logger,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
 import { FinancialLedgerService } from '../ledger/financial-ledger.service';
@@ -38,6 +40,8 @@ export class WalletService {
     private turnoverService: TurnoverService,
     private gameValidation: GameValidationService,
     private promotionEngine: PromotionEngineService,
+     @Inject(forwardRef(() => WalletGateway))
+    private readonly walletGateway: WalletGateway,
   ) {}
 
   // ─── Helper: lock wallet row ──────────────────────────────────
@@ -240,6 +244,7 @@ export class WalletService {
         }
 
         await qr.commitTransaction();
+         await this.walletGateway.pushBalanceUpdate(dep.user_id)
         return {
           message: 'Deposit approved. Wallet credited.',
           newBalance: newBal,
@@ -516,6 +521,7 @@ export class WalletService {
         });
 
         await qr.commitTransaction();
+        await this.walletGateway.pushBalanceUpdate(wdr.user_id);
         return { message: 'Withdrawal rejected. Balance refunded.', newBalance: newBal };
       }
     } catch (e) {
@@ -584,6 +590,7 @@ export class WalletService {
       });
 
       await qr.commitTransaction();
+        await this.walletGateway.pushBalanceUpdate(dto.userId);
       return { message: 'Wallet adjusted.', balanceBefore: bal, balanceAfter: newBal };
     } catch (e) {
       await qr.rollbackTransaction();

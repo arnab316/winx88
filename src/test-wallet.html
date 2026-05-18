@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html>
+<head><title>Wallet WS Test</title></head>
+<body>
+  <h2>Wallet WebSocket Test</h2>
+  <div id="log" style="font-family:monospace; white-space:pre;"></div>
+
+  <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+  <script>
+    // ← paste your accessToken here
+    const TOKEN = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiI3Iiwicm9sZSI6IlVTRVIiLCJpYXQiOjE3NzkxMDgyMzgsImV4cCI6MTc3OTcxMzAzOH0.c2Afc_1sSyoVVFTEm2FvPSWdnujAFfbjg5RgEOgMdfw';
+
+    const log = (msg) => {
+      document.getElementById('log').textContent += msg + '\n';
+    };
+
+    const socket = io('http://localhost:3000/wallet', {
+      auth: { token: 'Bearer ' + TOKEN },
+      transports: ['websocket'],   // skip polling, go straight to WS
+    });
+
+    socket.on('connect', () => {
+      log('✅ Connected: ' + socket.id);
+    });
+
+    socket.on('wallet:balance', (data) => {
+      log('💰 Balance update: ' + JSON.stringify(data, null, 2));
+    });
+
+    socket.on('wallet:error', (err) => {
+      log('❌ Error: ' + JSON.stringify(err));
+    });
+
+    socket.on('disconnect', (reason) => {
+      log('🔌 Disconnected: ' + reason);
+    });
+
+    socket.on('connect_error', (err) => {
+      log('🚫 Connect error: ' + err.message);
+    });
+
+    // Test manual refresh after 3s
+    setTimeout(() => {
+      log('📤 Emitting wallet:refresh...');
+      socket.emit('wallet:refresh');
+    }, 3000);
+  </script>
+</body>
+</html>
