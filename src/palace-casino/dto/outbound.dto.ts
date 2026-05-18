@@ -1,32 +1,43 @@
-import { IsNotEmpty, IsNumber, IsOptional, IsString } from "class-validator";
+import { IsNumber, IsOptional, IsString, IsNotEmpty } from 'class-validator';
+import { Type } from 'class-transformer';
 
 export class GameListDto {
+  @IsNumber()
+  @Type(() => Number)
   provider_id!: number;
+
+  @IsOptional()
+  @IsNumber()
+  @Type(() => Number)
   lang?: number;
 }
 
 export class LaunchGameDto {
-  @IsNotEmpty()
   @IsNumber()
+  @Type(() => Number)
   provider_id!: number;
 
-  @IsNotEmpty()
   @IsString()
+  @IsNotEmpty()
   game_symbol!: string;
 
-  @IsNotEmpty()
   @IsString()
+  @IsNotEmpty()
   return_url!: string;
 
   @IsOptional()
   @IsNumber()
+  @Type(() => Number)
   lang?: number;
 
   @IsOptional()
   @IsNumber()
+  @Type(() => Number)
   win_ratio?: number;
 }
 
 export class TransferDto {
+  @IsNumber()
+  @Type(() => Number)
   amount!: number;
 }

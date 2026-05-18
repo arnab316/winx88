@@ -48,6 +48,8 @@ export class PalaceCasinoController {
 
   @Post('games')
   async games(@Body() body: GameListDto) {
+    console.log('Game list request received:', body);
+    this.logger.log(`Fetched games for provider ${body.provider_id} (lang=${body.lang ?? 1})`);
     return this.palace.gameList(body.provider_id, body.lang ?? 1);
   }
 
