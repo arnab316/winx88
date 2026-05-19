@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
+import { WalletGateway } from 'src/wallet/wallet.gateway';  
 
 /**
  * Handles wallet operations triggered by Palace callbacks.
@@ -19,7 +20,10 @@ import { DataSource, QueryRunner } from 'typeorm';
 export class PalaceCallbackService {
   private readonly logger = new Logger(PalaceCallbackService.name);
 
-  constructor(private readonly dataSource: DataSource) { }
+  constructor(private readonly dataSource: DataSource,
+        private readonly walletGateway: WalletGateway,
+
+  ) { }
 
   // ═══ AUTHENTICATE: Palace verifies the player exists ═══════════════════
   async authenticate(data: any, check: string) {
@@ -120,6 +124,10 @@ export class PalaceCallbackService {
       );
 
       await q.commitTransaction();
+       // 📡 Push updated balance to user's WS connection
+      await this.walletGateway.pushBalanceUpdate(user.id).catch((e) =>
+        this.logger.warn(`WS push failed (cancel) userId=${user.id}: ${e.message}`),
+      );
       return { result: 0, status: 'OK', data: { balance: newBalance } };
     } catch (err: any) {
       await q.rollbackTransaction();
@@ -258,6 +266,10 @@ export class PalaceCallbackService {
       );
 
       await q.commitTransaction();
+        // 📡 Push updated balance to user's WS — fire-and-forget, never break Palace response
+      await this.walletGateway.pushBalanceUpdate(user.id).catch((e) =>
+        this.logger.warn(`WS push failed (${type}) userId=${user.id}: ${e.message}`),
+      );
       return { result: 0, status: 'OK', data: { balance: newBalance } };
     } catch (err: any) {
       await q.rollbackTransaction();

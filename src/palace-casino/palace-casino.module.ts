@@ -8,6 +8,7 @@ import { PalaceCallbackController } from './callback.controller';
 import { PalaceCallbackService } from './palace-callback.service';
 import { AuthModule } from 'src/auth/auth.module';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
+import { WalletModule } from 'src/wallet/wallet.module';
 
 /**
  * Palace Casino integration module.
@@ -26,7 +27,7 @@ import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
  * app.module's imports BEFORE PalaceCasinoModule.
  */
 @Module({
-  imports: [ConfigModule, HttpModule.register({ timeout: 10_000 }), AuthModule],
+  imports: [ConfigModule, HttpModule.register({ timeout: 10_000 }), AuthModule, WalletModule],
   controllers: [PalaceCasinoController, PalaceCallbackController],
   providers: [PalaceCasinoClient, PalaceCallbackService, JwtAuthGuard],
   exports: [PalaceCasinoClient],
