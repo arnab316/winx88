@@ -25,6 +25,7 @@ import { JackpotModule } from './jackpot/jackpot.module';
 import { AdminModule } from './admin/admin.module';
 import { HeroBannerModule } from './hero-banner/hero-banner.module';
 import { PalaceCasinoModule } from './palace-casino/palace-casino.module';
+import { OroplayModule } from './oroplay/oroplay.module';
 
 @Module({
   imports: [
@@ -64,6 +65,7 @@ import { PalaceCasinoModule } from './palace-casino/palace-casino.module';
     AdminModule,
     HeroBannerModule,
   PalaceCasinoModule,
+  OroplayModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
