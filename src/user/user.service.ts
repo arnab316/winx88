@@ -53,9 +53,28 @@ export class UserService {
       values.push(dto.profile_image_url);
     }
     if (dto.email !== undefined) {
-      fields.push(`email = $${i++}`);
-      values.push(dto.email);
-    }
+      // Check if user has already updated their email once
+  const userRow = await this.dataSource.query(
+    `SELECT email, email_updated_at FROM users WHERE id = $1`,
+    [userId],
+  );
+  if (!userRow.length) throw new NotFoundException('User not found');
+
+  if (userRow[0].email_updated_at !== null) {
+    throw new BadRequestException('Email can only be updated once. Please contact support.');
+  }
+
+  // Check email not already taken
+  const emailCheck = await this.dataSource.query(
+    `SELECT id FROM users WHERE email = $1 AND id != $2`,
+    [dto.email, userId],
+  );
+  if (emailCheck.length) throw new BadRequestException('Email already in use');
+
+  fields.push(`email = $${i++}`);
+  values.push(dto.email);
+  fields.push(`email_updated_at = NOW()`);  // mark as used
+}
 
     if (!fields.length) throw new BadRequestException('Nothing to update');
 
