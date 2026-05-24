@@ -18,15 +18,9 @@
 //   socket.on('subscribed',             data => { /* ack */ });
 //
 // EVENT EMISSION (server-side):
-//   This gateway exposes 5 public methods that the GameService calls
-//   after relevant DB operations succeed. Each broadcasts to a room
-//   named `game:<gameId>` so only subscribers of that game get it.
-//
-// AUTH NOTE:
-//   This gateway is currently public — anyone can connect and subscribe.
-//   When you later add user-specific events (wallet credits, etc.), you'll
-//   create a separate authenticated gateway at a different namespace
-//   (e.g. /ws/me) that uses the JWT in the handshake.
+//   The GameService, RoundSchedulerService and RoundWatcherService call
+//   these methods after their DB operations succeed. Each broadcasts to a
+//   room named `game:<gameId>` so only subscribers of that game get it.
 
 import { Logger } from '@nestjs/common';
 import {
@@ -43,7 +37,6 @@ import { Server, Socket } from 'socket.io';
 @WebSocketGateway({
   namespace: '/ws/games',
   cors: {
-    // Match your HTTP CORS origins. Adjust if needed.
     origin: [
       'http://localhost:5173',
       'http://localhost:5174',
@@ -52,7 +45,6 @@ import { Server, Socket } from 'socket.io';
     ],
     credentials: true,
   },
-  // Transports default to ['polling','websocket']; that's fine for now.
 })
 export class GamesGateway implements OnGatewayConnection, OnGatewayDisconnect {
   private readonly logger = new Logger(GamesGateway.name);
@@ -64,7 +56,6 @@ export class GamesGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   handleConnection(client: Socket) {
     this.logger.log(`Client connected: ${client.id}`);
-    // Send a hello so the client knows the connection is healthy
     client.emit('connected', {
       message: 'Connected to games gateway',
       socketId: client.id,
@@ -74,18 +65,9 @@ export class GamesGateway implements OnGatewayConnection, OnGatewayDisconnect {
 
   handleDisconnect(client: Socket) {
     this.logger.log(`Client disconnected: ${client.id}`);
-    // Socket.IO auto-cleans rooms on disconnect — no manual cleanup needed
   }
 
   // ─── CLIENT-DRIVEN: SUBSCRIBE TO A GAME ──────────────────────
-  //
-  // Client emits: socket.emit('subscribe-game', { gameId: 1 })
-  // Server replies with 'subscribed' event.
-  //
-  // Joining the room `game:<gameId>` means the server will deliver
-  // any event we emit to that room to this client. Multiple games?
-  // Just call subscribe-game multiple times.
-  // ─────────────────────────────────────────────────────────────
   @SubscribeMessage('subscribe-game')
   handleSubscribe(
     @ConnectedSocket() client: Socket,
@@ -101,7 +83,6 @@ export class GamesGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.emit('subscribed', { gameId, room });
   }
 
-  // Client emits: socket.emit('unsubscribe-game', { gameId: 1 })
   @SubscribeMessage('unsubscribe-game')
   handleUnsubscribe(
     @ConnectedSocket() client: Socket,
@@ -117,20 +98,18 @@ export class GamesGateway implements OnGatewayConnection, OnGatewayDisconnect {
     client.emit('unsubscribed', { gameId, room });
   }
 
-  // Client emits: socket.emit('ping') → server replies 'pong' with serverTime
-  // Useful for keep-alive and clock-skew detection on the client.
   @SubscribeMessage('ping')
   handlePing(@ConnectedSocket() client: Socket) {
     client.emit('pong', { serverTime: new Date().toISOString() });
   }
 
   // ╔═══════════════════════════════════════════════════════════╗
-  // ║          SERVER-SIDE EMITTERS (called by GameService)     ║
+  // ║          SERVER-SIDE EMITTERS                             ║
   // ╚═══════════════════════════════════════════════════════════╝
 
   /**
-   * Round opened. Broadcast when admin creates a new round.
-   * Subscribers to `game:<gameId>` see this immediately.
+   * Round opened. Fired by admin createRound AND by RoundSchedulerService
+   * for auto-spawned rounds.
    */
   emitRoundOpened(payload: {
     gameId: number;
@@ -149,9 +128,7 @@ export class GamesGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
-   * Round is closing soon. The round-watcher cron fires this
-   * at T-30s before close_time. UX-grade signal — frontend can
-   * show a "closing soon!" badge.
+   * Round closing soon (T-30s). Fired by RoundWatcherService.
    */
   emitRoundClosingSoon(payload: {
     gameId: number;
@@ -166,24 +143,29 @@ export class GamesGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
-   * Round closed (close_time hit). New bets refused after this point.
-   * Frontend should disable the bet button.
+   * Round closed (close_time hit). Fired by RoundWatcherService.
+   *
+   * BACKWARD COMPATIBLE: roundCode and drawTime are OPTIONAL. The existing
+   * RoundWatcherService calls this with { gameId, roundId, closeTime }, which
+   * still works. New callers may also pass roundCode/drawTime.
    */
   emitRoundClosed(payload: {
     gameId: number;
     roundId: number;
-    closeTime: Date | string;
+    closeTime?: Date | string;
+    roundCode?: string;
+    drawTime?: Date | string;
   }) {
     const room = `game:${payload.gameId}`;
     this.server.to(room).emit('round:closed', {
       ...payload,
       announcedAt: new Date().toISOString(),
     });
+    this.logger.debug(`Emitted round:closed to ${room} (round ${payload.roundId})`);
   }
 
   /**
-   * Result published. Most exciting event for users — the winning number.
-   * Frontend shows the result with animation.
+   * Result published — the winning number.
    */
   emitResultPublished(payload: {
     gameId: number;
@@ -201,8 +183,7 @@ export class GamesGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
-   * Round settled — all bets paid out / closed. After this fires,
-   * stats can refresh, bet history shows WON/LOST.
+   * Round settled — all bets paid out / closed.
    */
   emitRoundSettled(payload: {
     gameId: number;

@@ -26,9 +26,15 @@ import { AdminModule } from './admin/admin.module';
 import { HeroBannerModule } from './hero-banner/hero-banner.module';
 import { PalaceCasinoModule } from './palace-casino/palace-casino.module';
 import { OroplayModule } from './oroplay/oroplay.module';
-
+import { ServeStaticModule } from '@nestjs/serve-static';
+import { join } from 'path';
 @Module({
   imports: [
+    ServeStaticModule.forRoot({
+  rootPath: join(process.cwd(), 'public'),
+  serveRoot: '/',
+  serveStaticOptions: { index: false, dotfiles: 'deny' },
+}),
      ScheduleModule.forRoot(),
     ConfigModule.forRoot({ isGlobal: true }),
     LoggerModule,

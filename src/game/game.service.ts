@@ -456,6 +456,11 @@ export class GameService {
       where.push(`g.digit_length = $${i++}`);
       params.push(q.digitLength);
     }
+    // liveOnly=true: only games with an OPEN round right now
+    // Filters on the LATERAL join result (ar.id IS NOT NULL)
+    if (q.liveOnly === true) {
+      where.push(`ar.id IS NOT NULL`);
+    }
  
     const whereSql = `WHERE ${where.join(' AND ')}`;
  
