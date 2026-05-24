@@ -27,7 +27,7 @@ import { OROPLAY_ERROR } from './dto/callback.dto';
  * Throwing 4xx/5xx would cause OroPlay to retry the same transaction and
  * possibly double-charge the player.
  */
-@Controller('oroplay/callback')
+@Controller('api')
 export class OroplayCallbackController {
   private readonly logger = new Logger(OroplayCallbackController.name);
 
