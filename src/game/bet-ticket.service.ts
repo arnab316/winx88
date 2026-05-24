@@ -125,7 +125,7 @@ export class BetTicketService {
                          day: '2-digit', month: 'short', year: 'numeric',
                          hour: '2-digit', minute: '2-digit', second: '2-digit',
                        }),
-      verifyUrl: `${extras.baseUrl}/ticket/${bet.bet_code}`,
+      verifyUrl: `https://winx-88.com/ticket/${bet.bet_code}`,
     };
   }
 
