@@ -36,6 +36,30 @@ export class OroplayController {
     return res.message;
   }
 
+  // ─── GET /oroplay/vendors/grouped ────────────────────────────
+@Get('vendors/grouped')
+async vendorsGrouped() {
+  const res = await this.oroplay.vendorList();
+
+  const typeMap: Record<number, string> = {
+    1: 'Live Casino',
+    2: 'Slot',
+    3: 'Crash',
+    4: 'Fishing',
+    5: 'Sports',
+    6: 'Poker',
+  };
+
+  const grouped = (res.message as any[]).reduce((acc, item) => {
+    const groupName = typeMap[item.type] ?? 'Other';
+    if (!acc[groupName]) acc[groupName] = [];
+    acc[groupName].push(item);
+    return acc;
+  }, {} as Record<string, any[]>);
+
+  return grouped;
+}
+
   // ─── List games for a vendor ─────────────────────────────────
   @Post('games')
   async games(@Body() body: { vendorCode: string; language?: string }) {
