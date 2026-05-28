@@ -50,10 +50,31 @@ async vendorsGrouped() {
     6: 'Poker',
   };
 
+  // Logo base URL pattern from OroPlay admin
+  const LOGO_BASE = 'https://static3.pgf-asu2nd.com/logo';
+
+  // These don't follow the vendorCode pattern — manual overrides
+  const logoOverrides: Record<string, string | null> = {
+    'fishing-fungaming': 'https://www.gamingsoft.com/Content/v2/images/new-provider/the-online-casino-product-from-fun-gaming-gamingsoft.png',
+    'fishing-cq9':       'https://www.gamingsoft.com/Content/v2/images/new-provider/the-online-casino-product-from-fun-gaming-gamingsoft.png',
+    'sports':            'https://sports.eyq8vmw3.com/image/thumb.jpg',
+    'board-poker':       null, // no logo available
+  };
+
   const grouped = (res.message as any[]).reduce((acc, item) => {
     const groupName = typeMap[item.type] ?? 'Other';
     if (!acc[groupName]) acc[groupName] = [];
-    acc[groupName].push(item);
+
+    const logo = item.vendorCode in logoOverrides
+      ? logoOverrides[item.vendorCode]
+      : `${LOGO_BASE}/${item.vendorCode}.png`;
+
+    acc[groupName].push({
+      vendorCode: item.vendorCode,
+      type:       item.type,
+      name:       item.name,
+      logo,
+    });
     return acc;
   }, {} as Record<string, any[]>);
 
