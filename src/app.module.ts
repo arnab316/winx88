@@ -29,6 +29,7 @@ import { OroplayModule } from './oroplay/oroplay.module';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { TicketModule } from './ticket/ticket.module';
+import { VerificationModule } from './verification/verification.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -74,6 +75,7 @@ import { TicketModule } from './ticket/ticket.module';
   PalaceCasinoModule,
   OroplayModule,
   TicketModule,
+  VerificationModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],

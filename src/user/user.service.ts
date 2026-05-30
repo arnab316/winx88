@@ -187,28 +187,59 @@ export class UserService {
   // ADMIN: LIST ALL USERS
   // ═════════════════════════════════════════════════════════════
   async getAllUsers(page = 1, limit = 20) {
-    const offset = (page - 1) * limit;
-    const users = await this.dataSource.query(
-      `SELECT
-         u.id, u.user_code, u.full_name, u.username, u.email,
-         u.vip_level, u.account_status, u.is_email_verified,
-         u.referral_code, u.created_at, u.last_login_at,
-         w.balance, w.bonus_balance, w.total_deposited, w.total_withdrawn,
-         (SELECT phone_number FROM user_phone_numbers
-          WHERE user_id = u.id AND is_primary = true LIMIT 1) AS primary_phone
-       FROM users u
-       LEFT JOIN wallets w ON w.user_id = u.id
-       ORDER BY u.created_at DESC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset],
-    );
-
-    const count = await this.dataSource.query(
-      `SELECT COUNT(*)::int AS total FROM users`,
-    );
-
-    return { data: users, total: count[0].total, page, limit };
-  }
+  const offset = (page - 1) * limit;
+ 
+  const rows = await this.dataSource.query(
+    `SELECT
+       u.id,
+       u.user_code,
+       u.full_name,
+       u.username,
+       u.email,
+       u.vip_level,
+       u.account_status,
+       u.is_email_verified,
+       u.is_kyc_verified,
+       u.referral_code,
+       u.created_at,
+       u.last_login_at,
+ 
+       w.balance,
+       w.bonus_balance,
+       w.total_deposited,
+       w.total_withdrawn,
+ 
+       p.phone_number AS primary_phone,
+ 
+       uv.status              AS kyc_status,
+       uv.document_type       AS kyc_document_type,
+       uv.rejection_reason    AS kyc_rejection_reason,
+       uv.submission_count    AS kyc_submission_count,
+       uv.updated_at          AS kyc_updated_at,
+ 
+       COUNT(*) OVER() AS total_count
+     FROM users u
+     LEFT JOIN wallets w
+       ON w.user_id = u.id
+     LEFT JOIN LATERAL (
+       SELECT phone_number
+       FROM user_phone_numbers
+       WHERE user_id = u.id AND is_primary = true
+       LIMIT 1
+     ) p ON true
+     LEFT JOIN user_verifications uv
+       ON uv.user_id = u.id
+     ORDER BY u.created_at DESC
+     LIMIT $1 OFFSET $2`,
+    [limit, offset],
+  );
+ 
+  // total comes back on every row (same value); strip it from the rows themselves
+  const total = rows.length ? Number(rows[0].total_count) : 0;
+  const data = rows.map(({ total_count, ...rest }: any) => rest);
+ 
+  return { data, total, page, limit };
+}
 
   // ═════════════════════════════════════════════════════════════
   // ADMIN: SEARCH USERS
