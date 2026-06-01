@@ -436,4 +436,38 @@ export class UserService {
     );
     return { message: 'Phone deleted' };
   }
+
+  // ═════════════════════════════════════════════════════════════
+// ADMIN: VERIFY / UNVERIFY PHONE FOR ANY USER
+// ═════════════════════════════════════════════════════════════
+async adminVerifyPhone(
+  userId: number,
+  phoneId: number,
+  isVerified = true,
+) {
+  const phone = await this.dataSource.query(
+    `SELECT id, phone_number, is_verified
+       FROM user_phone_numbers
+      WHERE id = $1 AND user_id = $2`,
+    [phoneId, userId],
+  );
+  if (!phone.length) throw new NotFoundException('Phone not found for this user');
+
+  await this.dataSource.query(
+    `UPDATE user_phone_numbers
+        SET is_verified = $1,
+            updated_at  = NOW()
+      WHERE id = $2`,
+    [isVerified, phoneId],
+  );
+
+  return {
+    message: isVerified
+      ? 'Phone marked as verified'
+      : 'Phone marked as unverified',
+    phoneId,
+    phone_number: phone[0].phone_number,
+    is_verified: isVerified,
+  };
+}
 }

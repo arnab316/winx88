@@ -681,4 +681,60 @@ export class UserController {
       );
     }
   }
+
+
+  @UseGuards(AdminGuard)
+@Patch('admin/:userId/phone/:phoneId/verify')
+async adminVerifyPhone(
+  @Req() req: any,
+  @Param('userId',  ParseIntPipe) userId:  number,
+  @Param('phoneId', ParseIntPipe) phoneId: number,
+  @Body() dto: { isVerified?: boolean } = {},
+) {
+  const isVerified = dto.isVerified ?? true;
+
+  this.logger.info('Admin: verify phone started', {
+    context: UserController.name,
+    adminId: req.user?.sub,
+    targetUserId: userId,
+    phoneId,
+    isVerified,
+    ip: req.ip,
+  });
+
+  try {
+    const data = await this.userService.adminVerifyPhone(
+      userId,
+      phoneId,
+      isVerified,
+    );
+
+    this.logger.info('Admin: phone verification updated', {
+      context: UserController.name,
+      adminId: req.user?.sub,
+      targetUserId: userId,
+      phoneId,
+      isVerified,
+      ip: req.ip,
+    });
+
+    return { success: true, message: data.message, data };
+  } catch (error: any) {
+    this.logger.error('Admin: verify phone failed', {
+      context: UserController.name,
+      adminId: req.user?.sub,
+      targetUserId: userId,
+      phoneId,
+      isVerified,
+      ip: req.ip,
+      message: error.message,
+      stack: error.stack,
+    });
+    throw new HttpException(
+      { success: false, message: error?.message || 'Failed' },
+      error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+    );
+  }
+}
+
 }
