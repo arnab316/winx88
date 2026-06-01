@@ -537,68 +537,82 @@ export class WalletService {
   //   Signed amount: + credit, - debit.
   //   Refuses if it would push balance negative.
   // ═════════════════════════════════════════════════════════════
-  async adminAdjustWallet(dto: AdminAdjustmentDto) {
-    if (dto.amount === 0)
-      throw new BadRequestException('Adjustment amount cannot be zero');
+   async adminAdjustWallet(dto: AdminAdjustmentDto) {
+  if (dto.amount === 0)
+    throw new BadRequestException('Adjustment amount cannot be zero');
 
-    const qr = this.dataSource.createQueryRunner();
-    await qr.connect();
-    await qr.startTransaction();
+  // Validate adjustmentType
+  if (!['MANUAL_ADJUSTMENT', 'MANUAL_DEPOSIT'].includes(dto.adjustmentType))
+    throw new BadRequestException('Invalid adjustment type');
 
-    try {
-      const wallet = await this.getWalletForUpdate(qr, dto.userId);
-      const bal = parseFloat(wallet.balance);
-      const bon = parseFloat(wallet.bonus_balance);
-      const lck = parseFloat(wallet.locked_balance);
-      const newBal = bal + dto.amount;
+  const qr = this.dataSource.createQueryRunner();
+  await qr.connect();
+  await qr.startTransaction();
 
-      if (newBal < 0)
-        throw new BadRequestException(`Adjustment results in negative balance (${newBal})`);
+  try {
+    const wallet = await this.getWalletForUpdate(qr, dto.userId);
+    const bal = parseFloat(wallet.balance);
+    const bon = parseFloat(wallet.bonus_balance);
+    const lck = parseFloat(wallet.locked_balance);
+    const newBal = bal + dto.amount;
 
+    if (newBal < 0)
+      throw new BadRequestException(`Adjustment results in negative balance (${newBal})`);
+
+    await qr.query(
+      `UPDATE wallets SET balance = $1, updated_at = NOW() WHERE id = $2`,
+      [newBal, wallet.id],
+    );
+
+    // If it's a manual deposit, also bump total_deposited
+    if (dto.adjustmentType === 'MANUAL_DEPOSIT' && dto.amount > 0) {
       await qr.query(
-        `UPDATE wallets SET balance = $1, updated_at = NOW() WHERE id = $2`,
-        [newBal, wallet.id],
+        `UPDATE wallets
+         SET total_deposited = total_deposited + $1, updated_at = NOW()
+         WHERE id = $2`,
+        [dto.amount, wallet.id],
       );
-
-      const adj = await qr.query(
-        `INSERT INTO manual_adjustments (admin_id, user_id, amount, description, created_at)
-         VALUES ($1,$2,$3,$4,NOW())
-         RETURNING id`,
-        [dto.adminId, dto.userId, dto.amount, dto.description],
-      );
-
-      await this.financialLedger.write({
-        qr,
-        walletId: wallet.id,
-        userId: dto.userId,
-        entryType: 'MANUAL_ADJUSTMENT',
-        flow: dto.amount > 0 ? 'CREDIT' : 'DEBIT',
-        amount: Math.abs(dto.amount),
-        balanceBefore: bal,
-        balanceAfter: newBal,
-        bonusBefore: bon,
-        bonusAfter: bon,
-        lockedBefore: lck,
-        lockedAfter: lck,
-        referenceType: 'MANUAL_ADJUSTMENT',
-        referenceId: Number(adj[0].id),
-        status: 'SUCCESS',
-        description: dto.description,
-        meta: dto.meta,
-        createdByType: 'ADMIN',
-        createdById: dto.adminId,
-      });
-
-      await qr.commitTransaction();
-        await this.walletGateway.pushBalanceUpdate(dto.userId);
-      return { message: 'Wallet adjusted.', balanceBefore: bal, balanceAfter: newBal };
-    } catch (e) {
-      await qr.rollbackTransaction();
-      throw e;
-    } finally {
-      await qr.release();
     }
+
+    const adj = await qr.query(
+      `INSERT INTO manual_adjustments (admin_id, user_id, amount, description, created_at)
+       VALUES ($1,$2,$3,$4,NOW())
+       RETURNING id`,
+      [dto.adminId, dto.userId, dto.amount, dto.description],
+    );
+
+    await this.financialLedger.write({
+      qr,
+      walletId:      wallet.id,
+      userId:        dto.userId,
+      entryType:     dto.adjustmentType,   // ← 'MANUAL_ADJUSTMENT' or 'MANUAL_DEPOSIT'
+      flow:          dto.amount > 0 ? 'CREDIT' : 'DEBIT',
+      amount:        Math.abs(dto.amount),
+      balanceBefore: bal,
+      balanceAfter:  newBal,
+      bonusBefore:   bon,
+      bonusAfter:    bon,
+      lockedBefore:  lck,
+      lockedAfter:   lck,
+      referenceType: dto.adjustmentType,
+      referenceId:   Number(adj[0].id),
+      status:        'SUCCESS',
+      description:   dto.description,
+      meta:          dto.meta,
+      createdByType: 'ADMIN',
+      createdById:   dto.adminId,
+    });
+
+    await qr.commitTransaction();
+    await this.walletGateway.pushBalanceUpdate(dto.userId);
+    return { message: 'Wallet adjusted.', balanceBefore: bal, balanceAfter: newBal };
+  } catch (e) {
+    await qr.rollbackTransaction();
+    throw e;
+  } finally {
+    await qr.release();
   }
+}
 
   // ═════════════════════════════════════════════════════════════
   // ADMIN: LIST PENDING DEPOSITS (with agent + promo info)
@@ -822,35 +836,106 @@ async getPendingDeposits(q: DepositListQuery = {}) {
   // ═════════════════════════════════════════════════════════════
   // USER: LEDGER HISTORY (paginated)
   // ═════════════════════════════════════════════════════════════
-  async getLedgerHistory(userId: number, page = 1, limit = 20) {
-    const safeLimit = Math.min(Math.max(limit, 1), 100);
-    const safePage  = Math.max(page, 1);
-    const offset    = (safePage - 1) * safeLimit;
+async getLedgerHistory(
+  userId: number,
+  page = 1,
+  limit = 20,
+  typeFilter?: string,
+  role: 'USER' | 'ADMIN' = 'USER',   // ← NEW param
+) {
+  const safeLimit = Math.min(Math.max(limit, 1), 100);
+  const safePage  = Math.max(page, 1);
+  const offset    = (safePage - 1) * safeLimit;
 
-    const rows = await this.dataSource.query(
-      `SELECT
-          id, ledger_code, entry_type, flow, amount,
-          balance_before, balance_after,
-          reference_type, reference_id,
-          status, description, created_at
-       FROM financial_ledger
-       WHERE user_id = $1
-       ORDER BY created_at DESC, id DESC
-       LIMIT $2 OFFSET $3`,
-      [userId, safeLimit, offset],
-    );
+  // ─── Role-based label maps ────────────────────────────────
+  const USER_LABELS: Record<string, string> = {
+    DEPOSIT_PENDING:        'DEPOSIT',
+    DEPOSIT_APPROVED:       'DEPOSIT',
+    DEPOSIT_REJECTED:       'DEPOSIT',
+    MANUAL_DEPOSIT:         'DEPOSIT',      // ← user sees "DEPOSIT"
+    MANUAL_ADJUSTMENT:      'ADJUSTMENT',
+    WITHDRAWAL_REQUESTED:   'WITHDRAWAL',
+    WITHDRAWAL_APPROVED:    'WITHDRAWAL',
+    WITHDRAWAL_REJECTED:    'WITHDRAWAL',
+    REFERRAL_BONUS_CREDIT:  'BONUS',
+    PROMOTION_BONUS:        'BONUS',
+    WIN_CREDIT:             'WIN',
+    BET_PLACED:             'BET',
+    BET_CANCELLED:          'BET',
+  };
 
-    const count = await this.dataSource.query(
-      `SELECT COUNT(*)::int AS total FROM financial_ledger WHERE user_id = $1`,
-      [userId],
-    );
+  const ADMIN_LABELS: Record<string, string> = {
+    DEPOSIT_PENDING:        'DEPOSIT',
+    DEPOSIT_APPROVED:       'DEPOSIT',
+    DEPOSIT_REJECTED:       'DEPOSIT',
+    MANUAL_DEPOSIT:         'MANUAL DEPOSIT',   // ← admin sees "MANUAL DEPOSIT"
+    MANUAL_ADJUSTMENT:      'MANUAL ADJUST',    // ← admin sees "MANUAL ADJUST"
+    WITHDRAWAL_REQUESTED:   'WITHDRAWAL',
+    WITHDRAWAL_APPROVED:    'WITHDRAWAL',
+    WITHDRAWAL_REJECTED:    'WITHDRAWAL',
+    REFERRAL_BONUS_CREDIT:  'BONUS',
+    PROMOTION_BONUS:        'BONUS',
+    WIN_CREDIT:             'WIN',
+    BET_PLACED:             'BET',
+    BET_CANCELLED:          'BET',
+  };
 
-    return {
-      data: rows,
-      page: safePage,
-      limit: safeLimit,
-      total: count[0].total,
-      totalPages: Math.ceil(count[0].total / safeLimit),
-    };
+  const labelMap = role === 'ADMIN' ? ADMIN_LABELS : USER_LABELS;
+
+  // ─── Type filter → entry_type array ──────────────────────
+  const TYPE_REVERSE: Record<string, string[]> = {
+    // USER filter tabs
+    'DEPOSIT':    ['DEPOSIT_PENDING', 'DEPOSIT_APPROVED', 'DEPOSIT_REJECTED', 'MANUAL_DEPOSIT'],
+    'WITHDRAWAL': ['WITHDRAWAL_REQUESTED', 'WITHDRAWAL_APPROVED', 'WITHDRAWAL_REJECTED'],
+    'BONUS':      ['REFERRAL_BONUS_CREDIT', 'PROMOTION_BONUS'],
+    'WIN':        ['WIN_CREDIT'],
+    'BET':        ['BET_PLACED', 'BET_CANCELLED'],
+    // ADMIN-only filter tabs
+    'MANUAL DEPOSIT': ['MANUAL_DEPOSIT'],
+    'MANUAL ADJUST':  ['MANUAL_ADJUSTMENT'],
+  };
+
+  let whereClause = `WHERE user_id = $1`;
+  const params: any[] = [userId];
+
+  if (typeFilter && TYPE_REVERSE[typeFilter]) {
+    const placeholders = TYPE_REVERSE[typeFilter]
+      .map((_, idx) => `$${idx + 2}`)
+      .join(', ');
+    whereClause += ` AND entry_type IN (${placeholders})`;
+    params.push(...TYPE_REVERSE[typeFilter]);
   }
+
+  const dataParams  = [...params, safeLimit, offset];
+  const countParams = [...params];
+
+  const rows = await this.dataSource.query(
+    `SELECT
+        id, ledger_code, entry_type, flow, amount,
+        balance_before, balance_after,
+        reference_type, reference_id,
+        status, description, created_by_type, created_at
+     FROM financial_ledger
+     ${whereClause}
+     ORDER BY created_at DESC, id DESC
+     LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+    dataParams,
+  );
+
+  const count = await this.dataSource.query(
+    `SELECT COUNT(*)::int AS total FROM financial_ledger ${whereClause}`,
+    countParams,
+  );
+
+  return {
+    data: rows.map((row) => ({
+      ...row,
+      typeLabel: labelMap[row.entry_type] ?? row.entry_type,
+    })),
+    page: safePage,
+    limit: safeLimit,
+    total: count[0].total,
+    totalPages: Math.ceil(count[0].total / safeLimit),
+  };
+}
 }

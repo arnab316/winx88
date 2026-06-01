@@ -47,13 +47,16 @@ export class WalletController {
   // GET /wallet/history?page=1&limit=20
   @UseGuards(JwtAuthGuard)
   @Get('history')
-  getLedgerHistory(
-    @Req() req: any,
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
-  ) {
-    return this.walletService.getLedgerHistory(req.user.sub, page, limit);
-  }
+ getLedgerHistory(
+  @Req() req: any,
+  @Query('page',   new DefaultValuePipe(1),  ParseIntPipe) page:  number,
+  @Query('limit',  new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  @Query('type') typeFilter?: string,
+) {
+  return this.walletService.getLedgerHistory(
+    req.user.sub, page, limit, typeFilter, 'USER',   // ← 'USER'
+  );
+}
  
   // POST /wallet/deposit
   // form-data: screenshot=<file>, gatewayId, amount, transactionNumber,
@@ -259,40 +262,16 @@ export class WalletController {
   // body: { userId, amount (signed: + credit, - debit), description, meta? }
   @UseGuards(AdminGuard)
   @Post('admin/adjust')
-  adminAdjustWallet(@Req() req: any, @Body() body: any) {
-    try {
-    const amount = parseFloat(body.amount);
-    const userId = parseInt(body.userId, 10);
-    this.logger.debug(
-    `Admin wallet adjustment request: adminId=${req.user?.sub}, body=${JSON.stringify(body)}`
+getAdminLedgerHistory(
+  @Param('userId', ParseIntPipe) userId: number,
+  @Query('page',   new DefaultValuePipe(1),  ParseIntPipe) page:  number,
+  @Query('limit',  new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  @Query('type') typeFilter?: string,
+) {
+  return this.walletService.getLedgerHistory(
+    userId, page, limit, typeFilter, 'ADMIN',         // ← 'ADMIN'
   );
-
-    if (!Number.isFinite(amount) || amount === 0) {
-      throw new BadRequestException('amount must be non-zero');
-    }
-    if (!Number.isFinite(userId) || userId <= 0) {
-      throw new BadRequestException('userId is required');
-    }
-    if (!body.description || typeof body.description !== 'string') {
-      throw new BadRequestException('description is required (audit trail)');
-    }
- 
-    return this.walletService.adminAdjustWallet({
-      userId,
-      adminId:     req.user.sub,
-      amount,
-      description: body.description,
-      meta:        body.meta,
-    });
-    } catch (error:any) {
-      this.logger.error(
-      `Admin wallet adjustment failed: adminId=${req.user?.sub}, body=${JSON.stringify(body)}, error=${error.message}`,
-      error.stack,
-    );
-
-    throw error;
-    }
-  }
+}
 }
  
 

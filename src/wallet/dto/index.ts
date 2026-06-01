@@ -83,6 +83,7 @@ export interface AdminAdjustmentDto {
   adminId: number;
   amount: number;           // positive = credit, negative = debit
   description: string;
+  adjustmentType: 'MANUAL_ADJUSTMENT' | 'MANUAL_DEPOSIT'; // ← NEW
   meta?: Record<string, any>;
 }
 

@@ -14,6 +14,7 @@ export type FinancialEntryType =
   | 'WITHDRAWAL_REJECTED'
   | 'MANUAL_ADJUSTMENT'
   | 'PROMOTION_BONUS'
+  | 'MANUAL_DEPOSIT'
   | 'JACKPOT_PRIZE';
 
 export type FinancialFlow = 'CREDIT' | 'DEBIT' | 'LOCK' | 'RELEASE';
