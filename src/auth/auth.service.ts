@@ -554,7 +554,7 @@ async forgotPassword(dto: { phone_number: string }) {
         AND created_at > NOW() - INTERVAL '24 hours'`,
     [phone_number],
   );
-  if (dayCount[0].count >= 100) {
+  if (dayCount[0].count >= 50) {
     throw new BadRequestException('Too many reset attempts today. Try again tomorrow.');
   }
  
