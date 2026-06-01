@@ -30,6 +30,7 @@ import { ServeStaticModule } from '@nestjs/serve-static';
 import { join } from 'path';
 import { TicketModule } from './ticket/ticket.module';
 import { VerificationModule } from './verification/verification.module';
+import { LaafficModule } from './laaffic/laaffic.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -76,6 +77,7 @@ import { VerificationModule } from './verification/verification.module';
   OroplayModule,
   TicketModule,
   VerificationModule,
+  LaafficModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],

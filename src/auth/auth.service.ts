@@ -1,558 +1,3 @@
-// import { Injectable, UnauthorizedException, BadRequestException } from '@nestjs/common';
-// import { DataSource } from 'typeorm';
-// import * as bcrypt from 'bcrypt';
-// import { generateUserCode, generateUsername } from './utils';
-// import { JwtService } from '@nestjs/jwt';
-// import { TwilioService } from '../twilio/twilio.service';
-// import * as crypto from 'crypto';
-// import { PromotionEngineService } from '../promotion/promotion-engine.service';
-
-// @Injectable()
-// export class AuthService {
-//     constructor(
-//         private dataSource: DataSource
-//         , private jwtService: JwtService,
-//         private twilioService: TwilioService,
-//         private promotionEngine: PromotionEngineService, 
-//     ) { }
-
-
-//     // Old Register and Login methods (email + password)
-//     async register(dto: any) {
-//         // Minimal validation — stops garbage input
-//         if (!dto?.full_name || !dto?.email || !dto?.password) {
-//             throw new BadRequestException('full_name, email, and password are required');
-//         }
-//         if (dto.password.length < 8) {
-//             throw new BadRequestException('Password must be at least 8 characters');
-//         }
-
-//         const queryRunner = this.dataSource.createQueryRunner();
-//         try {
-//             await queryRunner.connect();
-//             await queryRunner.startTransaction();
-
-//             // Check duplicate email up front (nicer error than a DB constraint violation)
-//             const existing = await queryRunner.query(
-//                 `SELECT 1 FROM users WHERE email = $1 LIMIT 1`,
-//                 [dto.email],
-//             );
-//             if (existing.length) {
-//                 throw new BadRequestException('Email already registered');
-//             }
-
-//             const hashedPassword = await bcrypt.hash(dto.password, 10);
-//             const userCode = generateUserCode(dto.full_name);
-//             const username = generateUsername(dto.full_name, dto.email);
-
-//             // ⬇️ THE FIX: add RETURNING id so result[0].id actually exists
-//             const result = await queryRunner.query(
-//                 `INSERT INTO users (full_name, email, password, user_code, username)
-//              VALUES ($1, $2, $3, $4, $5)
-//              RETURNING id`,
-//                 [dto.full_name, dto.email, hashedPassword, userCode, username],
-//             );
-
-//             const userId = result[0].id;
-
-//             await queryRunner.query(
-//                 `INSERT INTO wallets (user_id) VALUES ($1)`,
-//                 [userId],
-//             );
-
-//             await queryRunner.commitTransaction();
-
-//             return { userId, userCode, username };
-//         } catch (error) {
-//             await queryRunner.rollbackTransaction();
-//             console.error('Error during registration:', error);
-//             throw error;
-//         } finally {
-//             await queryRunner.release();
-//         }
-//     }
-
-
-
-
-
-//     async login(dto: any) {
-//         try {
-//             const { phone_number, email, username, password } = dto;
-
-//             if (!password) {
-//                 throw new UnauthorizedException('Password is required');
-//             }
-
-//             let user: any[];
-
-//             // ✅ Login with phone
-//             if (phone_number) {
-//                 user = await this.dataSource.query(
-//                     `SELECT u.* FROM users u
-//                  JOIN user_phone_numbers up 
-//                  ON u.id = up.user_id
-//                  WHERE up.phone_number = $1
-//                  AND up.is_primary = true
-//                  LIMIT 1`,
-//                     [phone_number],
-//                 );
-//             }
-
-//             // ✅ Login with email
-//             else if (email) {
-//                 user = await this.dataSource.query(
-//                     `SELECT * FROM users WHERE email = $1 LIMIT 1`,
-//                     [email],
-//                 );
-//             }else if (username) {
-//                     user = await this.dataSource.query(
-//                         `SELECT * FROM users 
-//                         WHERE username = $1 
-//                         LIMIT 1`,
-//                         [username],
-//                     );
-//                 }
-
-//             // ❌ Neither provided
-//             else {
-//                 throw new UnauthorizedException('Email, phone number, or username is required');
-//             }
-
-//             if (!user || !user.length) {
-//                 throw new UnauthorizedException('User not found');
-//             }
-
-//             const u = user[0];
-
-//             // 🔒 Password check
-//             const isValid = await bcrypt.compare(password, u.password);
-//             if (!isValid) {
-//                 throw new UnauthorizedException('Invalid password');
-//             }
-
-//             // 🚫 Optional: check account status
-//             if (u.account_status !== 'ACTIVE') {
-//                 throw new UnauthorizedException(`Account is ${u.account_status}`);
-//             }
-
-//             // 🎟️ Generate tokens
-//             const payload = {
-//                 sub: u.id,
-//                 role: 'USER',
-//             };
-
-//             const accessToken = this.jwtService.sign(payload, {
-//                 expiresIn: '7d',
-//             });
-
-//             const refreshToken = this.jwtService.sign(payload, {
-//                 expiresIn: '7d',
-//             });
-
-//             const hashedToken = await bcrypt.hash(refreshToken, 10);
-
-//             // 💾 Store refresh token
-//             await this.dataSource.query(
-//                 `INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
-//              VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-//                 [u.id, hashedToken],
-//             );
-
-//             return {
-//                 accessToken,
-//                 refreshToken,
-//                 user: {
-//                     id: u.id,
-//                     username: u.username,
-//                 },
-//             };
-
-//         } catch (error) {
-//             console.error('Error during login:', error);
-//             throw error;
-//         }
-//     }
-
-
-//     async refreshToken(dto: any) {
-//         const decoded = this.jwtService.decode(dto.refreshToken) as any;
-
-//         if (!decoded) {
-//             throw new UnauthorizedException('Invalid token');
-//         }
-
-//         const userId = decoded.sub;
-
-//         const tokens = await this.dataSource.query(
-//             `SELECT * FROM refresh_tokens WHERE user_id = $1 AND is_revoked = false`,
-//             [userId],
-//         );
-
-//         let valid = false;
-
-//         for (const t of tokens) {
-//             const match = await bcrypt.compare(dto.refreshToken, t.token_hash);
-//             if (match) {
-//                 valid = true;
-//                 break;
-//             }
-//         }
-
-//         if (!valid) {
-//             throw new UnauthorizedException('Invalid refresh token');
-//         }
-
-//         const newAccessToken = this.jwtService.sign(
-//             { sub: userId },
-//             { expiresIn: '15m' },
-//         );
-
-//         return {
-//             accessToken: newAccessToken,
-//         };
-//     }
-
-//     async logout(dto: any) {
-//         if (!dto?.refreshToken) {
-//             throw new UnauthorizedException('Refresh token is required');
-//         } let decoded: any;
-//         try {
-//             decoded = this.jwtService.verify(dto.refreshToken);
-
-//         } catch (err) {
-//             throw new UnauthorizedException('Invalid refresh token');
-//         }
-
-//         await this.dataSource.query(
-//             `UPDATE refresh_tokens SET is_revoked = true WHERE user_id = $1`,
-//             [decoded.sub],
-//         );
-
-//         return { message: 'Logged out successfully' };
-//     }
-
-
-//     async getProfile(dto: any) {
-//         try {
-
-//             if (!dto.userId) {
-//                 throw new UnauthorizedException('User ID is required');
-//             }
-//             const user = await this.dataSource.query(
-//                 'SELECT full_name, email, username,profile_image_url,account_status,user_code,referral_code FROM users WHERE id = $1',
-//                 [dto.userId],
-//             );
-//             return user[0];
-//         } catch (error) {
-//             console.error('Error fetching profile:', error);
-//             throw error;
-
-//         }
-//     }
-
-
-//     async adminLogin(dto: any) {
-//         const admin = await this.dataSource.query(
-//             `SELECT * FROM admin_users WHERE email = $1`,
-//             [dto.email],
-//         );
-
-//         if (!admin.length) {
-//             throw new UnauthorizedException('Admin not found');
-//         }
-
-//         const a = admin[0];
-
-//         const isValid = await bcrypt.compare(dto.password, a.password);
-
-//         if (!isValid) {
-//             throw new UnauthorizedException('Invalid password');
-//         }
-
-//         const payload = {
-//             sub: a.id,
-//             role: 'ADMIN',
-//         };
-
-//         const accessToken = this.jwtService.sign(payload, {
-//             expiresIn: '15m',
-//         });
-
-//         const refreshToken = this.jwtService.sign(payload, {
-//             expiresIn: '7d',
-//         });
-
-//         const hashedToken = await bcrypt.hash(refreshToken, 10);
-
-//         await this.dataSource.query(
-//             `INSERT INTO admin_refresh_tokens (admin_id, token_hash, expires_at)
-//    VALUES ($1, $2, NOW() + INTERVAL '7 days')`,
-//             [a.id, hashedToken],
-//         );
-//         return {
-//             accessToken,
-//             refreshToken,
-//             admin: {
-//                 id: a.id,
-//                 email: a.email,
-//             },
-//         };
-//     }
-
-//     async adminRegister(dto: any) {
-//         const queryRunner = this.dataSource.createQueryRunner();
-
-
-//         try {
-//             await queryRunner.connect();
-//             await queryRunner.startTransaction();
-//             const saltRounds = 10;
-//             const hashedPassword = await bcrypt.hash(dto.password, saltRounds);
-
-//             await queryRunner.query(
-//                 'INSERT INTO admin_users (name ,email,  password, role) VALUES ($1, $2, $3, $4)',
-//                 [dto.full_name, dto.email, hashedPassword, 'ADMIN'],
-//             );
-
-
-//             await queryRunner.commitTransaction();
-
-
-//         } catch (error) {
-//             await queryRunner.rollbackTransaction();
-//             console.error('Error during admin registration:', error);
-//             throw error; // Rethrow the error to be handled by the caller       
-//         }
-
-//     }
-
-//     async isUsernameTaken(username: string): Promise<boolean> {
-//         const result = await this.dataSource.query(
-//             `SELECT 1 FROM users WHERE username = $1 LIMIT 1`,
-//             [username],
-//         );
-
-//         return result.length > 0;
-//     }
-
-//     async initiateRegistration(dto: any) {
-//         const { username, phone_number } = dto;
-
-//         // check username
-//         const isTaken = await this.isUsernameTaken(username);
-//         if (isTaken) {
-//             throw new Error('Username already taken');
-//         }
-
-//         // check phone exists
-//         const phoneExists = await this.dataSource.query(
-//             `SELECT 1 FROM user_phone_numbers WHERE phone_number = $1 LIMIT 1`,
-//             [phone_number],
-//         );
-
-//         if (phoneExists.length) {
-//             throw new Error('Phone number already registered');
-//         }
-
-//         // ⏱️ Rate limit: no new OTP if one was sent in the last 60 seconds
-//         const recentOtp = await this.dataSource.query(
-//             `SELECT created_at FROM user_otps
-//          WHERE phone_number = $1
-//          ORDER BY id DESC LIMIT 1`,
-//             [phone_number],
-//         );
-
-//         if (recentOtp.length) {
-//             const lastSentAt = new Date(recentOtp[0].created_at).getTime();
-//             const cooldown = 60 * 1000; // 60 seconds
-//             const timeLeft = cooldown - (Date.now() - lastSentAt);
-
-//             if (timeLeft > 0) {
-//                 throw new Error(
-//                     `Please wait ${Math.ceil(timeLeft / 1000)} seconds before requesting another OTP`,
-//                 );
-//             }
-//         }
-
-//         // 🔒 Daily limit: max 5 OTPs per phone per day
-//         const dailyCount = await this.dataSource.query(
-//             `SELECT COUNT(*) as count FROM user_otps
-//          WHERE phone_number = $1
-//          AND created_at > NOW() - INTERVAL '24 hours'`,
-//             [phone_number],
-//         );
-
-//         if (parseInt(dailyCount[0].count) >= 5) {
-//             throw new Error('Too many OTP requests today. Try again tomorrow.');
-//         }
-
-//         const otp = this.generateOtp();
-//         const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
-
-//         await this.dataSource.query(
-//             `INSERT INTO user_otps (phone_number, otp, expires_at)
-//          VALUES ($1, $2, $3)`,
-//             [phone_number, otp, expiresAt.toISOString()],
-//         );
-//         console.log(`Generated OTP for ${phone_number}: ${otp} })`);
-//         try {
-//             if (process.env.NODE_ENV !== 'production') {
-//                 console.log(`[DEV OTP] ${phone_number}: ${otp}`);
-//             }
-//             else {
-//                 await this.twilioService.sendWhatsAppOtp(phone_number, otp);
-
-//             }
-//         } catch (error) {
-//             console.error('WhatsApp send failed:', error);
-//             throw new Error('Failed to send OTP. Please try again.');
-//         }
-
-//         return {
-//             message: 'OTP sent successfully',
-//         };
-//     }
-//     private generateOtp(): string {
-//         // Node's built-in crypto — no extra dependency needed
-//         const crypto = require('crypto');
-//         return crypto.randomInt(100000, 1000000).toString();
-//     }
-
-//     async verifyOtpAndRegister(dto: any) {
-//         const queryRunner = this.dataSource.createQueryRunner();
-
-//         try {
-//             await queryRunner.connect();
-//             await queryRunner.startTransaction();
-
-//             const { phone_number, otp } = dto;
-
-//             // ✅ Step 1: Get latest OTP
-
-//             const otpRecord = await queryRunner.query(
-//                 `SELECT *,
-//                     EXTRACT(EPOCH FROM (expires_at - NOW())) * 1000 AS ms_remaining
-//                 FROM user_otps
-//                 WHERE phone_number = $1
-//                 AND is_used = false
-//                 ORDER BY id DESC LIMIT 1`,
-//                 [phone_number],
-//             );
-
-//             if (!otpRecord.length) {
-//                 throw new Error('No OTP found. Please request again.');
-//             }
-
-//             const record = otpRecord[0];
-
-
-//             // ✅ Step 2: Attempt limit
-//             if (record.attempts >= 5) {
-//                 throw new Error('Too many attempts. Try again later.');
-//             }
-//             // ✅ Step 3: Expiry check
-//             if (parseFloat(record.ms_remaining) <= 0) {
-//                 throw new Error('OTP expired');
-//             }
-
-//             // ✅ Step 4: Validate OTP
-//             if (record.otp !== otp) {
-//                 await queryRunner.query(
-//                     `UPDATE user_otps 
-//                  SET attempts = attempts + 1 
-//                  WHERE id = $1`,
-//                     [record.id],
-//                 );
-
-//                 throw new Error('Invalid OTP');
-//             }
-
-//             // ✅ Step 5: Mark OTP used
-//             await queryRunner.query(
-//                 `UPDATE user_otps 
-//              SET is_used = true 
-//              WHERE id = $1`,
-//                 [record.id],
-//             );
-
-//             // ✅ Step 6: OPTIONAL EMAIL LOGIC
-//             let email: string | null = null;
-
-//             if (dto.email) {
-//                 // check duplicate email
-//                 const existingEmail = await queryRunner.query(
-//                     `SELECT 1 FROM users WHERE email = $1 LIMIT 1`,
-//                     [dto.email],
-//                 );
-
-//                 if (existingEmail.length) {
-//                     throw new Error('Email already in use');
-//                 }
-
-//                 email = dto.email;
-//             }
-//             if (dto.password.length < 6) {
-//                 throw new Error('Password must be at least 6 characters long');
-//             }
-//             // ✅ Step 7: Hash password
-//             const hashedPassword = await bcrypt.hash(dto.password, 10);
-
-//             // ✅ Step 8: Generate user code
-//             const userCode = generateUserCode(dto.full_name);
-
-//             // ✅ Step 9: Insert user
-//             const result = await queryRunner.query(
-//                 `INSERT INTO users 
-//             (full_name, email, password, user_code, username)
-//             VALUES ($1, $2, $3, $4, $5)
-//             RETURNING id`,
-//                 [
-//                     dto.full_name,
-//                     email, // 👈 NULL if not provided
-//                     hashedPassword,
-//                     userCode,
-//                     dto.username,
-//                 ],
-//             );
-
-//             const userId = result[0].id;
-
-//             // ✅ Step 10: Insert phone
-//             await queryRunner.query(
-//                 `INSERT INTO user_phone_numbers 
-//             (user_id, phone_number, is_primary, is_verified)
-//             VALUES ($1, $2, true, true)`,
-//                 [userId, phone_number],
-//             );
-
-//             // ✅ Step 11: Create wallet
-//             await queryRunner.query(
-//                 `INSERT INTO wallets (user_id) VALUES ($1)`,
-//                 [userId],
-//             );
-//             // ✅ Step 12: Initialize promotion engine
-//             const signupBonus = await this.promotionEngine.tryAwardSignupBonus(queryRunner, userId);
-
-
-//             await queryRunner.commitTransaction();
-//             return {
-//                 message: 'User registered successfully',
-//             };
-
-
-//         } catch (error) {
-//             await queryRunner.rollbackTransaction();
-//             console.error('Registration error:', error);
-//             throw error;
-//         } finally {
-//             await queryRunner.release();
-//         }
-//     }
-// }
-
-
-
 // src/auth/auth.service.ts
 import {
   Injectable,
@@ -566,7 +11,7 @@ import { generateUserCode, generateUsername } from './utils';
 import { JwtService } from '@nestjs/jwt';
 import { TwilioService } from '../twilio/twilio.service';
 import { PromotionEngineService } from '../promotion/promotion-engine.service';
-
+import { LaafficService } from '../laaffic/laaffic.service';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -576,6 +21,7 @@ export class AuthService {
     private jwtService: JwtService,
     private twilioService: TwilioService,
     private promotionEngine: PromotionEngineService,
+    private laafficService: LaafficService,  
   ) {}
 
   // ═════════════════════════════════════════════════════════════
@@ -745,16 +191,16 @@ async register(dto: any) {
       [phone_number, otp, expiresAt.toISOString()],
     );
 
-    if (process.env.NODE_ENV !== 'production') {
-      this.logger.log(`[DEV OTP] ${phone_number}: ${otp}`);
-    } else {
-      try {
-        await this.twilioService.sendWhatsAppOtp(phone_number, otp);
-      } catch (err: any) {
-        this.logger.error(`OTP send failed: ${err.message}`);
-        throw new BadRequestException('Failed to send OTP. Please try again.');
-      }
-    }
+    // if (process.env.NODE_ENV !== 'production') {
+    //   this.logger.log(`[DEV OTP] ${phone_number}: ${otp}`);
+    // } else {
+    //   try {
+    //     await this.twilioService.sendWhatsAppOtp(phone_number, otp);
+    //   } catch (err: any) {
+    //     this.logger.error(`OTP send failed: ${err.message}`);
+    //     throw new BadRequestException('Failed to send OTP. Please try again.');
+    //   }
+    // }
 
     return { message: 'OTP sent successfully' };
   }
@@ -1040,6 +486,229 @@ async register(dto: any) {
 
         return result.length > 0;
     }
+
+    /**
+ * Step 1: User submits their phone number to request a password reset.
+ * - Verifies the phone belongs to an actual user
+ * - Throttles requests (60s cooldown, 5/day) — same rules as registration
+ * - Generates a 6-digit OTP, stores it with purpose='PASSWORD_RESET'
+ * - Sends it via LAAFFIC SMS
+ *
+ * Response is deliberately the same whether the phone exists or not in some
+ * apps, to avoid user enumeration. Here we throw so the FE shows a clear error;
+ * if you want the safer behavior, swap the throw for a silent return.
+ */
+async forgotPassword(dto: { phone_number: string }) {
+  const rawInput = dto.phone_number?.trim();
+ 
+  if (!rawInput) {
+    throw new BadRequestException('phone_number is required');
+  }
+ 
+  // Phone as the user sent it (may have leading "+"). Used for DB lookups
+  // and for storing the OTP row, so verifyResetOtp finds it.
+  const phone_number = rawInput;
+ 
+  // Phone in LAAFFIC format — no "+", just digits (e.g. 8801712345678).
+  const laafficNumber = rawInput.replace(/^\+/, '');
+ 
+  // 1. Confirm the phone is registered as someone's primary number.
+  //    Match BOTH with-"+" and without-"+", in case stored format differs.
+  const userRow = await this.dataSource.query(
+    `SELECT u.id
+       FROM users u
+       JOIN user_phone_numbers up ON up.user_id = u.id
+      WHERE (up.phone_number = $1 OR up.phone_number = $2)
+        AND up.is_primary = true
+      LIMIT 1`,
+    [phone_number, laafficNumber],
+  );
+ 
+  if (!userRow.length) {
+    throw new BadRequestException('No account found for this phone number');
+  }
+ 
+  // 2. 60-second cooldown (per phone, per purpose).
+  const recent = await this.dataSource.query(
+    `SELECT created_at FROM user_otps
+      WHERE phone_number = $1 AND purpose = 'PASSWORD_RESET'
+      ORDER BY id DESC LIMIT 1`,
+    [phone_number],
+  );
+  if (recent.length) {
+    const lastSentAt = new Date(recent[0].created_at).getTime();
+    const cooldown = 60 * 1000;
+    const wait = cooldown - (Date.now() - lastSentAt);
+    if (wait > 0) {
+      throw new BadRequestException(
+        `Please wait ${Math.ceil(wait / 1000)}s before requesting another OTP`,
+      );
+    }
+  }
+ 
+  // 3. Daily limit: 5 reset OTPs per phone per 24h.
+  const dayCount = await this.dataSource.query(
+    `SELECT COUNT(*)::int AS count FROM user_otps
+      WHERE phone_number = $1
+        AND purpose = 'PASSWORD_RESET'
+        AND created_at > NOW() - INTERVAL '24 hours'`,
+    [phone_number],
+  );
+  if (dayCount[0].count >= 100) {
+    throw new BadRequestException('Too many reset attempts today. Try again tomorrow.');
+  }
+ 
+  // 4. Generate + store OTP (stored under the original form, e.g. "+8801712...").
+  const otp = this.generateOtp();
+  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
+ 
+  const inserted = await this.dataSource.query(
+    `INSERT INTO user_otps (phone_number, otp, expires_at, purpose)
+     VALUES ($1, $2, $3, 'PASSWORD_RESET')
+     RETURNING id`,
+    [phone_number, otp, expiresAt.toISOString()],
+  );
+  const otpRowId: number = inserted[0].id;
+ 
+  // 5. Send via LAAFFIC — always WITHOUT the leading "+".
+  try {
+    if (process.env.NODE_ENV !== 'production') {
+      console.log(`[DEV RESET OTP] ${laafficNumber}: ${otp}`);
+    } else {
+
+      const msgId = await this.laafficService.sendPasswordResetOtp(laafficNumber, otp);
+      if (msgId) {
+        await this.dataSource.query(
+          `UPDATE user_otps SET provider_msg_id = $1 WHERE id = $2`,
+          [msgId, otpRowId],
+        );
+      }
+    }
+  } catch (err: any) {
+    console.error('LAAFFIC send failed:', err);
+    throw new BadRequestException('Failed to send OTP. Please try again.');
+  }
+ 
+  return { message: 'OTP sent successfully' };
+}
+ 
+ 
+/**
+ * Step 2: User submits the OTP they received.
+ * On success returns a short-lived JWT (resetToken) that the FE must send back
+ * with the new password. This avoids putting the OTP itself on the final
+ * reset endpoint, and limits the window for reuse.
+ */
+async verifyResetOtp(dto: { phone_number: string; otp: string }) {
+  const rawInput = dto.phone_number?.trim();
+  const { otp } = dto;
+ 
+  if (!rawInput || !otp) {
+    throw new BadRequestException('phone_number and otp are required');
+  }
+ 
+  const phone_number = rawInput;                  // form used at insert time
+  const laafficNumber = rawInput.replace(/^\+/, ''); // alternate form
+ 
+  const otpRows = await this.dataSource.query(
+    `SELECT id, otp, attempts, is_used,
+            EXTRACT(EPOCH FROM (expires_at - NOW())) * 1000 AS ms_remaining
+       FROM user_otps
+      WHERE (phone_number = $1 OR phone_number = $2)
+        AND purpose = 'PASSWORD_RESET'
+        AND is_used = false
+      ORDER BY id DESC
+      LIMIT 1`,
+    [phone_number, laafficNumber],
+  );
+ 
+  if (!otpRows.length) {
+    throw new BadRequestException('No OTP found. Please request again.');
+  }
+ 
+  const record = otpRows[0];
+ 
+  if (record.attempts >= 5) {
+    throw new BadRequestException('Too many attempts. Request a new OTP.');
+  }
+  if (parseFloat(record.ms_remaining) <= 0) {
+    throw new BadRequestException('OTP expired');
+  }
+  if (record.otp !== otp) {
+    await this.dataSource.query(
+      `UPDATE user_otps SET attempts = attempts + 1 WHERE id = $1`,
+      [record.id],
+    );
+    throw new BadRequestException('Invalid OTP');
+  }
+ 
+  await this.dataSource.query(
+    `UPDATE user_otps SET is_used = true WHERE id = $1`,
+    [record.id],
+  );
+ 
+  const userRow = await this.dataSource.query(
+    `SELECT u.id
+       FROM users u
+       JOIN user_phone_numbers up ON up.user_id = u.id
+      WHERE (up.phone_number = $1 OR up.phone_number = $2)
+        AND up.is_primary = true
+      LIMIT 1`,
+    [phone_number, laafficNumber],
+  );
+  if (!userRow.length) {
+    throw new BadRequestException('User not found');
+  }
+ 
+  const resetToken = this.jwtService.sign(
+    { sub: userRow[0].id, scope: 'password_reset' },
+    { expiresIn: '10m' },
+  );
+ 
+  return { message: 'OTP verified', resetToken };
+}
+
+ 
+ 
+/**
+ * Step 3: Consume the reset token + new password.
+ */
+async resetPassword(dto: { resetToken: string; new_password: string }) {
+  const { resetToken, new_password } = dto;
+ 
+  if (!resetToken || !new_password) {
+    throw new BadRequestException('resetToken and new_password are required');
+  }
+  if (new_password.length < 8) {
+    throw new BadRequestException('Password must be at least 8 characters');
+  }
+ 
+  let payload: any;
+  try {
+    payload = this.jwtService.verify(resetToken);
+  } catch {
+    throw new UnauthorizedException('Invalid or expired reset token');
+  }
+ 
+  if (payload?.scope !== 'password_reset' || !payload?.sub) {
+    throw new UnauthorizedException('Invalid reset token');
+  }
+ 
+  const hashed = await bcrypt.hash(new_password, 10);
+ 
+  await this.dataSource.query(
+    `UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2`,
+    [hashed, payload.sub],
+  );
+ 
+  // Kill all existing sessions — anyone using a stolen refresh token is out.
+  await this.dataSource.query(
+    `UPDATE refresh_tokens SET is_revoked = true WHERE user_id = $1`,
+    [payload.sub],
+  );
+ 
+  return { message: 'Password reset successfully' };
+}
 }
 
 

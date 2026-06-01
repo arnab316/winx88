@@ -8,11 +8,13 @@ import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { PromotionModule } from '../promotion/promotion.module';
 import { OtpCleanupService } from './otpcleanup';
 import { LoggerModule } from 'src/logger/logger.module';
+import { LaafficService } from 'src/laaffic/laaffic.service';
+
 @Module({
   imports: [JwtModule.register({
     secret: 'your-secret-key',}), PromotionModule, LoggerModule],
   controllers: [AuthController],
-  providers: [AuthService, AuthGateway, TwilioService, JwtAuthGuard, OtpCleanupService],
+  providers: [AuthService, AuthGateway, TwilioService, JwtAuthGuard, OtpCleanupService, LaafficService],
   exports: [JwtModule],
 })
 export class AuthModule {}

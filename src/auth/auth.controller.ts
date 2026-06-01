@@ -649,4 +649,52 @@ async register(
   }
 
 
+ 
+// 🟠 Step 1: send password-reset OTP via SMS (LAAFFIC)
+@Post('forgot-password')
+async forgotPassword(@Body() dto: { phone_number: string }) {
+  try {
+    const result = await this.authService.forgotPassword(dto);
+    return { success: true, message: result.message };
+  } catch (error: any) {
+    throw new HttpException(
+      { success: false, message: error.message || 'Failed to send reset OTP' },
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+}
+ 
+ 
+// 🟣 Step 2: verify the OTP → returns a short-lived resetToken
+@Post('verify-reset-otp')
+async verifyResetOtp(@Body() dto: { phone_number: string; otp: string }) {
+  try {
+    const result = await this.authService.verifyResetOtp(dto);
+    return {
+      success: true,
+      message: result.message,
+      resetToken: result.resetToken,
+    };
+  } catch (error: any) {
+    throw new HttpException(
+      { success: false, message: error.message || 'OTP verification failed' },
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+}
+ 
+ 
+// 🟢 Step 3: consume resetToken + set new password
+@Post('reset-password')
+async resetPassword(@Body() dto: { resetToken: string; new_password: string }) {
+  try {
+    const result = await this.authService.resetPassword(dto);
+    return { success: true, message: result.message };
+  } catch (error: any) {
+    throw new HttpException(
+      { success: false, message: error.message || 'Password reset failed' },
+      HttpStatus.BAD_REQUEST,
+    );
+  }
+}
 }
