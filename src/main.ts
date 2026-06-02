@@ -14,8 +14,16 @@ async function bootstrap() {
 
   app.use(cookieParser());
 
-  app.useGlobalPipes(new ValidationPipe({ whitelist: true, transform: true }));
-
+app.useGlobalPipes(
+    new ValidationPipe({
+      whitelist: true,                          // strip unknown props
+      forbidNonWhitelisted: false,
+      transform: true,                          // turn plain objects into DTO instances
+      transformOptions: {
+        enableImplicitConversion: true,         // ← THE KEY ONE for query coercion
+      },
+    }),
+  );
  app.enableCors({
   origin: [
     'http://localhost:5173',

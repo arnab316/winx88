@@ -9,32 +9,26 @@ import {
   CreatePromotionCmsDto,
   UpdatePromotionCmsDto,
   ListPromotionCmsQueryDto,
-  FeedQueryDto,
-  ReorderCmsDto,
-  SupportedLang,
+  PublicPromotionCmsQueryDto,
+  ReorderPromotionCmsDto,
 } from './dto/promotion-cms.dto';
 
 /**
- * Single Responsibility: manage promotion display content
- * (banners, bilingual text, sequence ordering, audience filters).
+ * Manages content/banner side of promotions (separate from the rules engine).
  *
- * Does NOT credit bonuses, validate eligibility for claiming, or
- * enforce business rules — that's PromotionEngineService's job.
- *
- * The CMS row may link to a promotion (engine row) so the "Apply"
- * button on the frontend knows which promo to claim. That linkage
- * is optional — pure marketing announcements without a claim flow
- * are also valid (promotion_id can be null).
+ * - Admin CRUD over promotion_cms rows.
+ * - Public read endpoints that the frontend banner grid consumes.
+ * - Per-user eligibility evaluation so the frontend knows whether to
+ *   render a card normally, grey it out, or hide it (per `non_eligible_display`).
  */
 @Injectable()
 export class PromotionCmsService {
-  constructor(private dataSource: DataSource) {}
+  constructor(private readonly dataSource: DataSource) {}
 
   // ═════════════════════════════════════════════════════════════
   // ADMIN: CREATE
   // ═════════════════════════════════════════════════════════════
   async create(dto: CreatePromotionCmsDto, adminId: number) {
-    // Verify linked promotion exists if provided
     if (dto.promotionId) {
       const p = await this.dataSource.query(
         `SELECT id FROM promotions WHERE id = $1`,
@@ -43,35 +37,34 @@ export class PromotionCmsService {
       if (!p.length) throw new BadRequestException('Linked promotion not found');
     }
 
-    // Verify member group if provided
     if (dto.eligibleMemberGroupId) {
       const g = await this.dataSource.query(
-        `SELECT id FROM member_groups WHERE id = $1`,
+        `SELECT id FROM member_groups WHERE id = $1 AND is_active = TRUE`,
         [dto.eligibleMemberGroupId],
       );
-      if (!g.length) throw new BadRequestException('Member group not found');
+      if (!g.length) throw new BadRequestException('Member group not found or inactive');
     }
 
-    // At least one language must have a title
-    if (!dto.titleEn && !dto.titleBn) {
-      throw new BadRequestException(
-        'At least one of titleEn or titleBn must be provided',
-      );
-    }
-
-    const result = await this.dataSource.query(
+    const r = await this.dataSource.query(
       `INSERT INTO promotion_cms
         (promotion_id, currency, sequence, tags,
          display_before_login, display_after_login, show_remaining_time, allow_apply,
-         redirect_target, eligible_member_group_id,
+         redirect_target, non_eligible_display, eligible_member_group_id,
          starts_at, ends_at,
          title_en, description_en, content_en, banner_en_url, small_banner_en_url,
          title_bn, description_bn, content_bn, banner_bn_url, small_banner_bn_url,
          button_show_with_title, button_show_when_eligible,
          button_show_in_promotions, button_show_in_promo_center,
          is_active, created_by_admin_id, updated_by_admin_id)
-       VALUES ($1,$2,$3,$4::jsonb,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,
-               $18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$28)
+       VALUES
+        ($1, $2, $3, $4::jsonb,
+         $5, $6, $7, $8,
+         $9, $10, $11,
+         $12, $13,
+         $14, $15, $16, $17, $18,
+         $19, $20, $21, $22, $23,
+         $24, $25, $26, $27,
+         $28, $29, $29)
        RETURNING *`,
       [
         dto.promotionId ?? null,
@@ -83,19 +76,20 @@ export class PromotionCmsService {
         dto.showRemainingTime ?? false,
         dto.allowApply ?? true,
         dto.redirectTarget ?? 'PROMO_CENTER',
+        dto.nonEligibleDisplay ?? 'GREY',
         dto.eligibleMemberGroupId ?? null,
         dto.startsAt ?? null,
         dto.endsAt ?? null,
         dto.titleEn ?? null,
         dto.descriptionEn ?? null,
         dto.contentEn ?? null,
-        null, // banner_en_url — set via uploadBanner endpoint
-        null, // small_banner_en_url
+        dto.bannerEnUrl ?? null,
+        dto.smallBannerEnUrl ?? null,
         dto.titleBn ?? null,
         dto.descriptionBn ?? null,
         dto.contentBn ?? null,
-        null, // banner_bn_url
-        null, // small_banner_bn_url
+        dto.bannerBnUrl ?? null,
+        dto.smallBannerBnUrl ?? null,
         dto.buttonShowWithTitle ?? false,
         dto.buttonShowWhenEligible ?? false,
         dto.buttonShowInPromotions ?? true,
@@ -104,7 +98,7 @@ export class PromotionCmsService {
         adminId,
       ],
     );
-    return result[0];
+    return r[0];
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -115,30 +109,32 @@ export class PromotionCmsService {
       `SELECT id FROM promotion_cms WHERE id = $1`,
       [id],
     );
-    if (!existing.length) throw new NotFoundException('CMS entry not found');
-
-    const fields: string[] = [];
-    const values: any[] = [];
-    let i = 1;
+    if (!existing.length) throw new NotFoundException('Promotion CMS entry not found');
 
     const map: Record<string, any> = {
       promotion_id:                 dto.promotionId,
       currency:                     dto.currency,
       sequence:                     dto.sequence,
+      tags:                         dto.tags !== undefined ? JSON.stringify(dto.tags) : undefined,
       display_before_login:         dto.displayBeforeLogin,
       display_after_login:          dto.displayAfterLogin,
       show_remaining_time:          dto.showRemainingTime,
       allow_apply:                  dto.allowApply,
       redirect_target:              dto.redirectTarget,
+      non_eligible_display:         dto.nonEligibleDisplay,
       eligible_member_group_id:     dto.eligibleMemberGroupId,
       starts_at:                    dto.startsAt,
       ends_at:                      dto.endsAt,
       title_en:                     dto.titleEn,
       description_en:               dto.descriptionEn,
       content_en:                   dto.contentEn,
+      banner_en_url:                dto.bannerEnUrl,
+      small_banner_en_url:          dto.smallBannerEnUrl,
       title_bn:                     dto.titleBn,
       description_bn:               dto.descriptionBn,
       content_bn:                   dto.contentBn,
+      banner_bn_url:                dto.bannerBnUrl,
+      small_banner_bn_url:          dto.smallBannerBnUrl,
       button_show_with_title:       dto.buttonShowWithTitle,
       button_show_when_eligible:    dto.buttonShowWhenEligible,
       button_show_in_promotions:    dto.buttonShowInPromotions,
@@ -146,89 +142,123 @@ export class PromotionCmsService {
       is_active:                    dto.isActive,
     };
 
+    const fields: string[] = [];
+    const values: any[] = [];
+    let i = 1;
+
     for (const [col, val] of Object.entries(map)) {
       if (val !== undefined) {
-        fields.push(`${col} = $${i++}`);
+        // tags column needs ::jsonb cast
+        if (col === 'tags') fields.push(`${col} = $${i++}::jsonb`);
+        else                fields.push(`${col} = $${i++}`);
         values.push(val);
       }
     }
-
-    // Tags need JSONB casting
-    if (dto.tags !== undefined) {
-      fields.push(`tags = $${i++}::jsonb`);
-      values.push(JSON.stringify(dto.tags));
-    }
-
     if (!fields.length) throw new BadRequestException('No fields to update');
 
     fields.push(`updated_by_admin_id = $${i++}`);
     values.push(adminId);
-    fields.push(`updated_at = NOW()`);
-    values.push(id);
 
-    const result = await this.dataSource.query(
-      `UPDATE promotion_cms SET ${fields.join(', ')}
-       WHERE id = $${i} RETURNING *`,
+    values.push(id);
+    const r = await this.dataSource.query(
+      `UPDATE promotion_cms SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`,
       values,
     );
-    return result[0];
+    return r[0];
   }
 
   // ═════════════════════════════════════════════════════════════
-  // ADMIN: SET BANNER URLs (after S3 upload)
-  //   Called by controller AFTER it uploads the file to S3.
-  //   Separate from update so we can do partial banner replacement.
+  // ADMIN: SOFT DELETE
   // ═════════════════════════════════════════════════════════════
-  async setBannerUrl(
-    id: number,
-    lang: SupportedLang,
-    size: 'large' | 'small',
-    url: string,
-    adminId: number,
-  ) {
-    const colName =
-      `${size === 'small' ? 'small_banner' : 'banner'}_${lang}_url`;
+  async deactivate(id: number, adminId: number) {
+    const r = await this.dataSource.query(
+      `UPDATE promotion_cms
+       SET is_active = FALSE, updated_by_admin_id = $1
+       WHERE id = $2 RETURNING id`,
+      [adminId, id],
+    );
+    if (!r.length) throw new NotFoundException('Promotion CMS entry not found');
+    return { message: 'Promotion CMS entry deactivated' };
+  }
 
-    const existing = await this.dataSource.query(
-      `SELECT id FROM promotion_cms WHERE id = $1`,
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: LIST
+  // ═════════════════════════════════════════════════════════════
+  async list(q: ListPromotionCmsQueryDto) {
+    const where: string[] = [];
+    const params: any[] = [];
+    let i = 1;
+
+    if (q.currency)               { where.push(`currency = $${i++}`);     params.push(q.currency); }
+    if (q.isActive !== undefined) { where.push(`is_active = $${i++}`);    params.push(q.isActive); }
+    if (q.tag)                    { where.push(`tags @> $${i++}::jsonb`); params.push(JSON.stringify([q.tag])); }
+    if (q.promotionId)            { where.push(`promotion_id = $${i++}`); params.push(q.promotionId); }
+    if (q.search) {
+      where.push(`(title_en ILIKE $${i} OR title_bn ILIKE $${i})`);
+      params.push(`%${q.search}%`);
+      i++;
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const page = Math.max(q.page ?? 1, 1);
+    const limit = Math.min(Math.max(q.limit ?? 20, 1), 200);
+    const offset = (page - 1) * limit;
+
+    const data = await this.dataSource.query(
+      `SELECT pc.*,
+              p.title  AS engine_title,
+              p.code   AS engine_code,
+              p.kind   AS engine_kind,
+              p.is_active AS engine_is_active
+       FROM promotion_cms pc
+       LEFT JOIN promotions p ON p.id = pc.promotion_id
+       ${whereSql}
+       ORDER BY pc.sequence ASC, pc.created_at DESC
+       LIMIT ${limit} OFFSET ${offset}`,
+      params,
+    );
+
+    const totalRows = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total FROM promotion_cms ${whereSql}`,
+      params,
+    );
+
+    return { data, page, limit, total: totalRows[0].total };
+  }
+
+  async getOne(id: number) {
+    const r = await this.dataSource.query(
+      `SELECT pc.*,
+              p.title  AS engine_title,
+              p.code   AS engine_code,
+              p.kind   AS engine_kind
+       FROM promotion_cms pc
+       LEFT JOIN promotions p ON p.id = pc.promotion_id
+       WHERE pc.id = $1`,
       [id],
     );
-    if (!existing.length) throw new NotFoundException('CMS entry not found');
-
-    const result = await this.dataSource.query(
-      `UPDATE promotion_cms
-       SET ${colName} = $1, updated_by_admin_id = $2, updated_at = NOW()
-       WHERE id = $3
-       RETURNING *`,
-      [url, adminId, id],
-    );
-    return result[0];
+    if (!r.length) throw new NotFoundException('Promotion CMS entry not found');
+    return r[0];
   }
 
   // ═════════════════════════════════════════════════════════════
-  // ADMIN: REORDER (bulk sequence update)
+  // ADMIN: REORDER (drag-and-drop sequence assignment)
   // ═════════════════════════════════════════════════════════════
-  async reorder(dto: ReorderCmsDto, adminId: number) {
-    if (!dto.items?.length) throw new BadRequestException('No items provided');
-
+  async reorder(dto: ReorderPromotionCmsDto, adminId: number) {
     const qr = this.dataSource.createQueryRunner();
     await qr.connect();
     await qr.startTransaction();
-
     try {
       for (const item of dto.items) {
-        if (!Number.isFinite(item.id) || !Number.isFinite(item.sequence)) {
-          throw new BadRequestException('Each item must have id and sequence');
-        }
         await qr.query(
           `UPDATE promotion_cms
-           SET sequence = $1, updated_by_admin_id = $2, updated_at = NOW()
+           SET sequence = $1, updated_by_admin_id = $2
            WHERE id = $3`,
           [item.sequence, adminId, item.id],
         );
       }
       await qr.commitTransaction();
-      return { message: 'Reorder applied', count: dto.items.length };
+      return { message: 'Sequence updated', updated: dto.items.length };
     } catch (e) {
       await qr.rollbackTransaction();
       throw e;
@@ -238,152 +268,133 @@ export class PromotionCmsService {
   }
 
   // ═════════════════════════════════════════════════════════════
-  // ADMIN: DELETE
+  // PUBLIC: GUEST/USER BANNER LIST
+  //   - For guests: only display_before_login = TRUE rows
+  //   - For users:  only display_after_login  = TRUE rows + eligibility
+  //                 evaluation against linked promotion
   // ═════════════════════════════════════════════════════════════
-  async deleteOrDeactivate(id: number, hard = false) {
-    const existing = await this.dataSource.query(
-      `SELECT id FROM promotion_cms WHERE id = $1`,
-      [id],
-    );
-    if (!existing.length) throw new NotFoundException('CMS entry not found');
+  async publicList(q: PublicPromotionCmsQueryDto, userId: number | null) {
+    const params: any[] = [q.currency ?? 'BDT'];
+    let i = 2;
 
-    if (hard) {
-      await this.dataSource.query(
-        `DELETE FROM promotion_cms WHERE id = $1`,
-        [id],
-      );
-      return { message: 'CMS entry deleted permanently' };
-    }
+    const visibilityCol = userId
+      ? 'display_after_login = TRUE'
+      : 'display_before_login = TRUE';
 
-    await this.dataSource.query(
-      `UPDATE promotion_cms SET is_active = FALSE, updated_at = NOW() WHERE id = $1`,
-      [id],
-    );
-    return { message: 'CMS entry deactivated' };
-  }
-
-  // ═════════════════════════════════════════════════════════════
-  // ADMIN: LIST WITH FILTERS
-  // ═════════════════════════════════════════════════════════════
-  async list(q: ListPromotionCmsQueryDto) {
-    const where: string[] = [];
-    const params: any[] = [];
-    let i = 1;
-
-    if (q.currency)              { where.push(`currency = $${i++}`);    params.push(q.currency); }
-    if (q.isActive !== undefined){ where.push(`is_active = $${i++}`);   params.push(q.isActive); }
-    if (q.tag)                   { where.push(`tags @> $${i++}::jsonb`); params.push(JSON.stringify([q.tag])); }
-
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const limit = q.limit ?? 20;
-    const offset = ((q.page ?? 1) - 1) * limit;
-
-    const data = await this.dataSource.query(
-      `SELECT cms.*,
-              p.title AS promotion_title, p.code AS promotion_code, p.kind AS promotion_kind
-       FROM promotion_cms cms
-       LEFT JOIN promotions p ON p.id = cms.promotion_id
-       ${whereSql}
-       ORDER BY cms.is_active DESC, cms.sequence ASC, cms.created_at DESC
-       LIMIT $${i} OFFSET $${i + 1}`,
-      [...params, limit, offset],
-    );
-
-    const count = await this.dataSource.query(
-      `SELECT COUNT(*)::int AS total FROM promotion_cms ${whereSql}`,
-      params,
-    );
-
-    return { data, page: q.page ?? 1, limit, total: count[0].total };
-  }
-
-  // ═════════════════════════════════════════════════════════════
-  // ADMIN: GET ONE
-  // ═════════════════════════════════════════════════════════════
-  async getOne(id: number) {
-    const rows = await this.dataSource.query(
-      `SELECT cms.*,
-              p.title AS promotion_title, p.code AS promotion_code, p.kind AS promotion_kind,
-              mg.code AS member_group_code, mg.name AS member_group_name
-       FROM promotion_cms cms
-       LEFT JOIN promotions p ON p.id = cms.promotion_id
-       LEFT JOIN member_groups mg ON mg.id = cms.eligible_member_group_id
-       WHERE cms.id = $1`,
-      [id],
-    );
-    if (!rows.length) throw new NotFoundException('CMS entry not found');
-    return rows[0];
-  }
-
-  // ═════════════════════════════════════════════════════════════
-  // PUBLIC: FEED (for the homepage / promo center)
-  //   Filters by language, login state, tag, currency.
-  //   Returns shaped data (one language only) — not raw row.
-  // ═════════════════════════════════════════════════════════════
-  async feed(q: FeedQueryDto) {
-    const lang: SupportedLang = q.lang ?? 'en';
-    const params: any[] = [];
-    let i = 1;
-
-    const where: string[] = [`cms.is_active = TRUE`];
-
-    // Date window
-    where.push(`(cms.starts_at IS NULL OR cms.starts_at <= NOW())`);
-    where.push(`(cms.ends_at IS NULL OR cms.ends_at > NOW())`);
-
-    // Login filter
-    if (q.loggedIn === true) {
-      where.push(`cms.display_after_login = TRUE`);
-    } else if (q.loggedIn === false) {
-      where.push(`cms.display_before_login = TRUE`);
-    }
-    // If loggedIn is undefined, return everything — frontend filters
-
-    if (q.currency) {
-      where.push(`cms.currency = $${i++}`);
-      params.push(q.currency);
-    }
-
+    let tagFilter = '';
     if (q.tag) {
-      where.push(`cms.tags @> $${i++}::jsonb`);
+      tagFilter = `AND pc.tags @> $${i++}::jsonb`;
       params.push(JSON.stringify([q.tag]));
     }
 
     const rows = await this.dataSource.query(
-      `SELECT
-          cms.id,
-          cms.promotion_id,
-          cms.currency,
-          cms.sequence,
-          cms.tags,
-          cms.show_remaining_time,
-          cms.allow_apply,
-          cms.redirect_target,
-          cms.starts_at,
-          cms.ends_at,
-          cms.title_${lang}        AS title,
-          cms.description_${lang}  AS description,
-          cms.content_${lang}      AS content,
-          cms.banner_${lang}_url   AS banner_url,
-          cms.small_banner_${lang}_url AS small_banner_url,
-          cms.button_show_with_title,
-          cms.button_show_when_eligible,
-          cms.button_show_in_promotions,
-          cms.button_show_in_promo_center,
-          p.code  AS promotion_code,
-          p.kind  AS promotion_kind,
-          p.is_active AS promotion_is_active
-       FROM promotion_cms cms
-       LEFT JOIN promotions p ON p.id = cms.promotion_id
-       WHERE ${where.join(' AND ')}
-       ORDER BY cms.sequence ASC, cms.created_at DESC`,
+      `SELECT pc.id, pc.promotion_id, pc.currency, pc.sequence, pc.tags,
+              pc.show_remaining_time, pc.allow_apply, pc.redirect_target,
+              pc.non_eligible_display,
+              pc.starts_at, pc.ends_at,
+              pc.title_en, pc.description_en, pc.content_en,
+              pc.banner_en_url, pc.small_banner_en_url,
+              pc.title_bn, pc.description_bn, pc.content_bn,
+              pc.banner_bn_url, pc.small_banner_bn_url,
+              pc.button_show_with_title, pc.button_show_when_eligible,
+              pc.button_show_in_promotions, pc.button_show_in_promo_center,
+              pc.eligible_member_group_id,
+              p.code AS promo_code, p.kind AS promo_kind,
+              p.bonus_type, p.bonus_value, p.max_bonus, p.min_amount,
+              p.starts_at AS promo_starts_at, p.ends_at AS promo_ends_at,
+              p.is_active AS promo_is_active
+       FROM promotion_cms pc
+       LEFT JOIN promotions p ON p.id = pc.promotion_id
+       WHERE pc.is_active = TRUE
+         AND pc.currency = $1
+         AND ${visibilityCol}
+         AND (pc.starts_at IS NULL OR pc.starts_at <= NOW())
+         AND (pc.ends_at   IS NULL OR pc.ends_at   >  NOW())
+         ${tagFilter}
+       ORDER BY pc.sequence ASC, pc.created_at DESC`,
       params,
     );
 
-    // Shape: skip entries that have no title in the requested language
-    // (frontend gracefully handles, but cleaner to filter here)
-    const shaped = rows.filter((r: any) => r.title);
+    // Compute eligibility per row when user is logged in
+    const userGroups = userId
+      ? (await this.dataSource.query(
+          `SELECT group_id FROM member_group_users WHERE user_id = $1`,
+          [userId],
+        )).map((r: any) => Number(r.group_id))
+      : [];
 
-    return { lang, count: shaped.length, data: shaped };
+    const allGroupId = (await this.dataSource.query(
+      `SELECT id FROM member_groups WHERE code = 'ALL' LIMIT 1`,
+    ))[0]?.id ?? null;
+
+    const enriched = rows.map((row: any) => {
+      let eligible = true;
+      const reasons: string[] = [];
+
+      if (userId) {
+        // Member-group gate
+        if (row.eligible_member_group_id) {
+          const gid = Number(row.eligible_member_group_id);
+          if (gid !== Number(allGroupId) && !userGroups.includes(gid)) {
+            eligible = false;
+            reasons.push('MEMBER_GROUP');
+          }
+        }
+        // Linked promotion must be active
+        if (row.promotion_id && row.promo_is_active === false) {
+          eligible = false;
+          reasons.push('PROMO_INACTIVE');
+        }
+      } else {
+        // Guests are never "eligible" to claim — but cards still render
+        eligible = false;
+        reasons.push('GUEST');
+      }
+
+      const renderMode = eligible
+        ? 'NORMAL'
+        : row.non_eligible_display; // GREY / HIDE / DISABLED
+
+      return {
+        ...row,
+        eligible,
+        ineligibility_reasons: reasons,
+        render_mode: renderMode,
+      };
+    });
+
+    // Apply HIDE filter server-side (don't ship hidden cards to client)
+    return enriched.filter((r: any) => r.render_mode !== 'HIDE');
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // PUBLIC: SINGLE PROMOTION DETAILS PAGE
+  // ═════════════════════════════════════════════════════════════
+  async publicGetOne(id: number, userId: number | null) {
+    const rows = await this.dataSource.query(
+      `SELECT pc.*,
+              p.code AS promo_code, p.kind AS promo_kind,
+              p.bonus_type, p.bonus_value, p.max_bonus, p.min_amount,
+              p.apply_amount_min, p.rollover_multiplier,
+              p.starts_at AS promo_starts_at, p.ends_at AS promo_ends_at,
+              p.is_active AS promo_is_active
+       FROM promotion_cms pc
+       LEFT JOIN promotions p ON p.id = pc.promotion_id
+       WHERE pc.id = $1 AND pc.is_active = TRUE`,
+      [id],
+    );
+    if (!rows.length) throw new NotFoundException('Promotion not found');
+
+    const row = rows[0];
+
+    // Apply same visibility gate as list
+    if (!userId && !row.display_before_login) {
+      throw new NotFoundException('Promotion not found');
+    }
+    if (userId && !row.display_after_login) {
+      throw new NotFoundException('Promotion not found');
+    }
+
+    return row;
   }
 }

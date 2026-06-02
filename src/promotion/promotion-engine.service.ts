@@ -664,36 +664,52 @@ export class PromotionEngineService  {
     return { message: 'Promotion deactivated' };
   }
  
-  async listPromotions(q: ListPromotionsQueryDto) {
-    const where: string[] = [];
-    const params: any[] = [];
-    let i = 1;
+async listPromotions(q: ListPromotionsQueryDto) {
+  const where: string[] = [];
+  const params: any[] = [];
+  let i = 1;
  
-    if (q.kind)              { where.push(`kind = $${i++}`);       params.push(q.kind); }
-    if (q.isActive !== undefined) { where.push(`is_active = $${i++}`);  params.push(q.isActive); }
-    if (q.currency)          { where.push(`currency = $${i++}`);   params.push(q.currency); }
+  if (q.kind)                    { where.push(`p.kind = $${i++}`);                params.push(q.kind); }
+  if (q.isActive !== undefined)  { where.push(`p.is_active = $${i++}`);           params.push(q.isActive); }
+  if (q.currency)                { where.push(`p.currency = $${i++}`);            params.push(q.currency); }
+  if (q.code)                    { where.push(`p.code = $${i++}`);                params.push(q.code); }
  
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-    const limit = q.limit ?? 20;
-    const offset = ((q.page ?? 1) - 1) * limit;
+  const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
  
-    const data = await this.dataSource.query(
-      `SELECT p.*, mg.code AS member_group_code, mg.name AS member_group_name
-       FROM promotions p
-       LEFT JOIN member_groups mg ON mg.id = p.member_group_id
-       ${whereSql}
-       ORDER BY p.created_at DESC
-       LIMIT $${i} OFFSET $${i + 1}`,
-      [...params, limit, offset],
-    );
+  const page  = Math.max(q.page  ?? 1,  1);
+  const limit = Math.min(Math.max(q.limit ?? 20, 1), 200);
+  const offset = (page - 1) * limit;
  
-    const count = await this.dataSource.query(
-      `SELECT COUNT(*)::int AS total FROM promotions p ${whereSql}`,
-      params,
-    );
+  params.push(limit, offset);
  
-    return { data, page: q.page ?? 1, limit, total: count[0].total };
-  }
+  const data = await this.dataSource.query(
+    `SELECT p.*,
+            mg.code AS member_group_code,
+            mg.name AS member_group_name
+     FROM promotions p
+     LEFT JOIN member_groups mg ON mg.id = p.member_group_id
+     ${whereSql}
+     ORDER BY p.created_at DESC
+     LIMIT $${i++} OFFSET $${i++}`,
+    params,
+  );
+ 
+  // Count for pagination — slice off the LIMIT/OFFSET params
+  const totalRows = await this.dataSource.query(
+    `SELECT COUNT(*)::int AS total
+     FROM promotions p
+     ${whereSql}`,
+    params.slice(0, -2),
+  );
+ 
+  return {
+    data,
+    page,
+    limit,
+    total: totalRows[0].total,
+  };
+}
+
  
   // ═════════════════════════════════════════════════════════════
   // USER: WHAT CAN I CLAIM RIGHT NOW?

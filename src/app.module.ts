@@ -31,6 +31,7 @@ import { join } from 'path';
 import { TicketModule } from './ticket/ticket.module';
 import { VerificationModule } from './verification/verification.module';
 import { LaafficModule } from './laaffic/laaffic.module';
+import { PromotionStatsModule } from './promotion-stats/promotion-stats.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -78,6 +79,7 @@ import { LaafficModule } from './laaffic/laaffic.module';
   TicketModule,
   VerificationModule,
   LaafficModule,
+  PromotionStatsModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],

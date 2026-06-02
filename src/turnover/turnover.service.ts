@@ -38,47 +38,57 @@ export class TurnoverService {
   //   Skips entirely if no promotion attached.
   // ═════════════════════════════════════════════════════════════
   async createFromDeposit(
-    qr: QueryRunner,
-    userId: number,
-    depositId: number,
-    depositAmount: number,
-    promotionId: number | null,
-  ): Promise<{ requirementId: number; targetAmount: number } | null> {
-    if (!promotionId) return null;
-
-    const promo = await qr.query(
-      `SELECT id, rollover_multiplier, bonus_amount, bonus_percentage,
-              min_deposit, is_active
-       FROM promotions WHERE id = $1`,
-      [promotionId],
-    );
-    if (!promo.length) return null;
-
-    const p = promo[0];
-    if (!p.is_active) return null;
-
-    const multiplier = parseFloat(p.rollover_multiplier ?? '0');
-    if (!multiplier || multiplier <= 0) return null;
-
-    let bonus = 0;
-    if (p.bonus_amount) {
-      bonus = parseFloat(p.bonus_amount);
-    } else if (p.bonus_percentage) {
-      bonus = depositAmount * (parseFloat(p.bonus_percentage) / 100);
-    }
-
-    const baseAmount = depositAmount + bonus;
-    const targetAmount = baseAmount * multiplier;
-
-    return this.insertRequirement(qr, {
-      userId,
-      sourceType: 'DEPOSIT',
-      sourceId: depositId,
-      baseAmount,
-      multiplier,
-      targetAmount,
-    });
+  qr: any /* QueryRunner */,
+  userId: number,
+  depositId: number,
+  depositAmount: number,
+  promotionId: number | null,
+): Promise<{ requirementId: number; targetAmount: number } | null> {
+  if (!promotionId) return null;
+ 
+  const promo = await qr.query(
+    `SELECT id, rollover_multiplier, bonus_type, bonus_value,
+            min_amount, max_bonus, is_active
+     FROM promotions
+     WHERE id = $1`,
+    [promotionId],
+  );
+  if (!promo.length) return null;
+ 
+  const p = promo[0];
+  if (!p.is_active) return null;
+ 
+  const multiplier = parseFloat(p.rollover_multiplier ?? '0');
+  if (!multiplier || multiplier <= 0) return null;
+ 
+  // Recompute the bonus that was issued, matching engine logic
+  let bonus = 0;
+  const bonusValue = parseFloat(p.bonus_value ?? '0');
+ 
+  if (p.bonus_type === 'FLAT') {
+    bonus = bonusValue;
+  } else if (p.bonus_type === 'PERCENT') {
+    bonus = depositAmount * (bonusValue / 100);
   }
+ 
+  // Cap by max_bonus
+  if (p.max_bonus && bonus > parseFloat(p.max_bonus)) {
+    bonus = parseFloat(p.max_bonus);
+  }
+ 
+  const baseAmount = depositAmount + bonus;
+  const targetAmount = baseAmount * multiplier;
+ 
+  return this.insertRequirement(qr, {
+    userId,
+    sourceType: 'DEPOSIT',
+    sourceId: depositId,
+    baseAmount,
+    multiplier,
+    targetAmount,
+  });
+}
+
 
   // ═════════════════════════════════════════════════════════════
   // CONTRIBUTE FROM SETTLED BET
