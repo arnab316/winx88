@@ -471,7 +471,7 @@ export class LobbyService {
          ORDER BY gr.close_time ASC
          LIMIT 1
        ) lr ON TRUE
-       WHERE g.is_active = TRUE
+       WHERE g.is_active = TRUE 
        AND g.digit_length IN (1, 3, 4, 5)
        ORDER BY g.digit_length ASC, g.id ASC`,
     );
