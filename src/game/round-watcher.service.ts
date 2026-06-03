@@ -39,12 +39,17 @@ export class RoundWatcherService {
   @Cron(CronExpression.EVERY_10_SECONDS)
   async tick() {
     try {
-      // 1. Auto-close any OPEN rounds whose close_time has passed
+      // 1. Auto-close any OPEN rounds whose close_time has passed.
+      //    Exclude JACKPOT game rounds — those are closed explicitly by admin.
       const closed = await this.dataSource.query(
-        `UPDATE game_rounds
+        `UPDATE game_rounds gr
          SET status = 'CLOSED'
-         WHERE status = 'OPEN' AND close_time <= NOW()
-         RETURNING id, game_id, close_time`,
+         FROM games g
+         WHERE gr.game_id = g.id
+           AND gr.status = 'OPEN'
+           AND gr.close_time <= NOW()
+           AND g.display_category != 'JACKPOT'
+         RETURNING gr.id, gr.game_id, gr.close_time`,
       );
 
       for (const r of closed) {
@@ -57,14 +62,17 @@ export class RoundWatcherService {
         this.logger.log(`Auto-closed round ${r.id} (game ${r.game_id})`);
       }
 
-      // 2. Find OPEN rounds closing in next 30 seconds we haven't warned yet
+      // 2. Find OPEN rounds closing in next 30 seconds we haven't warned yet.
+      //    Exclude JACKPOT rounds — no countdown needed for week/month-long games.
       const closing = await this.dataSource.query(
-        `SELECT id, game_id,
-                EXTRACT(EPOCH FROM (close_time - NOW()))::int AS seconds_until_close
-         FROM game_rounds
-         WHERE status = 'OPEN'
-           AND close_time > NOW()
-           AND close_time <= NOW() + INTERVAL '30 seconds'`,
+        `SELECT gr.id, gr.game_id,
+                EXTRACT(EPOCH FROM (gr.close_time - NOW()))::int AS seconds_until_close
+         FROM game_rounds gr
+         JOIN games g ON g.id = gr.game_id
+         WHERE gr.status = 'OPEN'
+           AND gr.close_time > NOW()
+           AND gr.close_time <= NOW() + INTERVAL '30 seconds'
+           AND g.display_category != 'JACKPOT'`,
       );
 
       for (const r of closing) {

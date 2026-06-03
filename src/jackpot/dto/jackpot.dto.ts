@@ -1,32 +1,30 @@
 // src/jackpot/dto/jackpot.dto.ts
 import {
   IsString, IsOptional, IsNumber, IsInt, IsIn, IsDateString,
-  Min, Max, Length, ValidateNested, IsObject,
+  Min, Max, Length, Matches,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform } from 'class-transformer';
 
+const ToInt = () =>
+  Transform(({ value }) => {
+    const n = parseInt(value, 10);
+    return isNaN(n) ? value : n;
+  });
+
+// ── Constants ────────────────────────────────────────────────────
 export const JACKPOT_STATUSES = ['DRAFT', 'ACTIVE', 'CLOSED', 'AWARDED', 'CANCELLED'] as const;
 export type JackpotStatus = typeof JACKPOT_STATUSES[number];
 
-// ─── ELIGIBILITY RULES (JSONB shape) ────────────────────────────
-export class EligibilityRulesDto {
-  @IsOptional() @IsInt() @Min(1)
-  minBets?: number;          // e.g. user must place 10+ bets in cycle
+export const JACKPOT_DIGIT_LENGTHS = [6, 7] as const;
+export type JackpotDigitLength = 6 | 7;
 
-  @IsOptional() @IsNumber() @Min(0)
-  minTotalBet?: number;      // e.g. user must bet >= ৳5000 in cycle
+export const JACKPOT_PERIOD_TYPES = ['WEEKLY', 'MONTHLY', 'CUSTOM'] as const;
+export type JackpotPeriodType = typeof JACKPOT_PERIOD_TYPES[number];
 
-  @IsOptional() @IsInt() @Min(0) @Max(10)
-  minVipLevel?: number;      // e.g. only VIP 3+
-
-  @IsOptional() @IsInt()
-  memberGroupId?: number;    // restrict to specific member group
-}
-
-// ─── ADMIN: CREATE POOL ─────────────────────────────────────────
-export class CreateJackpotPoolDto {
+// ── ADMIN: CREATE JACKPOT SESSION ────────────────────────────────
+export class CreateJackpotSessionDto {
   @IsString() @Length(3, 150)
-  nameEn: string;
+  nameEn!: string;
 
   @IsOptional() @IsString() @Length(0, 150)
   nameBn?: string;
@@ -41,24 +39,29 @@ export class CreateJackpotPoolDto {
   bannerUrl?: string;
 
   @IsNumber() @Min(1)
-  prizeAmount: number;
+  prizeAmount!: number;
 
   @IsOptional() @IsString() @Length(2, 10)
   currency?: string;
 
-  @IsDateString()
-  startsAt: string;
+  /** 6 for 6D game, 7 for 7D game */
+  @IsIn(JACKPOT_DIGIT_LENGTHS) @IsInt()
+  digitLength!: number;
 
-  @IsDateString()
-  endsAt: string;
+  /** WEEKLY = Mon→Mon, MONTHLY = 1st→1st, CUSTOM = explicit dates */
+  @IsIn(JACKPOT_PERIOD_TYPES)
+  periodType!: string;
 
-  @IsOptional() @IsObject()
-  @ValidateNested() @Type(() => EligibilityRulesDto)
-  eligibilityRules?: EligibilityRulesDto;
+  /** Required when periodType = CUSTOM; optional otherwise (dates are auto-computed) */
+  @IsOptional() @IsDateString()
+  startsAt?: string;
+
+  @IsOptional() @IsDateString()
+  endsAt?: string;
 }
 
-// ─── ADMIN: UPDATE POOL (only DRAFT pools) ──────────────────────
-export class UpdateJackpotPoolDto {
+// ── ADMIN: UPDATE SESSION (DRAFT only) ───────────────────────────
+export class UpdateJackpotSessionDto {
   @IsOptional() @IsString() @Length(3, 150) nameEn?: string;
   @IsOptional() @IsString() @Length(0, 150) nameBn?: string;
   @IsOptional() @IsString() @Length(0, 2000) descriptionEn?: string;
@@ -67,42 +70,71 @@ export class UpdateJackpotPoolDto {
   @IsOptional() @IsNumber() @Min(1) prizeAmount?: number;
   @IsOptional() @IsDateString() startsAt?: string;
   @IsOptional() @IsDateString() endsAt?: string;
-
-  @IsOptional() @IsObject()
-  @ValidateNested() @Type(() => EligibilityRulesDto)
-  eligibilityRules?: EligibilityRulesDto;
 }
 
-// ─── ADMIN: ADJUST PRIZE MID-EVENT ──────────────────────────────
-export class AdjustPrizeDto {
-  /** Signed delta. Positive = add, negative = reduce. */
+// ── ADMIN: ADJUST PRIZE MID-EVENT ───────────────────────────────
+export class AdjustJackpotPrizeDto {
+  /** Positive = add to pool, negative = reduce */
   @IsNumber()
-  delta: number;
+  delta!: number;
 
   @IsString() @Length(3, 500)
-  reason: string;
+  reason!: string;
 }
 
-// ─── ADMIN: PICK WINNER ─────────────────────────────────────────
-export class PickWinnerDto {
-  @IsInt()
-  userId: number;
-
-  @IsString() @Length(3, 1000)
-  reason: string;          // for audit log + transparency
+// ── ADMIN: PUBLISH RESULT ────────────────────────────────────────
+export class PublishJackpotResultDto {
+  /** Digits only, e.g. "897456" for 6D or "2489874" for 7D */
+  @IsString() @Matches(/^\d+$/, { message: 'resultNumber must be digits only' })
+  resultNumber!: string;
 }
 
-// ─── ADMIN: LIST QUERY ──────────────────────────────────────────
-export class ListJackpotPoolsQueryDto {
+// ── ADMIN: ADD HOT NUMBER ─────────────────────────────────────────
+export class AddJackpotHotNumberDto {
+  /** Digits only; length validated at service level against session digitLength */
+  @IsString() @Matches(/^\d+$/, { message: 'number must be digits only' })
+  number!: string;
+
+  @IsOptional() @IsString() @Length(0, 200)
+  note?: string;
+
+  @IsOptional() @IsInt() @Min(0) @Max(999)
+  priority?: number;
+}
+
+// ── USER: PLACE BET ──────────────────────────────────────────────
+export class PlaceJackpotBetDto {
+  /** Digits only; length validated at service level against session digitLength */
+  @IsString() @Matches(/^\d+$/, { message: 'betNumber must be digits only' })
+  betNumber!: string;
+
+  @IsNumber() @Min(1)
+  betAmount!: number;
+}
+
+// ── ADMIN: LIST SESSIONS QUERY ────────────────────────────────────
+export class ListJackpotSessionsQueryDto {
   @IsOptional() @IsIn(JACKPOT_STATUSES)
   status?: JackpotStatus;
 
-  @IsOptional() @IsString()
-  currency?: string;
+  @IsOptional() @IsIn(JACKPOT_DIGIT_LENGTHS) @IsInt() @ToInt()
+  digitLength?: number;
 
-  @IsOptional() @IsInt() @Min(1)
+  @IsOptional() @IsInt() @Min(1) @ToInt()
   page?: number = 1;
 
-  @IsOptional() @IsInt() @Min(1) @Max(200)
+  @IsOptional() @IsInt() @Min(1) @Max(200) @ToInt()
   limit?: number = 20;
+}
+
+// ── ADMIN/USER: BET LIST QUERY ────────────────────────────────────
+export class ListJackpotBetsQueryDto {
+  @IsOptional() @IsString()
+  resultStatus?: string;
+
+  @IsOptional() @IsInt() @Min(1) @ToInt()
+  page?: number = 1;
+
+  @IsOptional() @IsInt() @Min(1) @Max(500) @ToInt()
+  limit?: number = 50;
 }
