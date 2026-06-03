@@ -472,6 +472,7 @@ export class LobbyService {
          LIMIT 1
        ) lr ON TRUE
        WHERE g.is_active = TRUE
+       AND g.digit_length IN (1, 3, 4, 5)
        ORDER BY g.digit_length ASC, g.id ASC`,
     );
 
@@ -501,29 +502,30 @@ export class LobbyService {
       categories[`${dl}D`] = { category: `${dl}D`, digitLength: dl, games: [] as any[] };
     }
 
-    for (const g of games) {
-      const key = `${g.digit_length}D`;
-      (categories[key] ??= { category: key, digitLength: g.digit_length, games: [] }).games.push({
-        gameId: Number(g.id),
-        gameCode: g.code,
-        gameName: g.name,
-        digitLength: g.digit_length,
-        minBet: parseFloat(g.min_bet),
-        maxBet: parseFloat(g.max_bet),
-        payoutMultiplier: parseFloat(g.payout_multiplier),
-        isLive: !!g.round_id,
-        currentRound: g.round_id
-          ? {
-              roundId: Number(g.round_id),
-              roundCode: g.round_code,
-              openTime: g.open_time,
-              closeTime: g.close_time,
-              drawTime: g.draw_time,
-            }
-          : null,
-        hotNumbers: hotByGame[g.id] ?? [],
-      });
-    }
+  for (const g of games) {
+  const key = `${g.digit_length}D`;
+  if (!categories[key]) continue; // skip any game with unexpected digit_length
+  categories[key].games.push({
+    gameId: Number(g.id),
+    gameCode: g.code,
+    gameName: g.name,
+    digitLength: g.digit_length,
+    minBet: parseFloat(g.min_bet),
+    maxBet: parseFloat(g.max_bet),
+    payoutMultiplier: parseFloat(g.payout_multiplier),
+    isLive: !!g.round_id,
+    currentRound: g.round_id
+      ? {
+          roundId: Number(g.round_id),
+          roundCode: g.round_code,
+          openTime: g.open_time,
+          closeTime: g.close_time,
+          drawTime: g.draw_time,
+        }
+      : null,
+    hotNumbers: hotByGame[g.id] ?? [],
+  });
+}
 
     return Object.values(categories);
   }
