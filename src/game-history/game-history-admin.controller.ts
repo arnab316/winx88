@@ -6,31 +6,31 @@ import {
   HttpStatus,
   ParseIntPipe,
   Query,
-  Req,
   UseGuards,
 } from '@nestjs/common';
-import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
+import { AdminGuard } from 'src/common/guards/admin.guard';
 import {
   GameCategory,
   GameHistoryService,
 } from './game-history.service';
 
 /**
- * Unified game history for the logged-in user.
+ * Admin view of any player's unified game history.
  *
- *   GET /me/game-history?category=SLOT&status=WON&from=2026-05-01&to=2026-06-01&page=1&limit=20
+ * Same normalised feed as the user-facing controller, but the target player is
+ * supplied via `userId` instead of being taken from the JWT. Admin-only.
  *
- * Merges lottery + jackpot wagers (bets table) and Palace slot rounds
- * (slot_transactions) into one paginated, normalised feed.
+ *   GET /admin/game-history?userId=42&category=SLOT&status=WON&from=2026-05-01&to=2026-06-01
+ *   GET /admin/game-history/combine?userId=42&from=2026-05-01&to=2026-06-01
  */
-@Controller('me/game-history')
-@UseGuards(JwtAuthGuard)
-export class GameHistoryController {
+@Controller('admin/game-history')
+@UseGuards(AdminGuard)
+export class GameHistoryAdminController {
   constructor(private readonly history: GameHistoryService) {}
 
   @Get()
   async getHistory(
-    @Req() req: any,
+    @Query('userId', ParseIntPipe) userId: number,
     @Query('category') category?: string,
     @Query('status') status?: string,
     @Query('from') from?: string,
@@ -42,7 +42,7 @@ export class GameHistoryController {
       const validCategories: GameCategory[] = ['LOTTERY', 'JACKPOT', 'SLOT'];
       const validStatuses = ['WON', 'LOST', 'PLACED', 'CANCELLED'];
 
-      const data = await this.history.getHistory(req.user.sub, {
+      const data = await this.history.getHistory(userId, {
         category: category && validCategories.includes(category.toUpperCase() as GameCategory)
           ? (category.toUpperCase() as GameCategory)
           : undefined,
@@ -68,22 +68,22 @@ export class GameHistoryController {
   }
 
   /**
-   * Combined feed: every product (LOTTERY + JACKPOT + SLOT) and every status
-   * (WON / LOST / PLACED / CANCELLED) merged into one timeline, filtered only by
-   * date range. No category/status filter is applied — it's the full picture.
+   * Combined feed for a player: every product (LOTTERY + JACKPOT + SLOT) and
+   * every status (WON / LOST / PLACED / CANCELLED) merged into one timeline,
+   * filtered only by date range.
    *
-   *   GET /me/game-history/combine?from=2026-05-01&to=2026-06-01&page=1&limit=20
+   *   GET /admin/game-history/combine?userId=42&from=2026-05-01&to=2026-06-01
    */
   @Get('combine')
   async getCombinedHistory(
-    @Req() req: any,
+    @Query('userId', ParseIntPipe) userId: number,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit = 20,
   ) {
     try {
-      const data = await this.history.getHistory(req.user.sub, {
+      const data = await this.history.getHistory(userId, {
         from,
         to,
         page,

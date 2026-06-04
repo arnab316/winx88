@@ -1,7 +1,9 @@
 import { Module } from '@nestjs/common';
 
 import { AuthModule } from 'src/auth/auth.module';
+import { AdminGuard } from 'src/common/guards/admin.guard';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
+import { GameHistoryAdminController } from './game-history-admin.controller';
 import { GameHistoryController } from './game-history.controller';
 import { GameHistoryService } from './game-history.service';
 
@@ -17,7 +19,7 @@ import { GameHistoryService } from './game-history.service';
  */
 @Module({
   imports: [AuthModule],
-  controllers: [GameHistoryController],
-  providers: [GameHistoryService, JwtAuthGuard],
+  controllers: [GameHistoryController, GameHistoryAdminController],
+  providers: [GameHistoryService, JwtAuthGuard, AdminGuard],
 })
 export class GameHistoryModule {}
