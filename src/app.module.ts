@@ -10,6 +10,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { WalletModule } from './wallet/wallet.module';
 import { UserModule } from './user/user.module';
 import { GameModule } from './game/game.module';
+import { GameHistoryModule } from './game-history/game-history.module';
 import { TwilioModule } from './twilio/twilio.module';
 import { CoinsModule } from './coins/coins.module';
 import { AffiliateModule } from './affiliate/affiliate.module';
@@ -62,6 +63,7 @@ import { ReportsModule } from './reports/reports.module';
     WalletModule,
     UserModule,
     GameModule,
+    GameHistoryModule,
     TwilioModule,
     CoinsModule,
     AffiliateModule,

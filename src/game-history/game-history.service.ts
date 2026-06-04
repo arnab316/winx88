@@ -1,0 +1,244 @@
+import { Injectable } from '@nestjs/common';
+import { DataSource } from 'typeorm';
+
+export type GameCategory = 'LOTTERY' | 'JACKPOT' | 'SLOT';
+
+export interface GameHistoryQuery {
+  category?: GameCategory; // filter to one product; omit for all
+  status?: string;         // WON | LOST | PLACED | CANCELLED
+  from?: string;           // ISO date (inclusive)
+  to?: string;             // ISO date (inclusive)
+  page?: number;
+  limit?: number;
+}
+
+/**
+ * Unified per-user game history across all products.
+ *
+ * Two physical sources, normalised into one "wager" shape and merged with a
+ * single UNION ALL so the feed paginates as one timeline:
+ *
+ *   - `bets`              → lottery + jackpot wagers (one row = one wager).
+ *                           Jackpot is distinguished by games.display_category.
+ *   - `slot_transactions` → Palace slots, which are ledger rows (bet/win/cancel
+ *                           are separate rows). We collapse them per round_id
+ *                           into one synthetic wager: amount = total staked,
+ *                           actual_payout = total won, status derived from both.
+ *
+ * Normalised record shape (every category returns the same keys):
+ *   refId, refCode, category, gameCode, gameName, betNumber,
+ *   betAmount, payoutMultiplier, potentialPayout, actualPayout,
+ *   status, placedAt, settledAt, roundCode, resultNumber
+ */
+@Injectable()
+export class GameHistoryService {
+  constructor(private readonly dataSource: DataSource) {}
+
+  async getHistory(userId: number, q: GameHistoryQuery) {
+    const page  = Math.max(q.page ?? 1, 1);
+    const limit = Math.min(Math.max(q.limit ?? 20, 1), 100);
+    const offset = (page - 1) * limit;
+
+    const category = q.category;
+    const status   = q.status?.toUpperCase();
+
+    // ── Source A: lottery + jackpot, from the bets table ──────────────────
+    //  category is derived from the game's display_category.
+    const betsSelect = `
+      SELECT
+        b.id::text                                            AS ref_id,
+        b.bet_code                                            AS ref_code,
+        CASE WHEN g.display_category = 'JACKPOT'
+             THEN 'JACKPOT' ELSE 'LOTTERY' END                AS category,
+        g.code                                                AS game_code,
+        g.name                                                AS game_name,
+        b.bet_number                                          AS bet_number,
+        b.bet_amount::numeric                                 AS bet_amount,
+        b.payout_multiplier::numeric                          AS payout_multiplier,
+        b.potential_payout::numeric                           AS potential_payout,
+        CASE
+          WHEN b.result_status = 'WON'  THEN b.potential_payout::numeric
+          WHEN b.result_status = 'LOST' THEN 0
+          ELSE NULL
+        END                                                   AS actual_payout,
+        b.result_status                                       AS status,
+        b.placed_at                                           AS placed_at,
+        b.settled_at                                          AS settled_at,
+        gr.round_code                                         AS round_code,
+        res.result_number                                     AS result_number
+      FROM bets b
+      JOIN games g        ON g.id  = b.game_id
+      JOIN game_rounds gr ON gr.id = b.round_id
+      LEFT JOIN game_results res ON res.round_id = b.round_id
+      WHERE b.user_id = $1
+    `;
+
+    // ── Source B: Palace slots, collapsed from slot_transactions ──────────
+    //  One synthetic wager per round. A round with only a `bet` row and no
+    //  `win` is LOST; with a `win` row it's WON; if cancelled, CANCELLED.
+    //  round_id can be NULL on a transaction, so we group by
+    //  COALESCE(round_id, trans_guid): each round collapses together, while
+    //  round-less transactions each stand alone (keyed by their unique guid)
+    //  instead of being lumped into one bogus group.
+    const slotSelect = `
+      SELECT
+        COALESCE(st.round_id, st.trans_guid)                  AS ref_id,
+        COALESCE(st.round_id, st.trans_guid)                  AS ref_code,
+        'SLOT'                                                AS category,
+        MAX(st.game_code)                                     AS game_code,
+        MAX(st.game_code)                                     AS game_name,
+        NULL::text                                            AS bet_number,
+        COALESCE(SUM(st.amount) FILTER (WHERE st.type = 'bet'), 0)  AS bet_amount,
+        NULL::numeric                                         AS payout_multiplier,
+        NULL::numeric                                         AS potential_payout,
+        COALESCE(SUM(st.amount) FILTER (WHERE st.type = 'win'), 0)  AS actual_payout,
+        CASE
+          WHEN bool_or(st.is_cancelled) OR bool_or(st.type = 'cancel') THEN 'CANCELLED'
+          WHEN COALESCE(SUM(st.amount) FILTER (WHERE st.type = 'win'), 0) > 0 THEN 'WON'
+          ELSE 'LOST'
+        END                                                   AS status,
+        MIN(st.created_at)                                    AS placed_at,
+        MAX(st.created_at)                                    AS settled_at,
+        COALESCE(st.round_id, st.trans_guid)                  AS round_code,
+        NULL::text                                            AS result_number
+      FROM slot_transactions st
+      WHERE st.user_id = $1
+      GROUP BY COALESCE(st.round_id, st.trans_guid)
+    `;
+
+    // Decide which sources to union based on the category filter.
+    const parts: string[] = [];
+    if (!category || category === 'LOTTERY' || category === 'JACKPOT') {
+      parts.push(betsSelect);
+    }
+    if (!category || category === 'SLOT') {
+      parts.push(slotSelect);
+    }
+
+    // Outer query applies category/status/date filters + pagination uniformly.
+    const filters: string[] = [];
+    const params: any[] = [userId];
+    let i = 2;
+
+    if (category) {
+      filters.push(`h.category = $${i++}`);
+      params.push(category);
+    }
+    if (status) {
+      filters.push(`h.status = $${i++}`);
+      params.push(status);
+    }
+    // Default window: last 7 days when no `from` is supplied.
+    const fromTs = q.from
+      ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    filters.push(`h.placed_at >= $${i++}`);
+    params.push(fromTs);
+
+    // `to` is inclusive of the whole day: a date-only string like
+    // '2026-06-04' covers everything up to 2026-06-04 23:59:59.
+    if (q.to) {
+      filters.push(`h.placed_at < ($${i++}::date + INTERVAL '1 day')`);
+      params.push(q.to);
+    }
+    const toTs = q.to ?? new Date().toISOString();
+
+    const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+    const unioned = `(${parts.join('\n      UNION ALL\n')}) h`;
+
+    const rows = await this.dataSource.query(
+      `SELECT * FROM ${unioned}
+       ${whereClause}
+       ORDER BY h.placed_at DESC
+       LIMIT $${i} OFFSET $${i + 1}`,
+      [...params, limit, offset],
+    );
+
+    const [cnt] = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total FROM ${unioned} ${whereClause}`,
+      params,
+    );
+
+    const [stats] = await this.dataSource.query(
+      `SELECT
+         COUNT(*)::int                                              AS total_bets,
+         COUNT(*) FILTER (WHERE h.status = 'WON')::int             AS total_wins,
+         COUNT(*) FILTER (WHERE h.status = 'LOST')::int            AS total_losses,
+         COUNT(*) FILTER (WHERE h.status = 'PLACED')::int          AS total_pending,
+         COUNT(*) FILTER (WHERE h.status = 'CANCELLED')::int       AS total_cancelled,
+         COALESCE(SUM(h.bet_amount), 0)::numeric                   AS total_staked,
+         COALESCE(SUM(h.actual_payout) FILTER (WHERE h.status = 'WON'), 0)::numeric AS total_won
+       FROM ${unioned} ${whereClause}`,
+      params,
+    );
+
+    // Per-category breakdown (LOTTERY / JACKPOT / SLOT) over the same filter set.
+    const catRows = await this.dataSource.query(
+      `SELECT
+         h.category,
+         COUNT(*)::int                                              AS total_bets,
+         COUNT(*) FILTER (WHERE h.status = 'WON')::int             AS won,
+         COUNT(*) FILTER (WHERE h.status = 'LOST')::int            AS lost,
+         COUNT(*) FILTER (WHERE h.status = 'PLACED')::int          AS placed,
+         COUNT(*) FILTER (WHERE h.status = 'CANCELLED')::int       AS cancelled,
+         COALESCE(SUM(h.bet_amount), 0)::numeric                   AS staked,
+         COALESCE(SUM(h.actual_payout) FILTER (WHERE h.status = 'WON'), 0)::numeric AS won_amount
+       FROM ${unioned} ${whereClause}
+       GROUP BY h.category`,
+      params,
+    );
+
+    const total = cnt?.total ?? 0;
+    const totalStaked = Number(stats?.total_staked ?? 0);
+    const totalWon    = Number(stats?.total_won ?? 0);
+
+    return {
+      data: rows.map((r: any) => ({
+        refId:            r.ref_id,
+        refCode:          r.ref_code,
+        category:         r.category,
+        gameCode:         r.game_code,
+        gameName:         r.game_name,
+        betNumber:        r.bet_number,
+        betAmount:        r.bet_amount === null ? null : Number(r.bet_amount),
+        payoutMultiplier: r.payout_multiplier === null ? null : Number(r.payout_multiplier),
+        potentialPayout:  r.potential_payout === null ? null : Number(r.potential_payout),
+        actualPayout:     r.actual_payout === null ? null : Number(r.actual_payout),
+        status:           r.status,
+        placedAt:         r.placed_at,
+        settledAt:        r.settled_at,
+        roundCode:        r.round_code,
+        resultNumber:     r.result_number,
+      })),
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit) || 0,
+      window: { from: fromTs, to: toTs },
+      summary: {
+        totalBets:      stats?.total_bets ?? 0,
+        totalWins:      stats?.total_wins ?? 0,
+        totalLosses:    stats?.total_losses ?? 0,
+        totalPending:   stats?.total_pending ?? 0,
+        totalCancelled: stats?.total_cancelled ?? 0,
+        totalStaked,
+        totalWon,
+        netPL: Number((totalWon - totalStaked).toFixed(2)),
+      },
+      byCategory: catRows.map((c: any) => {
+        const staked = Number(c.staked ?? 0);
+        const won    = Number(c.won_amount ?? 0);
+        return {
+          category:  c.category,
+          totalBets: c.total_bets,
+          won:       c.won,
+          lost:      c.lost,
+          placed:    c.placed,
+          cancelled: c.cancelled,
+          staked,
+          won_amount: won,
+          netPL: Number((won - staked).toFixed(2)),
+        };
+      }),
+    };
+  }
+}
