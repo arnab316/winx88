@@ -6,9 +6,11 @@ import {
   Patch,
   Body,
   Param,
+  Query,
   Req,
   UseGuards,
   ParseIntPipe,
+  DefaultValuePipe,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
@@ -66,5 +68,16 @@ export class VipController {
   @Post('admin/set-level')
   setLevel(@Req() req: any, @Body() dto: AdminSetVipLevelDto) {
     return this.vipService.adminSetLevel(dto, req.user.sub);
+  }
+
+  // GET /vip/admin/users/:level — players currently in a tier
+  @UseGuards(AdminGuard)
+  @Get('admin/users/:level')
+  usersInTier(
+    @Param('level', ParseIntPipe) level: number,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+  ) {
+    return this.vipService.getUsersInTier(level, page, limit);
   }
 }

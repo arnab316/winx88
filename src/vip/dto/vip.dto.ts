@@ -1,8 +1,15 @@
 
+import { Type } from 'class-transformer';
 import {
   IsNumber,
   IsOptional,
   IsString,
+  IsBoolean,
+  IsInt,
+  IsIn,
+  IsArray,
+  ValidateNested,
+  ArrayMaxSize,
   Min,
   Length,
   IsObject,
@@ -44,4 +51,38 @@ export class AdminSetVipLevelDto {
   @IsString()
   @Length(3, 500)
   reason: string;
+}
+
+// ─── TIER: banking-side limits (Member Group screen) ────────────
+export class UpdateTierLimitsDto {
+  @IsOptional() @IsNumber() @Min(0) depositMin?: number;
+  @IsOptional() @IsNumber() @Min(0) depositMax?: number;
+  @IsOptional() @IsNumber() @Min(0) balanceBelow?: number;
+  @IsOptional() @IsNumber() @Min(0) withdrawalMin?: number;
+  @IsOptional() @IsNumber() @Min(0) withdrawalMax?: number;
+  @IsOptional() @IsInt() @Min(0) withdrawalDailyCount?: number;
+  @IsOptional() @IsNumber() @Min(0) withdrawalDailyMax?: number;
+  @IsOptional() @IsNumber() @Min(0) withdrawalTurnover?: number;
+  @IsOptional() @IsBoolean() allowClearBalance?: boolean;
+  @IsOptional() @IsBoolean() autoClearTurnover?: boolean;
+  @IsOptional() @IsString() @Length(0, 2000) internalRemark?: string;
+  @IsOptional() @IsBoolean() invitationOnly?: boolean;
+  @IsOptional() @IsString() @Length(0, 20) uiColor?: string;
+  @IsOptional() @IsInt() @Min(0) sequence?: number;
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: string;
+  @IsOptional() @IsString() @Length(2, 10) currency?: string;
+}
+
+// ─── TIER: allowed payment channels ─────────────────────────────
+export class TierBankChannelDto {
+  @IsString() @Length(1, 30) channel!: string;
+  @IsOptional() @IsBoolean() enabled?: boolean;
+}
+
+export class SetTierBanksDto {
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => TierBankChannelDto)
+  channels!: TierBankChannelDto[];
 }

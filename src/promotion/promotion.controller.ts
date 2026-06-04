@@ -25,6 +25,8 @@ import {
   ClaimPromocodeDto,
   GrantManualBonusDto,
   CancelClaimDto,
+  ApproveClaimDto,
+  ForfeitClaimDto,
   PromotionKind,
   PROMOTION_KINDS,
 } from './dto/promotion.dto';
@@ -67,7 +69,10 @@ export class PromotionController {
   @UseGuards(JwtAuthGuard)
   @Post('me/claim-code')
   claimCode(@Req() req: any, @Body() dto: ClaimPromocodeDto) {
-    return this.engine.claimByCode(req.user.sub, dto.code);
+    return this.engine.claimByCode(req.user.sub, dto.code, {
+      ipAddress: req.ip ?? req.headers?.['x-forwarded-for'],
+      deviceFingerprint: req.headers?.['x-device-fingerprint'],
+    });
   }
  
   // ─── ADMIN ───────────────────────────────────────────────────
@@ -148,5 +153,21 @@ export class PromotionController {
   @Post('admin/cancel-claim')
   cancelClaim(@Req() req: any, @Body() dto: CancelClaimDto) {
     return this.engine.cancelClaim(dto, req.user.sub);
+  }
+
+  // POST /promotions/admin/approve-claim
+  // body: { claimId }  — grants the bonus for a manual-approval (auto_approve=false) promo
+  @UseGuards(AdminGuard)
+  @Post('admin/approve-claim')
+  approveClaim(@Req() req: any, @Body() dto: ApproveClaimDto) {
+    return this.engine.approveClaim(dto.claimId, req.user.sub);
+  }
+
+  // POST /promotions/admin/forfeit-claim
+  // body: { claimId, forfeitType: 'BONUS'|'WALLET', reason }
+  @UseGuards(AdminGuard)
+  @Post('admin/forfeit-claim')
+  forfeitClaim(@Req() req: any, @Body() dto: ForfeitClaimDto) {
+    return this.engine.forfeitClaim(dto, req.user.sub);
   }
 }

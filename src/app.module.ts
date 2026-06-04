@@ -32,6 +32,7 @@ import { TicketModule } from './ticket/ticket.module';
 import { VerificationModule } from './verification/verification.module';
 import { LaafficModule } from './laaffic/laaffic.module';
 import { PromotionStatsModule } from './promotion-stats/promotion-stats.module';
+import { ReportsModule } from './reports/reports.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -80,6 +81,7 @@ import { PromotionStatsModule } from './promotion-stats/promotion-stats.module';
   VerificationModule,
   LaafficModule,
   PromotionStatsModule,
+  ReportsModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],

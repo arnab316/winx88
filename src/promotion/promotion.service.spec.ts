@@ -1,15 +1,15 @@
 import { Test, TestingModule } from '@nestjs/testing';
-import { PromotionService } from './promotion-engine.service';
+import { PromotionEngineService } from './promotion-engine.service';
 
-describe('PromotionService', () => {
-  let service: PromotionService;
+describe('PromotionEngineService', () => {
+  let service: PromotionEngineService;
 
   beforeEach(async () => {
     const module: TestingModule = await Test.createTestingModule({
-      providers: [PromotionService],
+      providers: [PromotionEngineService],
     }).compile();
 
-    service = module.get<PromotionService>(PromotionService);
+    service = module.get<PromotionEngineService>(PromotionEngineService);
   });
 
   it('should be defined', () => {

@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { VipController } from './vip.controller';
+import { TierController } from './tier.controller';
 import { VipService } from './vip.service';
 import { JwtModule } from '@nestjs/jwt';
 import { AdminGuard } from 'src/common/guards/admin.guard';
@@ -12,7 +13,7 @@ import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
       signOptions: { expiresIn: '15m' },
     }),
   ],
-  controllers: [VipController],
+  controllers: [VipController, TierController],
   providers: [VipService, JwtAuthGuard, AdminGuard],
   exports: [VipService],
 })

@@ -124,7 +124,7 @@ export async function assertFrequencyAndCooldown(
             MAX(claimed_at) AS last_claimed_at
      FROM user_promotion_claims
      WHERE user_id = $1 AND promotion_id = $2
-       AND status IN ('PENDING','ACTIVE','COMPLETED')`,
+       AND status IN ('PENDING','APPLIED','APPROVED','ACTIVE','COMPLETED')`,
     [userId, promotion.id],
   );
   const usage = usageRows[0] ?? { n: 0, last_claimed_at: null };

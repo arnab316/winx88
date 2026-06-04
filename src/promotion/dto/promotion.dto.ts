@@ -44,6 +44,18 @@ export const GAME_CATEGORIES = [
 ] as const;
 export type GameCategory = typeof GAME_CATEGORIES[number];
 
+export const FORFEIT_TYPES = ['BONUS', 'WALLET'] as const;
+export type ForfeitType = typeof FORFEIT_TYPES[number];
+
+export const TARGET_TYPES = ['TURNOVER', 'DEPOSIT', 'WIN_LOSS'] as const;
+export type TargetType = typeof TARGET_TYPES[number];
+
+export const TARGET_OPTIONS = ['BONUS_AND_APPLY', 'BONUS_ONLY', 'APPLY_ONLY'] as const;
+export type TargetOption = typeof TARGET_OPTIONS[number];
+
+export const CAP_LIMIT_TYPES = ['AMOUNT', 'PERCENT'] as const;
+export type CapLimitType = typeof CAP_LIMIT_TYPES[number];
+
 // ─── Shared query-string transformers ──────────────────────────
 //   Query params arrive as strings ('true', '1'). Coerce before validation.
 const toBool = ({ value }: { value: any }) => {
@@ -114,6 +126,35 @@ export class CreatePromotionDto {
   @IsOptional() @IsBoolean() requireEmailVerified?: boolean;
   @IsOptional() @IsBoolean() requirePhoneVerified?: boolean;
   @IsOptional() @IsBoolean() requireProfileVerified?: boolean;
+
+  // ── Code Setting / chaining ──
+  @IsOptional() @IsInt() linkedPromotionId?: number;
+
+  // ── Bonus / lifecycle toggles ──
+  @IsOptional() @IsBoolean() autoApprove?: boolean;
+  @IsOptional() @IsBoolean() autoComplete?: boolean;
+  @IsOptional() @IsBoolean() allowCancel?: boolean;
+  @IsOptional() @IsNumber() @Min(0) cancelThreshold?: number;
+  @IsOptional() @IsBoolean() limitToProvider?: boolean;
+  @IsOptional() @IsBoolean() checkByWalletBalance?: boolean;
+
+  // ── Amount Setting ──
+  @IsOptional() @IsInt() @Min(1) maxPlayer?: number;
+  @IsOptional() @IsNumber() @Min(0) maximumWithdrawal?: number;
+  @IsOptional() @IsNumber() @Min(0) balanceRequire?: number;
+  @IsOptional() @IsIn(FORFEIT_TYPES) forfeitType?: ForfeitType;
+  @IsOptional() @IsNumber() @Min(0) amountCap?: number;
+  @IsOptional() @IsBoolean() removeMaxWithdrawLock?: boolean;
+
+  // ── Target Amount (wagering) ──
+  @IsOptional() @IsIn(TARGET_TYPES) targetType?: TargetType;
+  @IsOptional() @IsIn(TARGET_OPTIONS) targetOption?: TargetOption;
+  @IsOptional() @IsIn(CAP_LIMIT_TYPES) capLimitType?: CapLimitType;
+
+  // ── Eligibility / CMS visibility ──
+  @IsOptional() @IsBoolean() payLater?: boolean;
+  @IsOptional() @IsBoolean() displayIfNonEligible?: boolean;
+  @IsOptional() @IsBoolean() hideIfEligible?: boolean;
 }
 
 // ─── ADMIN: UPDATE (all optional) ───────────────────────────────
@@ -154,6 +195,30 @@ export class UpdatePromotionDto {
   @IsOptional() @IsBoolean() requireEmailVerified?: boolean;
   @IsOptional() @IsBoolean() requirePhoneVerified?: boolean;
   @IsOptional() @IsBoolean() requireProfileVerified?: boolean;
+
+  @IsOptional() @IsInt() linkedPromotionId?: number;
+
+  @IsOptional() @IsBoolean() autoApprove?: boolean;
+  @IsOptional() @IsBoolean() autoComplete?: boolean;
+  @IsOptional() @IsBoolean() allowCancel?: boolean;
+  @IsOptional() @IsNumber() @Min(0) cancelThreshold?: number;
+  @IsOptional() @IsBoolean() limitToProvider?: boolean;
+  @IsOptional() @IsBoolean() checkByWalletBalance?: boolean;
+
+  @IsOptional() @IsInt() @Min(1) maxPlayer?: number;
+  @IsOptional() @IsNumber() @Min(0) maximumWithdrawal?: number;
+  @IsOptional() @IsNumber() @Min(0) balanceRequire?: number;
+  @IsOptional() @IsIn(FORFEIT_TYPES) forfeitType?: ForfeitType;
+  @IsOptional() @IsNumber() @Min(0) amountCap?: number;
+  @IsOptional() @IsBoolean() removeMaxWithdrawLock?: boolean;
+
+  @IsOptional() @IsIn(TARGET_TYPES) targetType?: TargetType;
+  @IsOptional() @IsIn(TARGET_OPTIONS) targetOption?: TargetOption;
+  @IsOptional() @IsIn(CAP_LIMIT_TYPES) capLimitType?: CapLimitType;
+
+  @IsOptional() @IsBoolean() payLater?: boolean;
+  @IsOptional() @IsBoolean() displayIfNonEligible?: boolean;
+  @IsOptional() @IsBoolean() hideIfEligible?: boolean;
 }
 
 // ─── ADMIN: LIST QUERY ──────────────────────────────────────────
@@ -196,5 +261,17 @@ export class GrantManualBonusDto {
 // ─── ADMIN: CANCEL CLAIM ────────────────────────────────────────
 export class CancelClaimDto {
   @IsInt() claimId: number = 0;
+  @IsString() @Length(3, 500) reason: string = '';
+}
+
+// ─── ADMIN: APPROVE CLAIM (manual-approval promos) ──────────────
+export class ApproveClaimDto {
+  @IsInt() claimId: number = 0;
+}
+
+// ─── ADMIN: FORFEIT CLAIM ───────────────────────────────────────
+export class ForfeitClaimDto {
+  @IsInt() claimId: number = 0;
+  @IsIn(FORFEIT_TYPES) forfeitType: ForfeitType = 'BONUS';
   @IsString() @Length(3, 500) reason: string = '';
 }

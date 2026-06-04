@@ -5,10 +5,13 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
+import { Cron, CronExpression } from '@nestjs/schedule';
 import { CoinLedgerService } from '../ledger/coin-ledger.service';
 import {
   UpdateVipLevelConfigDto,
   AdminSetVipLevelDto,
+  UpdateTierLimitsDto,
+  SetTierBanksDto,
 } from './dto/vip.dto';
 
 /**
@@ -48,10 +51,13 @@ export class VipService {
     }
     const oldLevel = Number(userRows[0].vip_level);
 
-    // 2. Find highest level the user qualifies for
+    // 2. Find highest level the user qualifies for.
+    //    Invitation-only tiers (Grandmaster/Legend/Mythic, §4.5) are NEVER
+    //    reached automatically — they are granted by hand via adminSetLevel().
     const eligibleRows = await qr.query(
       `SELECT level FROM vip_level_config
        WHERE coins_required <= $1
+         AND invitation_only = FALSE
        ORDER BY level DESC
        LIMIT 1`,
       [lifetimeCoins],
@@ -186,11 +192,13 @@ export class VipService {
     );
     if (!rows.length) throw new NotFoundException('User not found');
 
-    // Compute progress to next level
+    // Compute progress to the next AUTOMATIC tier (§4.4). Invitation-only
+    // tiers are excluded, so a Master (top automatic tier) shows a full bar.
     const nextRows = await this.dataSource.query(
       `SELECT level, level_name, coins_required
        FROM vip_level_config
        WHERE level > $1
+         AND invitation_only = FALSE
        ORDER BY level ASC
        LIMIT 1`,
       [rows[0].vip_level],
@@ -287,5 +295,184 @@ export class VipService {
       values,
     );
     return result[0];
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // TIER SYSTEM (Member Group / banking-side view of the same tiers)
+  // ═════════════════════════════════════════════════════════════
+
+  // GET /tiers/public — ladder for the dashboard (no auth)
+  async getPublicLadder() {
+    return this.dataSource.query(
+      `SELECT level, level_name, group_name, coins_required,
+              invitation_only, ui_color, sequence, cached_player_count, badge_icon_url
+         FROM vip_level_config
+        WHERE status = 'ACTIVE'
+        ORDER BY sequence ASC, level ASC`,
+    );
+  }
+
+  // GET /tiers/admin — all tiers with banking-side fields
+  async getTiersAdmin() {
+    return this.dataSource.query(
+      `SELECT * FROM vip_level_config ORDER BY sequence ASC, level ASC`,
+    );
+  }
+
+  // PATCH /tiers/admin/:level/limits — banking limits (Member Group screen)
+  async updateTierLimits(level: number, dto: UpdateTierLimitsDto) {
+    const existing = await this.dataSource.query(
+      `SELECT level FROM vip_level_config WHERE level = $1`,
+      [level],
+    );
+    if (!existing.length) throw new NotFoundException(`Tier ${level} not configured`);
+
+    const map: Record<string, any> = {
+      deposit_min:            dto.depositMin,
+      deposit_max:            dto.depositMax,
+      balance_below:          dto.balanceBelow,
+      withdrawal_min:         dto.withdrawalMin,
+      withdrawal_max:         dto.withdrawalMax,
+      withdrawal_daily_count: dto.withdrawalDailyCount,
+      withdrawal_daily_max:   dto.withdrawalDailyMax,
+      withdrawal_turnover:    dto.withdrawalTurnover,
+      allow_clear_balance:    dto.allowClearBalance,
+      auto_clear_turnover:    dto.autoClearTurnover,
+      internal_remark:        dto.internalRemark,
+      invitation_only:        dto.invitationOnly,
+      ui_color:               dto.uiColor,
+      sequence:               dto.sequence,
+      status:                 dto.status,
+      currency:               dto.currency,
+    };
+
+    const fields: string[] = [];
+    const values: any[] = [];
+    let i = 1;
+    for (const [col, val] of Object.entries(map)) {
+      if (val !== undefined) {
+        fields.push(`${col} = $${i++}`);
+        values.push(val);
+      }
+    }
+    if (!fields.length) throw new BadRequestException('No fields to update');
+
+    fields.push(`updated_at = NOW()`);
+    values.push(level);
+    const result = await this.dataSource.query(
+      `UPDATE vip_level_config SET ${fields.join(', ')} WHERE level = $${i} RETURNING *`,
+      values,
+    );
+    return result[0];
+  }
+
+  // GET /tiers/admin/:level/banks — allowed payment channels
+  async getTierBanks(level: number) {
+    return this.dataSource.query(
+      `SELECT id, level, channel, enabled FROM tier_banks WHERE level = $1 ORDER BY channel`,
+      [level],
+    );
+  }
+
+  // PUT /tiers/admin/:level/banks — replace the full channel set
+  async setTierBanks(level: number, dto: SetTierBanksDto) {
+    const tier = await this.dataSource.query(
+      `SELECT level FROM vip_level_config WHERE level = $1`,
+      [level],
+    );
+    if (!tier.length) throw new NotFoundException(`Tier ${level} not configured`);
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      await qr.query(`DELETE FROM tier_banks WHERE level = $1`, [level]);
+      for (const ch of dto.channels) {
+        await qr.query(
+          `INSERT INTO tier_banks (level, channel, enabled) VALUES ($1, $2, $3)`,
+          [level, ch.channel, ch.enabled ?? true],
+        );
+      }
+      await qr.commitTransaction();
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+    return this.getTierBanks(level);
+  }
+
+  // POST /tiers/admin/:level/set-default — fallback tier for new players
+  async setDefaultTier(level: number) {
+    const tier = await this.dataSource.query(
+      `SELECT level FROM vip_level_config WHERE level = $1`,
+      [level],
+    );
+    if (!tier.length) throw new NotFoundException(`Tier ${level} not configured`);
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      await qr.query(`UPDATE vip_level_config SET is_default = FALSE WHERE is_default = TRUE`);
+      await qr.query(`UPDATE vip_level_config SET is_default = TRUE WHERE level = $1`, [level]);
+      await qr.commitTransaction();
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+    return { message: `Tier ${level} is now the default`, level };
+  }
+
+  // GET /vip/admin/users/:level — players currently in a tier
+  async getUsersInTier(level: number, page = 1, limit = 50) {
+    const safeLimit = Math.min(Math.max(limit, 1), 200);
+    const offset = (Math.max(page, 1) - 1) * safeLimit;
+    const data = await this.dataSource.query(
+      `SELECT u.id, u.user_code, u.username, u.full_name, u.vip_level,
+              COALESCE(uc.lifetime_coins, 0) AS lifetime_coins
+         FROM users u
+         LEFT JOIN user_coins uc ON uc.user_id = u.id
+        WHERE u.vip_level = $1
+        ORDER BY uc.lifetime_coins DESC NULLS LAST
+        LIMIT $2 OFFSET $3`,
+      [level, safeLimit, offset],
+    );
+    const count = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total FROM users WHERE vip_level = $1`,
+      [level],
+    );
+    return { data, page, limit: safeLimit, total: count[0].total };
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // CRON: refresh cached_player_count per tier (build-guide §4.6)
+  //   Runs daily at midnight server time. Not real-time by design.
+  // ═════════════════════════════════════════════════════════════
+  @Cron(CronExpression.EVERY_DAY_AT_MIDNIGHT)
+  async refreshCachedPlayerCounts(): Promise<void> {
+    await this.dataSource.query(`
+      UPDATE vip_level_config vc
+         SET cached_player_count = COALESCE(c.cnt, 0)
+        FROM (
+          SELECT vip_level, COUNT(*)::bigint AS cnt
+            FROM users
+           WHERE account_status = 'ACTIVE'
+           GROUP BY vip_level
+        ) c
+       WHERE c.vip_level = vc.level;
+    `);
+    // Tiers with zero players won't match above — reset them to 0 explicitly.
+    await this.dataSource.query(`
+      UPDATE vip_level_config vc
+         SET cached_player_count = 0
+       WHERE NOT EXISTS (
+         SELECT 1 FROM users u
+          WHERE u.vip_level = vc.level AND u.account_status = 'ACTIVE'
+       );
+    `);
   }
 }

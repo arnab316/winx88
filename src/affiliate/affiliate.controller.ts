@@ -12,12 +12,16 @@ import {
   DefaultValuePipe,
 } from '@nestjs/common';
 import { AffiliateService } from './affiliate.service';
+import { AffiliateRevShareService } from './affiliate-revshare.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
 
 @Controller('affiliate')
 export class AffiliateController {
-  constructor(private readonly affiliateService: AffiliateService) {}
+  constructor(
+    private readonly affiliateService: AffiliateService,
+    private readonly revshare: AffiliateRevShareService,
+  ) {}
 
   // ─────────────────────────────────────────────────────────────
   // USER ROUTES
@@ -156,4 +160,101 @@ getDownlineUser(
 ) {
   return this.affiliateService.getMyDownlineUser(req.user.sub, targetUserId);
 }
+
+  // ─────────────────────────────────────────────────────────────
+  // REVSHARE — affiliate-facing (build-guide §7)
+  // ─────────────────────────────────────────────────────────────
+
+  // GET /affiliate/me/overview — tier, active players, MTD NGR, projected payout
+  @UseGuards(JwtAuthGuard)
+  @Get('me/overview')
+  revshareOverview(@Req() req: any) {
+    return this.revshare.getOverview(req.user.sub);
+  }
+
+  // GET /affiliate/me/players — referred players (alias of downline)
+  @UseGuards(JwtAuthGuard)
+  @Get('me/players')
+  revsharePlayers(
+    @Req() req: any,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.affiliateService.getMyDownline(req.user.sub, page, limit);
+  }
+
+  // GET /affiliate/me/payouts — historical monthly payouts
+  @UseGuards(JwtAuthGuard)
+  @Get('me/payouts')
+  revsharePayouts(@Req() req: any) {
+    return this.revshare.getMyPayouts(req.user.sub);
+  }
+
+  // GET /affiliate/me/link — tracking link / referral code
+  @UseGuards(JwtAuthGuard)
+  @Get('me/link')
+  revshareLink(@Req() req: any) {
+    return this.revshare.getMyLink(req.user.sub);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // REVSHARE — admin
+  // ─────────────────────────────────────────────────────────────
+
+  // GET /affiliate/admin/revshare/config
+  @UseGuards(AdminGuard)
+  @Get('admin/revshare/config')
+  getRevshareConfig() {
+    return this.revshare.getConfig();
+  }
+
+  // PATCH /affiliate/admin/revshare/config
+  @UseGuards(AdminGuard)
+  @Patch('admin/revshare/config')
+  updateRevshareConfig(@Req() req: any, @Body() body: any) {
+    return this.revshare.updateConfig(body, req.user.sub);
+  }
+
+  // POST /affiliate/admin/payouts/run   body: { month: 'YYYY-MM' }
+  @UseGuards(AdminGuard)
+  @Post('admin/payouts/run')
+  runPayouts(@Body() body: any) {
+    return this.revshare.runMonthly(body.month);
+  }
+
+  // GET /affiliate/admin/payouts/pending?month=YYYY-MM
+  @UseGuards(AdminGuard)
+  @Get('admin/payouts/pending')
+  pendingPayouts(@Query('month') month?: string) {
+    return this.revshare.getPendingPayouts(month);
+  }
+
+  // POST /affiliate/admin/payouts/:id/mark-paid   body: { txnRef, paidAt? }
+  @UseGuards(AdminGuard)
+  @Post('admin/payouts/:id/mark-paid')
+  markPaid(@Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    return this.revshare.markPaid(id, body.txnRef, body.paidAt);
+  }
+
+  // PATCH /affiliate/admin/:affiliateUserId/revshare
+  //   body: { customRate?, paymentMethod?, paymentDetails? }
+  @UseGuards(AdminGuard)
+  @Patch('admin/:affiliateUserId/revshare')
+  setRevshare(
+    @Param('affiliateUserId', ParseIntPipe) affiliateUserId: number,
+    @Body() body: any,
+  ) {
+    return this.revshare.setRevshare(affiliateUserId, {
+      customRate: body.customRate !== undefined ? parseFloat(body.customRate) : undefined,
+      paymentMethod: body.paymentMethod,
+      paymentDetails: body.paymentDetails,
+    });
+  }
+
+  // GET /affiliate/admin/:affiliateUserId/ngr-history
+  @UseGuards(AdminGuard)
+  @Get('admin/:affiliateUserId/ngr-history')
+  ngrHistory(@Param('affiliateUserId', ParseIntPipe) affiliateUserId: number) {
+    return this.revshare.getNgrHistory(affiliateUserId);
+  }
 }

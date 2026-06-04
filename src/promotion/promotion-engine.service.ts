@@ -15,10 +15,12 @@ import {
   ListPromotionsQueryDto,
   GrantManualBonusDto,
   CancelClaimDto,
+  ForfeitClaimDto,
   PromotionKind,
   BonusDestination,
 } from './dto/promotion.dto';
- 
+import * as Eligibility from './promotion-eligibility.helpers';
+
 
 export interface BonusComputation {
   bonusAmount: number;
@@ -104,7 +106,7 @@ export class PromotionEngineService  {
     const usesByUser = await runner.query(
       `SELECT COUNT(*)::int AS c FROM user_promotion_claims
        WHERE user_id = $1 AND promotion_id = $2
-         AND status IN ('PENDING','ACTIVE','COMPLETED')`,
+         AND status IN ('PENDING','APPLIED','APPROVED','ACTIVE','COMPLETED')`,
       [userId, promotionId],
     );
     if (usesByUser[0].c >= Number(p.max_uses_per_user)) {
@@ -164,6 +166,10 @@ export class PromotionEngineService  {
       depositId?: number | null;
       depositAmount?: number;
       adminId?: number;
+      device?: 'DESKTOP' | 'MOBILE_WEB' | 'APP';
+      ipAddress?: string;
+      deviceFingerprint?: string;
+      bankAccount?: string;
     },
   ): Promise<ApplyResult> {
     // 1. Re-validate inside the transaction (catches races between
@@ -174,86 +180,192 @@ export class PromotionEngineService  {
       promotionId,
       { kind: context.kind, depositAmount: context.depositAmount },
     );
- 
+
+    // 2. Full eligibility gate (device, KYC/verification, frequency/cooldown,
+    //    anti-fraud uniqueness). Throws on first failure.
+    await Eligibility.assertEligible(qr, userId, promotion, {
+      kind: context.kind ?? promotion.kind,
+      depositAmount: context.depositAmount,
+      device: context.device,
+      ipAddress: context.ipAddress,
+      deviceFingerprint: context.deviceFingerprint,
+      bankAccount: context.bankAccount,
+    });
+
+    // 3. max_player — distinct-player cap (separate from total uses)
+    if (promotion.max_player) {
+      const distinct = await qr.query(
+        `SELECT COUNT(DISTINCT user_id)::int AS c
+           FROM user_promotion_claims
+          WHERE promotion_id = $1
+            AND status IN ('APPLIED','APPROVED','ACTIVE','COMPLETED')`,
+        [promotion.id],
+      );
+      const already = await qr.query(
+        `SELECT 1 FROM user_promotion_claims
+          WHERE promotion_id = $1 AND user_id = $2
+            AND status IN ('APPLIED','APPROVED','ACTIVE','COMPLETED')
+          LIMIT 1`,
+        [promotion.id, userId],
+      );
+      // Only block if this is a NEW player and the cap is already met.
+      if (!already.length && distinct[0].c >= Number(promotion.max_player)) {
+        throw new BadRequestException('Promotion player limit reached');
+      }
+    }
+
     const bonusAmount = estimatedBonus.bonusAmount;
     const bonusDest: BonusDestination = promotion.bonus_to;
- 
-    // 2. Credit the user's wallet
-    await this.creditWallet(qr, userId, bonusAmount, bonusDest, {
-      promotionId: promotion.id,
-      depositId: context.depositId ?? null,
-      adminId: context.adminId,
-    });
- 
-    // 3. Create turnover requirement (if rollover > 0)
-    let turnoverReqId: number | null = null;
-    let rolloverTarget = 0;
-    const rolloverMult = parseFloat(promotion.rollover_multiplier);
- 
-    if (rolloverMult > 0) {
-      // Base for rollover = bonus + deposit (if there was a deposit)
-      const base = bonusAmount + (context.depositAmount ?? 0);
-      const target = base * rolloverMult;
- 
-      const reqResult = await this.turnoverService['insertRequirement'](qr, {
-        userId,
-        sourceType: context.kind === 'REGISTRATION' ? 'BONUS' : 'PROMOTION',
-        sourceId: promotion.id,
-        baseAmount: base,
-        multiplier: rolloverMult,
-        targetAmount: target,
-        adminId: context.adminId,
-      } as any);
- 
-      turnoverReqId = reqResult.requirementId;
-      rolloverTarget = reqResult.targetAmount;
-    }
- 
-    // 4. Insert claim row
+    const rolloverTargetPreview = this.computeRolloverTarget(
+      promotion,
+      bonusAmount,
+      context.depositAmount ?? 0,
+    );
+
+    // 4. Insert claim row first so we have an id for ip/fingerprint audit.
+    //    Auto-approve promos go straight to ACTIVE (bonus granted below);
+    //    manual-approval promos rest in APPLIED until an admin approves.
+    const autoApprove = promotion.auto_approve !== false;
+    const initialStatus = autoApprove ? 'ACTIVE' : 'APPLIED';
+
     const claimResult = await qr.query(
       `INSERT INTO user_promotion_claims
         (user_id, promotion_id, deposit_id, bonus_amount,
-         rollover_target, turnover_requirement_id, status, meta)
-       VALUES ($1, $2, $3, $4, $5, $6, 'ACTIVE', $7)
+         rollover_target, status, meta, ip_address, device_fingerprint)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        RETURNING id`,
       [
         userId,
         promotion.id,
         context.depositId ?? null,
         bonusAmount,
-        rolloverTarget,
-        turnoverReqId,
+        rolloverTargetPreview,
+        initialStatus,
         JSON.stringify({
           kind: context.kind,
           appliedAt: new Date().toISOString(),
           bonusType: promotion.bonus_type,
           bonusValue: parseFloat(promotion.bonus_value),
+          targetType: promotion.target_type,
+          targetOption: promotion.target_option,
+          depositAmount: context.depositAmount ?? 0,
         }),
+        context.ipAddress ?? null,
+        context.deviceFingerprint ?? null,
       ],
     );
     const claimId = Number(claimResult[0].id);
- 
-    // 5. Bump promotion counters + auto-disable if pool exhausted
-    await this.bumpCountersAndMaybeDisable(qr, promotion, bonusAmount);
- 
+
+    if (!autoApprove) {
+      // Bonus is NOT granted yet — admin must call approveClaim().
+      return {
+        claimId,
+        bonusAmount,
+        bonusDestination: bonusDest,
+        turnoverRequirementId: null,
+        rolloverTarget: rolloverTargetPreview,
+      };
+    }
+
+    // 5. Auto-approve: grant the bonus (credit + turnover + counters).
+    const grant = await this.grantClaimBonus(qr, {
+      claimId,
+      userId,
+      promotion,
+      bonusAmount,
+      depositAmount: context.depositAmount ?? 0,
+      depositId: context.depositId ?? null,
+      adminId: context.adminId,
+      kind: context.kind,
+    });
+
     return {
       claimId,
       bonusAmount,
       bonusDestination: bonusDest,
-      turnoverRequirementId: turnoverReqId,
-      rolloverTarget,
+      turnoverRequirementId: grant.turnoverRequirementId,
+      rolloverTarget: grant.rolloverTarget,
     };
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // PRIVATE: grant a claim's bonus (credit wallet, create turnover
+  //   requirement, bump counters, mark claim ACTIVE). Shared by the
+  //   auto-approve path of apply() and the admin approveClaim().
+  // ═════════════════════════════════════════════════════════════
+  private async grantClaimBonus(
+    qr: QueryRunner,
+    args: {
+      claimId: number;
+      userId: number;
+      promotion: any;
+      bonusAmount: number;
+      depositAmount: number;
+      depositId: number | null;
+      adminId?: number;
+      kind?: PromotionKind;
+    },
+  ): Promise<{ turnoverRequirementId: number | null; rolloverTarget: number }> {
+    const { promotion, userId, bonusAmount, depositAmount } = args;
+    const bonusDest: BonusDestination = promotion.bonus_to;
+
+    // Credit the wallet
+    await this.creditWallet(qr, userId, bonusAmount, bonusDest, {
+      promotionId: promotion.id,
+      depositId: args.depositId,
+      adminId: args.adminId,
+    });
+
+    // Create turnover requirement (if a multiplier is configured)
+    let turnoverReqId: number | null = null;
+    let rolloverTarget = 0;
+    const rolloverMult = parseFloat(promotion.rollover_multiplier);
+
+    if (rolloverMult > 0) {
+      const base = this.computeRolloverBasis(promotion, bonusAmount, depositAmount);
+      const target = base * rolloverMult;
+
+      const reqResult = await this.turnoverService['insertRequirement'](qr, {
+        userId,
+        sourceType: args.kind === 'REGISTRATION' ? 'BONUS' : 'PROMOTION',
+        sourceId: promotion.id,
+        baseAmount: base,
+        multiplier: rolloverMult,
+        targetAmount: target,
+        adminId: args.adminId,
+      } as any);
+
+      turnoverReqId = reqResult.requirementId;
+      rolloverTarget = reqResult.targetAmount;
+    }
+
+    await qr.query(
+      `UPDATE user_promotion_claims
+          SET status = 'ACTIVE',
+              turnover_requirement_id = $1,
+              rollover_target = $2
+        WHERE id = $3`,
+      [turnoverReqId, rolloverTarget, args.claimId],
+    );
+
+    await this.bumpCountersAndMaybeDisable(qr, promotion, bonusAmount);
+
+    return { turnoverRequirementId: turnoverReqId, rolloverTarget };
   }
  
   // ═════════════════════════════════════════════════════════════
   // PUBLIC API: claim by promo code (no deposit attached)
   //   For PROMOCODE kind only. Issues bonus immediately.
   // ═════════════════════════════════════════════════════════════
-  async claimByCode(userId: number, code: string): Promise<ApplyResult> {
+  async claimByCode(
+    userId: number,
+    code: string,
+    ctx: { ipAddress?: string; deviceFingerprint?: string; device?: 'DESKTOP' | 'MOBILE_WEB' | 'APP' } = {},
+  ): Promise<ApplyResult> {
     const qr = this.dataSource.createQueryRunner();
     await qr.connect();
     await qr.startTransaction();
- 
+
     try {
       // Find the promo by code
       const rows = await qr.query(
@@ -261,10 +373,13 @@ export class PromotionEngineService  {
         [code.toUpperCase().trim()],
       );
       if (!rows.length) throw new NotFoundException('Invalid promo code');
- 
+
       const result = await this.apply(qr, userId, rows[0].id, {
         kind: 'PROMOCODE',
         depositAmount: 0,
+        ipAddress: ctx.ipAddress,
+        deviceFingerprint: ctx.deviceFingerprint,
+        device: ctx.device,
       });
  
       await qr.commitTransaction();
@@ -382,6 +497,37 @@ export class PromotionEngineService  {
     }
   }
  
+  // ═════════════════════════════════════════════════════════════
+  // PRIVATE: wagering basis & target (honors target_option §5.2/§5.3)
+  //   basis is set by target_option; required = basis × target_multiplier
+  // ═════════════════════════════════════════════════════════════
+  private computeRolloverBasis(
+    promotion: any,
+    bonusAmount: number,
+    depositAmount: number,
+  ): number {
+    switch (promotion.target_option) {
+      case 'BONUS_ONLY':
+        return bonusAmount;
+      case 'APPLY_ONLY':
+        return depositAmount;
+      case 'BONUS_AND_APPLY':
+      default:
+        return bonusAmount + depositAmount;
+    }
+  }
+
+  private computeRolloverTarget(
+    promotion: any,
+    bonusAmount: number,
+    depositAmount: number,
+  ): number {
+    const mult = parseFloat(promotion.rollover_multiplier ?? '0');
+    if (!mult || mult <= 0) return 0;
+    const basis = this.computeRolloverBasis(promotion, bonusAmount, depositAmount);
+    return Math.floor(basis * mult * 100) / 100;
+  }
+
   // ═════════════════════════════════════════════════════════════
   // PRIVATE: bonus calculation
   // ═════════════════════════════════════════════════════════════
@@ -566,15 +712,36 @@ export class PromotionEngineService  {
       if (!grp.length) throw new BadRequestException('Member group not found or inactive');
     }
  
+    if (dto.linkedPromotionId) {
+      const linked = await this.dataSource.query(
+        `SELECT id FROM promotions WHERE id = $1`,
+        [dto.linkedPromotionId],
+      );
+      if (!linked.length) throw new BadRequestException('Linked promotion not found');
+    }
+
     try {
       const result = await this.dataSource.query(
         `INSERT INTO promotions
           (title, code, description, kind, bonus_type, bonus_value,
-           min_amount, max_bonus, rollover_multiplier,
+           min_amount, apply_amount_min, max_bonus, rollover_multiplier,
            member_group_id, max_uses_per_user, max_uses_global,
            max_bonus_pool, currency, bonus_to, is_active,
-           starts_at, ends_at, created_by_admin_id)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)
+           starts_at, ends_at, created_by_admin_id,
+           device_types, frequency, cooldown_seconds, eligible_game_categories,
+           auto_unlock_threshold,
+           unique_check_bank_account, unique_check_email, unique_check_ip_address,
+           unique_check_device_fp, unique_check_phone,
+           require_email_verified, require_phone_verified, require_profile_verified,
+           linked_promotion_id, auto_approve, auto_complete, allow_cancel,
+           cancel_threshold, forfeit_type, maximum_withdrawal, amount_cap,
+           cap_limit_type, balance_require, remove_max_withdraw_lock,
+           target_type, target_option, max_player, pay_later,
+           display_if_non_eligible, hide_if_eligible,
+           limit_to_provider, check_by_wallet_balance)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
+                 $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
+                 $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52)
          RETURNING *`,
         [
           dto.title,
@@ -584,6 +751,7 @@ export class PromotionEngineService  {
           dto.bonusType,
           dto.bonusValue,
           dto.minAmount ?? null,
+          dto.applyAmountMin ?? null,
           dto.maxBonus ?? null,
           dto.rolloverMultiplier ?? 0,
           dto.memberGroupId ?? null,
@@ -596,6 +764,43 @@ export class PromotionEngineService  {
           dto.startsAt ?? null,
           dto.endsAt ?? null,
           adminId,
+          // jsonb columns are NOT NULL — fall back to their schema defaults
+          dto.deviceTypes
+            ? JSON.stringify(dto.deviceTypes)
+            : '["DESKTOP","MOBILE_WEB","APP"]',
+          dto.frequency ?? 'ONE_TIME',
+          dto.cooldownSeconds ?? null,
+          dto.eligibleGameCategories
+            ? JSON.stringify(dto.eligibleGameCategories)
+            : '[]',
+          dto.autoUnlockThreshold ?? null,
+          dto.uniqueCheckBankAccount ?? false,
+          dto.uniqueCheckEmail ?? false,
+          dto.uniqueCheckIpAddress ?? false,
+          dto.uniqueCheckDeviceFp ?? false,
+          dto.uniqueCheckPhone ?? false,
+          dto.requireEmailVerified ?? false,
+          dto.requirePhoneVerified ?? false,
+          dto.requireProfileVerified ?? false,
+          dto.linkedPromotionId ?? null,
+          dto.autoApprove ?? true,
+          dto.autoComplete ?? false,
+          dto.allowCancel ?? false,
+          dto.cancelThreshold ?? null,
+          dto.forfeitType ?? 'BONUS',
+          dto.maximumWithdrawal ?? null,
+          dto.amountCap ?? null,
+          dto.capLimitType ?? null,
+          dto.balanceRequire ?? null,
+          dto.removeMaxWithdrawLock ?? false,
+          dto.targetType ?? 'TURNOVER',
+          dto.targetOption ?? 'BONUS_AND_APPLY',
+          dto.maxPlayer ?? null,
+          dto.payLater ?? false,
+          dto.displayIfNonEligible ?? true,
+          dto.hideIfEligible ?? false,
+          dto.limitToProvider ?? false,
+          dto.checkByWalletBalance ?? false,
         ],
       );
       return result[0];
@@ -625,6 +830,7 @@ export class PromotionEngineService  {
       description:          dto.description,
       bonus_value:          dto.bonusValue,
       min_amount:           dto.minAmount,
+      apply_amount_min:     dto.applyAmountMin,
       max_bonus:            dto.maxBonus,
       rollover_multiplier:  dto.rolloverMultiplier,
       member_group_id:      dto.memberGroupId,
@@ -634,12 +840,54 @@ export class PromotionEngineService  {
       is_active:            dto.isActive,
       starts_at:            dto.startsAt,
       ends_at:              dto.endsAt,
+      frequency:            dto.frequency,
+      cooldown_seconds:     dto.cooldownSeconds,
+      auto_unlock_threshold: dto.autoUnlockThreshold,
+      unique_check_bank_account: dto.uniqueCheckBankAccount,
+      unique_check_email:        dto.uniqueCheckEmail,
+      unique_check_ip_address:   dto.uniqueCheckIpAddress,
+      unique_check_device_fp:    dto.uniqueCheckDeviceFp,
+      unique_check_phone:        dto.uniqueCheckPhone,
+      require_email_verified:    dto.requireEmailVerified,
+      require_phone_verified:    dto.requirePhoneVerified,
+      require_profile_verified:  dto.requireProfileVerified,
+      linked_promotion_id:       dto.linkedPromotionId,
+      auto_approve:              dto.autoApprove,
+      auto_complete:             dto.autoComplete,
+      allow_cancel:              dto.allowCancel,
+      cancel_threshold:          dto.cancelThreshold,
+      forfeit_type:              dto.forfeitType,
+      maximum_withdrawal:        dto.maximumWithdrawal,
+      amount_cap:                dto.amountCap,
+      cap_limit_type:            dto.capLimitType,
+      balance_require:           dto.balanceRequire,
+      remove_max_withdraw_lock:  dto.removeMaxWithdrawLock,
+      target_type:               dto.targetType,
+      target_option:             dto.targetOption,
+      max_player:                dto.maxPlayer,
+      pay_later:                 dto.payLater,
+      display_if_non_eligible:   dto.displayIfNonEligible,
+      hide_if_eligible:          dto.hideIfEligible,
+      limit_to_provider:         dto.limitToProvider,
+      check_by_wallet_balance:   dto.checkByWalletBalance,
     };
- 
+
+    // jsonb array fields need explicit serialization
+    const jsonbMap: Record<string, any> = {
+      device_types:             dto.deviceTypes,
+      eligible_game_categories: dto.eligibleGameCategories,
+    };
+
     for (const [col, val] of Object.entries(map)) {
       if (val !== undefined) {
         fields.push(`${col} = $${i++}`);
         values.push(val);
+      }
+    }
+    for (const [col, val] of Object.entries(jsonbMap)) {
+      if (val !== undefined) {
+        fields.push(`${col} = $${i++}`);
+        values.push(JSON.stringify(val));
       }
     }
     if (!fields.length) throw new BadRequestException('No fields to update');
@@ -749,7 +997,7 @@ async listPromotions(q: ListPromotionsQueryDto) {
               p.max_uses_per_user, p.bonus_to,
               (SELECT COUNT(*)::int FROM user_promotion_claims upc
                 WHERE upc.user_id = $1 AND upc.promotion_id = p.id
-                AND upc.status IN ('PENDING','ACTIVE','COMPLETED')
+                AND upc.status IN ('PENDING','APPLIED','APPROVED','ACTIVE','COMPLETED')
               ) AS my_claims_count
        FROM promotions p
        WHERE p.is_active = TRUE
@@ -871,5 +1119,181 @@ async listPromotions(q: ListPromotionsQueryDto) {
       await qr.release();
     }
   }
-     
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: APPROVE A CLAIM (manual-approval promos)
+  //   Moves an APPLIED claim to ACTIVE and actually grants the bonus
+  //   (credit wallet, create turnover requirement, bump counters).
+  // ═════════════════════════════════════════════════════════════
+  async approveClaim(claimId: number, adminId: number) {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+
+    try {
+      const claims = await qr.query(
+        `SELECT * FROM user_promotion_claims WHERE id = $1 FOR UPDATE`,
+        [claimId],
+      );
+      if (!claims.length) throw new NotFoundException('Claim not found');
+      const claim = claims[0];
+
+      if (claim.status !== 'APPLIED') {
+        throw new BadRequestException(
+          `Only APPLIED claims can be approved (current: ${claim.status})`,
+        );
+      }
+
+      const promoRows = await qr.query(
+        `SELECT * FROM promotions WHERE id = $1`,
+        [claim.promotion_id],
+      );
+      if (!promoRows.length) throw new NotFoundException('Promotion not found');
+      const promotion = promoRows[0];
+
+      const meta = claim.meta ?? {};
+      const grant = await this.grantClaimBonus(qr, {
+        claimId,
+        userId: Number(claim.user_id),
+        promotion,
+        bonusAmount: parseFloat(claim.bonus_amount),
+        depositAmount: Number(meta.depositAmount ?? 0),
+        depositId: claim.deposit_id ? Number(claim.deposit_id) : null,
+        adminId,
+        kind: meta.kind,
+      });
+
+      await qr.query(
+        `UPDATE user_promotion_claims
+            SET approved_at = NOW(), approved_by_admin_id = $1
+          WHERE id = $2`,
+        [adminId, claimId],
+      );
+
+      await qr.commitTransaction();
+      return {
+        message: 'Claim approved and bonus granted',
+        claimId,
+        turnoverRequirementId: grant.turnoverRequirementId,
+        rolloverTarget: grant.rolloverTarget,
+      };
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: FORFEIT A CLAIM
+  //   forfeit_type BONUS  → strip the remaining bonus balance only
+  //   forfeit_type WALLET → strip bonus + locked balance entirely
+  //   Cancels any attached turnover requirement and writes a ledger entry.
+  // ═════════════════════════════════════════════════════════════
+  async forfeitClaim(dto: ForfeitClaimDto, adminId: number) {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+
+    try {
+      const claims = await qr.query(
+        `SELECT * FROM user_promotion_claims WHERE id = $1 FOR UPDATE`,
+        [dto.claimId],
+      );
+      if (!claims.length) throw new NotFoundException('Claim not found');
+      const claim = claims[0];
+
+      if (!['APPLIED', 'APPROVED', 'ACTIVE'].includes(claim.status)) {
+        throw new BadRequestException(
+          `Cannot forfeit a claim with status ${claim.status}`,
+        );
+      }
+
+      // Cancel attached turnover requirement, if any
+      if (claim.turnover_requirement_id) {
+        await this.turnoverService.adminCancel(
+          { requirementId: Number(claim.turnover_requirement_id), reason: dto.reason },
+          adminId,
+        );
+      }
+
+      // Strip funds from the wallet (only if the bonus was actually granted —
+      // APPLIED claims never credited anything, so nothing to claw back).
+      if (claim.status !== 'APPLIED') {
+        const wRows = await qr.query(
+          `SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE`,
+          [claim.user_id],
+        );
+        if (wRows.length) {
+          const w = wRows[0];
+          const balBefore = parseFloat(w.balance);
+          const bonBefore = parseFloat(w.bonus_balance);
+          const lckBefore = parseFloat(w.locked_balance);
+
+          let bonAfter = bonBefore;
+          let lckAfter = lckBefore;
+
+          if (dto.forfeitType === 'WALLET') {
+            // Forfeit the entire bonus-derived holding
+            bonAfter = 0;
+            lckAfter = 0;
+          } else {
+            // BONUS: claw back up to the granted bonus amount from bonus_balance
+            const claw = Math.min(parseFloat(claim.bonus_amount), bonBefore);
+            bonAfter = bonBefore - claw;
+          }
+
+          const stripped = (bonBefore - bonAfter) + (lckBefore - lckAfter);
+          await qr.query(
+            `UPDATE wallets
+                SET bonus_balance = $1, locked_balance = $2, updated_at = NOW()
+              WHERE id = $3`,
+            [bonAfter, lckAfter, w.id],
+          );
+
+          // Ledger requires amount > 0 — only record if funds actually moved
+          if (stripped > 0) {
+            await this.financialLedger.write({
+              qr,
+              walletId: w.id,
+              userId: Number(claim.user_id),
+              entryType: 'MANUAL_ADJUSTMENT',
+              flow: 'DEBIT',
+              amount: stripped,
+              balanceBefore: balBefore,
+              balanceAfter: balBefore,
+              bonusBefore: bonBefore,
+              bonusAfter: bonAfter,
+              lockedBefore: lckBefore,
+              lockedAfter: lckAfter,
+              referenceType: 'PROMOTION',
+              referenceId: Number(claim.promotion_id),
+              status: 'SUCCESS',
+              description: `Bonus forfeited (${dto.forfeitType}): ${dto.reason}`,
+              meta: { claimId: claim.id, forfeitType: dto.forfeitType },
+              createdByType: 'ADMIN',
+              createdById: adminId,
+            });
+          }
+        }
+      }
+
+      await qr.query(
+        `UPDATE user_promotion_claims
+            SET status = 'FORFEITED', forfeited_at = NOW(),
+                forfeit_type = $1, forfeit_reason = $2
+          WHERE id = $3`,
+        [dto.forfeitType, dto.reason, dto.claimId],
+      );
+
+      await qr.commitTransaction();
+      return { message: 'Claim forfeited', claimId: claim.id, forfeitType: dto.forfeitType };
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+  }
 }
