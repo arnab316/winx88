@@ -264,8 +264,10 @@ export class WalletController {
   @Post('admin/adjust')
   adminAdjust(@Body() body: any, @Req() req: any) {
     return this.walletService.adminAdjustWallet({
-      userId:         body.userId,
-      amount:         body.amount,
+      // Coerce — JSON may send these as strings; the service does arithmetic
+      // on amount, so a string would concatenate ("2383.52" + "-300").
+      userId:         Number(body.userId),
+      amount:         Number(body.amount),
       adjustmentType: body.adjustmentType,
       description:    body.description,
       meta:           body.meta,

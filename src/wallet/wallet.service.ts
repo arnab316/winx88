@@ -538,8 +538,12 @@ export class WalletService {
   //   Refuses if it would push balance negative.
   // ═════════════════════════════════════════════════════════════
    async adminAdjustWallet(dto: AdminAdjustmentDto) {
+  if (!Number.isFinite(dto.amount))
+    throw new BadRequestException('Adjustment amount must be a valid number');
   if (dto.amount === 0)
     throw new BadRequestException('Adjustment amount cannot be zero');
+  if (!Number.isInteger(dto.userId))
+    throw new BadRequestException('userId must be a valid id');
 
   // Validate adjustmentType
   if (!['MANUAL_ADJUSTMENT', 'MANUAL_DEPOSIT'].includes(dto.adjustmentType))
