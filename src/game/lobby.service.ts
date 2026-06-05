@@ -349,74 +349,156 @@ export class LobbyService {
 
   // ════════════════════════════════════════════════════════════
   // 2a) ADMIN: ROUNDS AWAITING RESULT (closed, no result declared)
-  //     GET /games/admin/rounds/awaiting-result
+  //     GET /games/admin/rounds/awaiting-result?page=1&limit=20
   //
   //     status = CLOSED  AND  no row in game_results.
   //     Includes player/bet counts so admin sees exposure.
+  //
+  //   Efficiency: paginate the *rounds* first (CLOSED + no result, ordered
+  //   by draw_time), THEN aggregate bets only for that page via a LATERAL.
   // ════════════════════════════════════════════════════════════
-  async roundsAwaitingResult() {
-    return this.dataSource.query(
-      `SELECT
-         gr.id            AS round_id,
-         gr.round_code,
-         gr.status,
-         gr.close_time,
-         gr.draw_time,
-         gr.source,
-         g.id             AS game_id,
-         g.code           AS game_code,
-         g.name           AS game_name,
+  async roundsAwaitingResult(page = 1, limit = 20) {
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    const safePage  = Math.max(page, 1);
+    const offset    = (safePage - 1) * safeLimit;
+
+    const data = await this.dataSource.query(
+      `WITH page AS (
+         SELECT gr.id, gr.round_code, gr.status, gr.close_time, gr.draw_time,
+                gr.source, gr.game_id
+         FROM game_rounds gr
+         WHERE gr.status = 'CLOSED'
+           AND NOT EXISTS (
+             SELECT 1 FROM game_results r WHERE r.round_id = gr.id
+           )
+         ORDER BY gr.draw_time ASC
+         LIMIT $1 OFFSET $2
+       )
+       SELECT
+         p.id              AS round_id,
+         p.round_code,
+         p.status,
+         p.close_time,
+         p.draw_time,
+         p.source,
+         p.game_id,
+         g.code            AS game_code,
+         g.name            AS game_name,
          g.digit_length,
-         COUNT(b.id)::int                                    AS total_bets,
-         COUNT(DISTINCT b.user_id)::int                      AS total_players,
-         COALESCE(SUM(b.bet_amount), 0)::numeric             AS total_stake,
-         COALESCE(SUM(b.potential_payout)
-                  FILTER (WHERE b.result_status = 'PLACED'), 0)::numeric
-                                                             AS max_exposure
-       FROM game_rounds gr
-       JOIN games g            ON g.id = gr.game_id
-       LEFT JOIN bets b        ON b.round_id = gr.id
-       LEFT JOIN game_results r ON r.round_id = gr.id
-       WHERE gr.status = 'CLOSED'
-         AND r.round_id IS NULL
-       GROUP BY gr.id, g.id
-       ORDER BY gr.draw_time ASC`,
+         b.total_bets,
+         b.total_players,
+         b.total_stake,
+         b.max_exposure
+       FROM page p
+       JOIN games g ON g.id = p.game_id
+       LEFT JOIN LATERAL (
+         SELECT
+           COUNT(*)::int                                AS total_bets,
+           COUNT(DISTINCT user_id)::int                 AS total_players,
+           COALESCE(SUM(bet_amount), 0)::numeric        AS total_stake,
+           COALESCE(SUM(potential_payout)
+                    FILTER (WHERE result_status = 'PLACED'), 0)::numeric
+                                                        AS max_exposure
+         FROM bets
+         WHERE round_id = p.id
+       ) b ON TRUE
+       ORDER BY p.draw_time ASC`,
+      [safeLimit, offset],
     );
+
+    const [cnt] = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total
+         FROM game_rounds gr
+        WHERE gr.status = 'CLOSED'
+          AND NOT EXISTS (
+            SELECT 1 FROM game_results r WHERE r.round_id = gr.id
+          )`,
+    );
+    const total = cnt?.total ?? 0;
+
+    return {
+      data,
+      page:       safePage,
+      limit:      safeLimit,
+      total,
+      totalPages: Math.ceil(total / safeLimit) || 0,
+    };
   }
 
   // ════════════════════════════════════════════════════════════
   // 2b) ADMIN: ROUNDS WITH RESULT DECLARED (published / settled)
-  //     GET /games/admin/rounds/result-declared
+  //     GET /games/admin/rounds/result-declared?page=1&limit=20
+  //
+  //   Efficiency: paginate the *rounds* first (cheap ORDER BY on
+  //   game_results.created_at + LIMIT/OFFSET), THEN aggregate bets only
+  //   for that page via a LATERAL — instead of grouping every bet of every
+  //   round and discarding all but one page.
   // ════════════════════════════════════════════════════════════
-  async roundsResultDeclared() {
-    return this.dataSource.query(
-      `SELECT
-         gr.id            AS round_id,
-         gr.round_code,
-         gr.status,
-         gr.close_time,
-         gr.draw_time,
-         gr.source,
-         g.id             AS game_id,
-         g.code           AS game_code,
-         g.name           AS game_name,
+  async roundsResultDeclared(page = 1, limit = 20) {
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    const safePage  = Math.max(page, 1);
+    const offset    = (safePage - 1) * safeLimit;
+
+    const data = await this.dataSource.query(
+      `WITH page AS (
+         SELECT gr.id, gr.round_code, gr.status, gr.close_time, gr.draw_time,
+                gr.source, gr.game_id,
+                r.result_number, r.created_at AS result_declared_at
+         FROM game_rounds gr
+         JOIN game_results r ON r.round_id = gr.id
+         ORDER BY r.created_at DESC
+         LIMIT $1 OFFSET $2
+       )
+       SELECT
+         p.id              AS round_id,
+         p.round_code,
+         p.status,
+         p.close_time,
+         p.draw_time,
+         p.source,
+         p.game_id,
+         g.code            AS game_code,
+         g.name            AS game_name,
          g.digit_length,
-         r.result_number,
-         r.created_at     AS result_declared_at,
-         COUNT(b.id)::int                                       AS total_bets,
-         COUNT(DISTINCT b.user_id)::int                         AS total_players,
-         COALESCE(SUM(b.bet_amount), 0)::numeric                AS total_stake,
-         COUNT(b.id) FILTER (WHERE b.result_status = 'WON')::int  AS winners,
-         COUNT(b.id) FILTER (WHERE b.result_status = 'LOST')::int AS losers,
-         COUNT(b.id) FILTER (WHERE b.result_status = 'PLACED')::int AS unsettled
-       FROM game_rounds gr
-       JOIN games g             ON g.id = gr.game_id
-       JOIN game_results r      ON r.round_id = gr.id
-       LEFT JOIN bets b         ON b.round_id = gr.id
-       GROUP BY gr.id, g.id, r.result_number, r.created_at
-       ORDER BY r.created_at DESC
-       LIMIT 200`,
+         p.result_number,
+         p.result_declared_at,
+         b.total_bets,
+         b.total_players,
+         b.total_stake,
+         b.winners,
+         b.losers,
+         b.unsettled
+       FROM page p
+       JOIN games g ON g.id = p.game_id
+       LEFT JOIN LATERAL (
+         SELECT
+           COUNT(*)::int                                         AS total_bets,
+           COUNT(DISTINCT user_id)::int                          AS total_players,
+           COALESCE(SUM(bet_amount), 0)::numeric                 AS total_stake,
+           COUNT(*) FILTER (WHERE result_status = 'WON')::int    AS winners,
+           COUNT(*) FILTER (WHERE result_status = 'LOST')::int   AS losers,
+           COUNT(*) FILTER (WHERE result_status = 'PLACED')::int AS unsettled
+         FROM bets
+         WHERE round_id = p.id
+       ) b ON TRUE
+       ORDER BY p.result_declared_at DESC`,
+      [safeLimit, offset],
     );
+
+    const [cnt] = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total
+         FROM game_results r
+         JOIN game_rounds gr ON gr.id = r.round_id`,
+    );
+    const total = cnt?.total ?? 0;
+
+    return {
+      data,
+      page:       safePage,
+      limit:      safeLimit,
+      total,
+      totalPages: Math.ceil(total / safeLimit) || 0,
+    };
   }
 
   // ════════════════════════════════════════════════════════════

@@ -13,7 +13,7 @@
 //     GET /games/admin/rounds/:roundId/players  -> who bet on a round
 
 import {
-  Controller, Get, Param, ParseIntPipe,
+  Controller, Get, Param, Query, ParseIntPipe, DefaultValuePipe,
   HttpStatus, HttpException, UseGuards,
 } from '@nestjs/common';
 import { LobbyService } from './lobby.service';
@@ -55,17 +55,19 @@ export class LobbyController {
 
   // ── ADMIN ───────────────────────────────────────────────────
 
-  // GET /games/admin/rounds/awaiting-result
+  // GET /games/admin/rounds/awaiting-result?page=1&limit=20
   @UseGuards(AdminGuard)
   @Get('admin/rounds/awaiting-result')
-  async awaitingResult() {
+  async awaitingResult(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit = 20,
+  ) {
     try {
-      const data = await this.lobbyService.roundsAwaitingResult();
+      const result = await this.lobbyService.roundsAwaitingResult(page, limit);
       return {
         statusCode: HttpStatus.OK,
         message: 'Rounds awaiting result',
-        count: data.length,
-        data,
+        ...result,
       };
     } catch (e: any) {
       throw new HttpException(
@@ -75,17 +77,19 @@ export class LobbyController {
     }
   }
 
-  // GET /games/admin/rounds/result-declared
+  // GET /games/admin/rounds/result-declared?page=1&limit=20
   @UseGuards(AdminGuard)
   @Get('admin/rounds/result-declared')
-  async resultDeclared() {
+  async resultDeclared(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit = 20,
+  ) {
     try {
-      const data = await this.lobbyService.roundsResultDeclared();
+      const result = await this.lobbyService.roundsResultDeclared(page, limit);
       return {
         statusCode: HttpStatus.OK,
         message: 'Rounds with result declared',
-        count: data.length,
-        data,
+        ...result,
       };
     } catch (e: any) {
       throw new HttpException(
