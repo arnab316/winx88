@@ -259,19 +259,19 @@ export class WalletController {
   }
  
   // POST /wallet/admin/adjust
-  // body: { userId, amount (signed: + credit, - debit), description, meta? }
+  // body: { userId, amount (signed: + credit, - debit), adjustmentType, description, meta? }
   @UseGuards(AdminGuard)
   @Post('admin/adjust')
-getAdminLedgerHistory(
-  @Param('userId', ParseIntPipe) userId: number,
-  @Query('page',   new DefaultValuePipe(1),  ParseIntPipe) page:  number,
-  @Query('limit',  new DefaultValuePipe(20), ParseIntPipe) limit: number,
-  @Query('type') typeFilter?: string,
-) {
-  return this.walletService.getLedgerHistory(
-    userId, page, limit, typeFilter, 'ADMIN',         // ← 'ADMIN'
-  );
-}
+  adminAdjust(@Body() body: any, @Req() req: any) {
+    return this.walletService.adminAdjustWallet({
+      userId:         body.userId,
+      amount:         body.amount,
+      adjustmentType: body.adjustmentType,
+      description:    body.description,
+      meta:           body.meta,
+      adminId:        req.user.sub,   // admin identity from the JWT, never the body
+    });
+  }
 }
  
 

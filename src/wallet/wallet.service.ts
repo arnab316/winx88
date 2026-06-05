@@ -594,7 +594,10 @@ export class WalletService {
       bonusAfter:    bon,
       lockedBefore:  lck,
       lockedAfter:   lck,
-      referenceType: dto.adjustmentType,
+      // reference_type names the linked table (always a manual_adjustments
+      // row); the deposit-vs-adjustment distinction lives in entry_type.
+      // 'MANUAL_DEPOSIT' is NOT a valid reference_type per the DB check.
+      referenceType: 'MANUAL_ADJUSTMENT',
       referenceId:   Number(adj[0].id),
       status:        'SUCCESS',
       description:   dto.description,
