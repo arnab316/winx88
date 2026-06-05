@@ -28,6 +28,7 @@ app.useGlobalPipes(
   origin: [
     'http://localhost:5173',
     'http://localhost:5174',
+    'http://localhost:4173',
     'http://15.207.97.72:5173',
     'http://15.207.97.72:4173',
     'https://winx-88.com',
