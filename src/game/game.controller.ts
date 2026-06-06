@@ -21,6 +21,7 @@
 //
 //   ADMIN:
 //     PATCH /games/admin/:id/flags
+//     PATCH /games/admin/:id/settings
 //     GET   /games/admin/:gameId/hot-numbers
 //     POST  /games/admin/hot-numbers
 //     PATCH /games/admin/hot-numbers/:id
@@ -38,6 +39,7 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
 import {
   UpdateGameFlagsDto,
+  UpdateGameSettingsDto,
   CreateHotNumberDto,
   UpdateHotNumberDto,
   ReorderHotNumbersDto,
@@ -555,6 +557,24 @@ export class GameController {
       throw new HttpException(
         { statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
           message: error?.message || 'Failed to update flags' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  @UseGuards(AdminGuard)
+  @Patch('admin/:id/settings')
+  async updateSettings(
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: UpdateGameSettingsDto,
+  ) {
+    try {
+      const result = await this.gameService.updateGameSettings(id, dto);
+      return { statusCode: HttpStatus.OK, message: 'Game settings updated', data: result };
+    } catch (error: any) {
+      throw new HttpException(
+        { statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          message: error?.message || 'Failed to update settings' },
         error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );
     }

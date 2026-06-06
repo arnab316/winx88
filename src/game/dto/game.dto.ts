@@ -51,6 +51,26 @@ export class UpdateGameFlagsDto {
   thumbnailUrl?: string;
 }
 
+// ─── ADMIN: UPDATE GAME SETTINGS (economics) ─────────────────
+// Dedicated to the editable game config: payout multiplier, bet
+// limits, payout cap, name. All fields optional → partial update.
+export class UpdateGameSettingsDto {
+  @IsOptional() @IsString() @Length(1, 100)
+  name?: string;
+
+  @IsOptional() @IsNumber() @Min(0.01)
+  payoutMultiplier?: number;
+
+  @IsOptional() @IsNumber() @Min(0)
+  minBet?: number;
+
+  @IsOptional() @IsNumber() @Min(0)
+  maxBet?: number;
+
+  @IsOptional() @IsNumber() @Min(1)
+  maxPayoutPerRound?: number;
+}
+
 // ─── ADMIN: CREATE HOT NUMBER ────────────────────────────────
 export class CreateHotNumberDto {
   @ToInt() @IsInt()

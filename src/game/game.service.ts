@@ -25,6 +25,7 @@ import { GamesGateway } from './games.gateway';
 
 import {
   UpdateGameFlagsDto,
+  UpdateGameSettingsDto,
   CreateHotNumberDto,
   UpdateHotNumberDto,
   ReorderHotNumbersDto,
@@ -1021,6 +1022,58 @@ export class GameService {
       max_payout_per_round: dto.maxPayoutPerRound,
       description:          dto.description,
       thumbnail_url:        dto.thumbnailUrl,
+    };
+
+    for (const [col, val] of Object.entries(map)) {
+      if (val !== undefined) {
+        fields.push(`${col} = $${i++}`);
+        values.push(val);
+      }
+    }
+    if (!fields.length) throw new BadRequestException('No fields to update');
+
+    fields.push(`updated_at = NOW()`);
+    values.push(gameId);
+
+    const result = await this.dataSource.query(
+      `UPDATE games SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`,
+      values,
+    );
+    return result[0];
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: UPDATE GAME SETTINGS (economics)
+  //   Updates payout_multiplier, min_bet, max_bet, max_payout_per_round,
+  //   name. Partial update — only provided fields change.
+  //   NOTE: changing payout_multiplier only affects FUTURE bets;
+  //   each bet snapshots its own multiplier at placement time.
+  //
+  //   PATCH /games/admin/:id/settings
+  // ═════════════════════════════════════════════════════════════
+  async updateGameSettings(gameId: number, dto: UpdateGameSettingsDto) {
+    const existing = await this.dataSource.query(
+      `SELECT id, min_bet, max_bet FROM games WHERE id = $1`, [gameId],
+    );
+    if (!existing.length) throw new NotFoundException('Game not found');
+
+    // Resolve effective min/max (incoming value wins, else current) to validate range.
+    const effMin = dto.minBet ?? parseFloat(existing[0].min_bet);
+    const effMax = dto.maxBet ?? parseFloat(existing[0].max_bet);
+    if (effMin > effMax) {
+      throw new BadRequestException('min_bet cannot be greater than max_bet');
+    }
+
+    const fields: string[] = [];
+    const values: any[] = [];
+    let i = 1;
+
+    const map: Record<string, any> = {
+      name:                 dto.name,
+      payout_multiplier:    dto.payoutMultiplier,
+      min_bet:              dto.minBet,
+      max_bet:              dto.maxBet,
+      max_payout_per_round: dto.maxPayoutPerRound,
     };
 
     for (const [col, val] of Object.entries(map)) {
