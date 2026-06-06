@@ -102,11 +102,53 @@ export class RoundSchedulerService {
         return;
       }
 
-      // 3. Compute times
-      const openTime = new Date(sched.next_run_at);
-      const closeTime = new Date(
-        openTime.getTime() + sched.bet_duration_minutes * 60_000,
-      );
+      // 3. Compute the round's open time.
+      //    Normally openTime === next_run_at. But after downtime next_run_at
+      //    can be far in the past, which would spawn an already-closed round
+      //    (and, advancing one interval per tick, keep doing so for minutes).
+      //    Detect that and realign to the grid slot that covers "now".
+      const nowRows = await qr.query(`SELECT NOW() AS now`);
+      const now = new Date(nowRows[0].now).getTime();
+      const intervalMs = sched.interval_minutes * 60_000;
+      const betMs = sched.bet_duration_minutes * 60_000;
+
+      let openMs = new Date(sched.next_run_at).getTime();
+
+      if (openMs + betMs <= now) {
+        // This slot's round would already be closed → stale (downtime catch-up).
+        // Smallest k such that the realigned slot's close_time is still in the future.
+        const k = Math.ceil((now - betMs - openMs) / intervalMs);
+        const realignedMs = openMs + k * intervalMs;
+
+        if (realignedMs > now) {
+          // "now" falls in a dead gap between rounds (bet window already passed,
+          // next slot not started). Don't spawn a future round early — just
+          // realign next_run_at and let the normal tick fire it on time.
+          await qr.query(
+            `UPDATE game_schedules
+               SET next_run_at = $1::timestamptz, updated_at = NOW()
+             WHERE id = $2`,
+            [new Date(realignedMs).toISOString(), sched.schedule_id],
+          );
+          await qr.commitTransaction();
+          this.logger.warn(
+            `Schedule ${sched.schedule_id} (game ${sched.game_id}): realigned ` +
+              `${k} stale interval(s) after downtime; next round at ` +
+              `${new Date(realignedMs).toISOString()}`,
+          );
+          return;
+        }
+
+        // "now" is inside the realigned slot's betting window → spawn it live.
+        this.logger.warn(
+          `Schedule ${sched.schedule_id} (game ${sched.game_id}): skipped ` +
+            `${k} stale interval(s) after downtime`,
+        );
+        openMs = realignedMs;
+      }
+
+      const openTime = new Date(openMs);
+      const closeTime = new Date(openMs + betMs);
       const drawTime = new Date(
         closeTime.getTime() + sched.draw_offset_minutes * 60_000,
       );
@@ -130,7 +172,7 @@ export class RoundSchedulerService {
           qr,
           sched.schedule_id,
           sched.interval_minutes,
-          sched.next_run_at,
+          openTime.toISOString(),
         );
         await qr.commitTransaction();
         return;
@@ -146,12 +188,13 @@ export class RoundSchedulerService {
       );
       const round = rows[0];
 
-      // 6. Advance next_run_at (from next_run_at, NOT NOW() — prevents drift)
+      // 6. Advance next_run_at from this round's openTime (NOT NOW() — prevents
+      //    drift; openTime may have been realigned above after downtime).
       await this.advanceNextRunInTx(
         qr,
         sched.schedule_id,
         sched.interval_minutes,
-        sched.next_run_at,
+        openTime.toISOString(),
       );
 
       await qr.commitTransaction();

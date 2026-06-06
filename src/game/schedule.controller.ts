@@ -261,6 +261,23 @@ export class ScheduleController {
     }
   }
 
+  // GET /games/admin/scheduler/health
+  //   Static route — declared before admin/:gameId/schedule so it is not
+  //   captured by the :gameId param route.
+  @UseGuards(AdminGuard)
+  @Get('admin/scheduler/health')
+  async schedulerHealth() {
+    try {
+      const data = await this.scheduleService.schedulerHealth();
+      return { statusCode: HttpStatus.OK, message: 'Scheduler health', data };
+    } catch (e: any) {
+      throw new HttpException(
+        { statusCode: e?.status || 500, message: e?.message || 'Error' },
+        e?.status || 500,
+      );
+    }
+  }
+
   // GET /games/admin/:gameId/schedule
   @UseGuards(AdminGuard)
   @Get('admin/:gameId/schedule')

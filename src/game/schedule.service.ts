@@ -142,6 +142,53 @@ export class ScheduleService {
     return rows[0];
   }
 
+  // GET /games/admin/scheduler/health
+  //   Flags any ACTIVE schedule whose next_run_at is more than one interval
+  //   behind NOW — a strong signal the in-process cron has stalled/stopped
+  //   (e.g. the API process died). Healthy schedules sit at/ahead of NOW.
+  async schedulerHealth() {
+    const rows = await this.dataSource.query(
+      `SELECT
+         gs.id            AS schedule_id,
+         gs.game_id,
+         g.name           AS game_name,
+         gs.is_active,
+         gs.interval_minutes,
+         gs.next_run_at,
+         EXTRACT(EPOCH FROM (NOW() - gs.next_run_at))::int AS seconds_behind
+       FROM game_schedules gs
+       JOIN games g ON g.id = gs.game_id
+       ORDER BY gs.is_active DESC, seconds_behind DESC`,
+    );
+
+    const schedules = rows.map((r: any) => {
+      const secondsBehind = Number(r.seconds_behind);
+      const stale = r.is_active && secondsBehind > r.interval_minutes * 60;
+      return {
+        scheduleId: Number(r.schedule_id),
+        gameId: Number(r.game_id),
+        gameName: r.game_name,
+        isActive: r.is_active,
+        intervalMinutes: r.interval_minutes,
+        nextRunAt: r.next_run_at,
+        secondsBehind,
+        minutesBehind: Math.round(secondsBehind / 60),
+        status: !r.is_active ? 'PAUSED' : stale ? 'STALE' : 'OK',
+      };
+    });
+
+    const stale = schedules.filter((s) => s.status === 'STALE');
+    return {
+      checkedAt: new Date().toISOString(),
+      totalSchedules: schedules.length,
+      activeSchedules: schedules.filter((s) => s.isActive).length,
+      staleCount: stale.length,
+      healthy: stale.length === 0,
+      stale, // the problem ones, for quick alerting
+      schedules, // full list
+    };
+  }
+
   // GET /games/admin/schedules
   async listSchedules() {
     return this.dataSource.query(
