@@ -33,6 +33,7 @@ app.useGlobalPipes(
     'http://15.207.97.72:4173',
     'https://winx-88.com',
     'https://www.winx-88.com',
+    'https://test.safurion.online'
   ],
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   credentials: true,
