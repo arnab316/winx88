@@ -44,6 +44,14 @@ export class CreateJackpotSessionDto {
   @IsOptional() @IsString() @Length(2, 10)
   currency?: string;
 
+  /** Per-bet stake limits for this jackpot's game. Optional — default min 10. */
+  @IsOptional() @IsNumber() @Min(0.01)
+  minBet?: number;
+
+  /** Optional — default max 50000. Must be >= minBet. */
+  @IsOptional() @IsNumber() @Min(0.01)
+  maxBet?: number;
+
   /** 6 for 6D game, 7 for 7D game */
   @IsIn(JACKPOT_DIGIT_LENGTHS) @IsInt()
   digitLength!: number;
@@ -68,6 +76,8 @@ export class UpdateJackpotSessionDto {
   @IsOptional() @IsString() @Length(0, 2000) descriptionBn?: string;
   @IsOptional() @IsString() bannerUrl?: string;
   @IsOptional() @IsNumber() @Min(1) prizeAmount?: number;
+  @IsOptional() @IsNumber() @Min(0.01) minBet?: number;
+  @IsOptional() @IsNumber() @Min(0.01) maxBet?: number;
   @IsOptional() @IsDateString() startsAt?: string;
   @IsOptional() @IsDateString() endsAt?: string;
 }

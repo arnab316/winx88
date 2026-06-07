@@ -252,12 +252,22 @@ export class VipService {
   }
 
   async getAllLevels() {
-    return this.dataSource.query(
+    const rows = await this.dataSource.query(
       `SELECT level, level_name, group_name, coins_required,
               badge_icon_url, benefits
        FROM vip_level_config
        ORDER BY level ASC`,
     );
+    // Normalise to camelCase + numeric so it matches /vip/me and the frontend
+    // can read coinsRequired directly (DB returns NUMERIC as a string).
+    return rows.map((r: any) => ({
+      level:        Number(r.level),
+      levelName:    r.level_name,
+      groupName:    r.group_name,
+      coinsRequired: Number(r.coins_required),
+      badgeIconUrl: r.badge_icon_url,
+      benefits:     r.benefits,
+    }));
   }
 
   // ═════════════════════════════════════════════════════════════

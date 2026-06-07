@@ -104,6 +104,12 @@ export class JackpotService {
     return `${digitLength}D_JACKPOT`;
   }
 
+  // Default payout multiplier used when the permanent jackpot game is first
+  // seeded (matches the migration: 90× for 6D, 700× for 7D).
+  private defaultMultiplierFor(digitLength: number): number {
+    return digitLength === 7 ? 700 : 90;
+  }
+
   private roundCodeFor(digitLength: number): string {
     return `JP${digitLength}D-${Date.now()}`;
   }
@@ -122,10 +128,22 @@ export class JackpotService {
       dto.endsAt,
     );
 
-    const meta = {
+    // Per-bet stake limits are applied to the backing jackpot game at
+    // activation; stash them on the pool meta until then.
+    if (
+      dto.minBet !== undefined &&
+      dto.maxBet !== undefined &&
+      dto.maxBet < dto.minBet
+    ) {
+      throw new BadRequestException('maxBet must be greater than or equal to minBet');
+    }
+
+    const meta: Record<string, any> = {
       digitLength: dto.digitLength,
       periodType: dto.periodType,
     };
+    if (dto.minBet !== undefined) meta.minBet = dto.minBet;
+    if (dto.maxBet !== undefined) meta.maxBet = dto.maxBet;
 
     const rows = await this.dataSource.query(
       `INSERT INTO jackpot_pools
@@ -178,6 +196,28 @@ export class JackpotService {
         values.push(val);
       }
     }
+
+    // minBet/maxBet live inside eligibility_rules (jsonb), not their own column.
+    // Merge them into the existing meta so they reach the game at activation.
+    if (dto.minBet !== undefined || dto.maxBet !== undefined) {
+      const cur = await this.dataSource.query(
+        `SELECT eligibility_rules FROM jackpot_pools WHERE id = $1`,
+        [id],
+      );
+      const meta = { ...(cur[0]?.eligibility_rules ?? {}) };
+      if (dto.minBet !== undefined) meta.minBet = dto.minBet;
+      if (dto.maxBet !== undefined) meta.maxBet = dto.maxBet;
+      if (
+        meta.minBet !== undefined &&
+        meta.maxBet !== undefined &&
+        meta.maxBet < meta.minBet
+      ) {
+        throw new BadRequestException('maxBet must be greater than or equal to minBet');
+      }
+      fields.push(`eligibility_rules = $${i++}::jsonb`);
+      values.push(JSON.stringify(meta));
+    }
+
     if (!fields.length) throw new BadRequestException('No fields to update');
 
     fields.push(`updated_at = NOW()`);
@@ -223,17 +263,46 @@ export class JackpotService {
 
       const gameCode = this.gameCodeFor(digitLength);
 
-      // Find the permanent jackpot game row
-      const gameRows = await qr.query(
-        `SELECT * FROM games WHERE code = $1`,
-        [gameCode],
-      );
+      // Resolve the permanent jackpot game. It's shared across all sessions of
+      // the same digit length. Self-heal: if it doesn't exist (migration not
+      // run / row deleted) create it; otherwise apply this session's stake
+      // limits if the admin supplied any.
+      const gameRows = await qr.query(`SELECT * FROM games WHERE code = $1`, [gameCode]);
+      let game: any;
       if (!gameRows.length) {
-        throw new BadRequestException(
-          `Jackpot game '${gameCode}' not found. Run the migration first.`,
+        const minBet = meta.minBet ?? 10;
+        const maxBet = meta.maxBet ?? 50000;
+        const ins = await qr.query(
+          `INSERT INTO games
+             (code, name, digit_length, min_bet, max_bet, payout_multiplier,
+              display_category, is_active, result_mode)
+           VALUES ($1,$2,$3,$4,$5,$6,'JACKPOT',true,'MANUAL')
+           RETURNING *`,
+          [
+            gameCode,
+            `${digitLength}D Jackpot`,
+            digitLength,
+            minBet,
+            maxBet,
+            this.defaultMultiplierFor(digitLength),
+          ],
         );
+        game = ins[0];
+      } else {
+        game = gameRows[0];
+        if (meta.minBet !== undefined || meta.maxBet !== undefined) {
+          const upd = await qr.query(
+            `UPDATE games
+               SET min_bet = COALESCE($1, min_bet),
+                   max_bet = COALESCE($2, max_bet),
+                   updated_at = NOW()
+             WHERE id = $3
+             RETURNING *`,
+            [meta.minBet ?? null, meta.maxBet ?? null, game.id],
+          );
+          game = upd[0];
+        }
       }
-      const game = gameRows[0];
 
       // Create a dedicated round for this session
       const roundCode = this.roundCodeFor(digitLength);
@@ -1008,17 +1077,26 @@ export class JackpotService {
          p.starts_at,
          p.ends_at,
          p.status,
-         p.eligibility_rules
+         p.eligibility_rules,
+         g.min_bet,
+         g.max_bet
        FROM jackpot_pools p
+       LEFT JOIN games g ON g.id = (p.eligibility_rules->>'gameId')::int
        WHERE p.status = 'ACTIVE'
        ORDER BY p.ends_at ASC`,
     );
 
-    return rows.map((r: any) => ({
-      ...r,
-      digitLength: r.eligibility_rules?.digitLength,
-      periodType:  r.eligibility_rules?.periodType,
-    }));
+    return rows.map((r: any) => {
+      const { min_bet, max_bet, ...rest } = r;
+      return {
+        ...rest,
+        // Per-bet stake limits come from the linked game row.
+        minBet: min_bet === null ? null : parseFloat(min_bet),
+        maxBet: max_bet === null ? null : parseFloat(max_bet),
+        digitLength: r.eligibility_rules?.digitLength,
+        periodType:  r.eligibility_rules?.periodType,
+      };
+    });
   }
 
   // ═══════════════════════════════════════════════════════════════
