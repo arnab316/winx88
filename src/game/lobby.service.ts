@@ -310,6 +310,10 @@ export class LobbyService {
              AND gr.status = 'OPEN'
              AND gr.close_time > NOW()
          )
+         AND NOT EXISTS (
+           SELECT 1 FROM game_schedules gs
+           WHERE gs.game_id = hn.game_id AND gs.is_active = FALSE
+         )
        ORDER BY g.digit_length ASC, g.id ASC, hn.id ASC`,
     );
 
@@ -553,8 +557,13 @@ export class LobbyService {
          ORDER BY gr.close_time ASC
          LIMIT 1
        ) lr ON TRUE
-       WHERE g.is_active = TRUE 
+       WHERE g.is_active = TRUE
        AND g.digit_length IN (1, 3, 4, 5)
+       -- Hide games whose schedule is paused (active/no schedule still show)
+       AND NOT EXISTS (
+         SELECT 1 FROM game_schedules gs
+         WHERE gs.game_id = g.id AND gs.is_active = FALSE
+       )
        ORDER BY g.digit_length ASC, g.id ASC`,
     );
 
@@ -569,6 +578,10 @@ export class LobbyService {
            WHERE gr.game_id = hn.game_id
              AND gr.status = 'OPEN'
              AND gr.close_time > NOW()
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM game_schedules gs
+           WHERE gs.game_id = hn.game_id AND gs.is_active = FALSE
          )
        ORDER BY hn.game_id, hn.id`,
     );

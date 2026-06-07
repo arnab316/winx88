@@ -4,6 +4,7 @@ import {
   Post,
   Patch,
   Body,
+  Param,
   Query,
   Req,
   UseGuards,
@@ -70,9 +71,9 @@ export class CoinsController {
   @UseGuards(AdminGuard)
   @Get('admin/user/:userId/history')
   getUserHistory(
+    @Param('userId', ParseIntPipe) userId: number,
     @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
-    @Query('userId', ParseIntPipe) userId: number,
   ) {
     return this.coinsService.getCoinHistory(userId, page, limit);
   }

@@ -348,9 +348,15 @@ export class ScheduleController {
   // POST /games/admin/:gameId/schedule/toggle
   @UseGuards(AdminGuard)
   @Post('admin/:gameId/schedule/toggle')
-  async toggleSchedule(@Param('gameId', ParseIntPipe) gameId: number) {
+  async toggleSchedule(
+    @Param('gameId', ParseIntPipe) gameId: number,
+    @Body() body: { closeOpenRound?: boolean } = {},
+  ) {
     try {
-      const data = await this.scheduleService.toggleSchedule(gameId);
+      // Default true: pausing closes the live round immediately so the game
+      // leaves the lobby at once. Pass false to let the current round finish.
+      const closeOpenRound = body?.closeOpenRound !== false;
+      const data = await this.scheduleService.toggleSchedule(gameId, closeOpenRound);
       return {
         statusCode: HttpStatus.OK,
         message: data.is_active ? 'Schedule activated' : 'Schedule paused',

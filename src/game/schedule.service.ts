@@ -10,12 +10,14 @@ import {
 import { DataSource } from 'typeorm';
 import { CreateScheduleDto, UpdateScheduleDto } from './dto/schedule.dto';
 import { BetTicketService } from './bet-ticket.service';
+import { GamesGateway } from './games.gateway';
 
 @Injectable()
 export class ScheduleService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly betTicketService: BetTicketService,
+    private readonly gateway: GamesGateway,
   ) {}
 
   // ══════════════════════════════════════════════════════════
@@ -221,7 +223,14 @@ export class ScheduleService {
   }
 
   // POST /games/admin/:gameId/schedule/toggle
-  async toggleSchedule(gameId: number) {
+  //   Flips is_active. When PAUSING (active -> inactive):
+  //     - closeOpenRound = true  (default): force-close any OPEN round now so
+  //       the game drops from the live lobby immediately (emits round:closed).
+  //     - closeOpenRound = false: leave the current round to finish naturally.
+  //   Either way the game is excluded from the lobby (lobby queries are
+  //   schedule-aware) and a game:unlisted WS event is emitted.
+  //   When RESUMING, emits game:listed; the scheduler spawns the next round.
+  async toggleSchedule(gameId: number, closeOpenRound = true) {
     const result = await this.dataSource.query(
       `UPDATE game_schedules
        SET is_active = NOT is_active, updated_at = NOW()
@@ -230,7 +239,38 @@ export class ScheduleService {
       [gameId],
     );
     if (!result.length) throw new NotFoundException('No schedule found for this game');
-    return result[0];
+    const sched = result[0];
+
+    if (sched.is_active === false) {
+      // Paused.
+      let closedRoundId: number | undefined;
+
+      if (closeOpenRound) {
+        const closed = await this.dataSource.query(
+          `UPDATE game_rounds
+             SET status = 'CLOSED', close_time = NOW()
+           WHERE game_id = $1 AND status = 'OPEN'
+           RETURNING id, round_code, draw_time`,
+          [gameId],
+        );
+        for (const r of closed) {
+          this.gateway.emitRoundClosed({
+            gameId,
+            roundId: Number(r.id),
+            roundCode: r.round_code,
+            drawTime: r.draw_time,
+          });
+        }
+        closedRoundId = closed.length ? Number(closed[0].id) : undefined;
+      }
+
+      this.gateway.emitGameUnlisted({ gameId, closedRoundId });
+    } else {
+      // Resumed.
+      this.gateway.emitGameListed({ gameId });
+    }
+
+    return sched;
   }
 
   // ══════════════════════════════════════════════════════════

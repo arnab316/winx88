@@ -200,6 +200,33 @@ export class GamesGateway implements OnGatewayConnection, OnGatewayDisconnect {
   }
 
   /**
+   * Game removed from the live lobby — fired when its schedule is paused.
+   * Clients should drop the game's card from the lobby immediately.
+   * `closedRoundId` is set when the open round was force-closed on pause.
+   */
+  emitGameUnlisted(payload: { gameId: number; closedRoundId?: number }) {
+    const room = `game:${payload.gameId}`;
+    this.server.to(room).emit('game:unlisted', {
+      ...payload,
+      announcedAt: new Date().toISOString(),
+    });
+    this.logger.debug(`Emitted game:unlisted to ${room}`);
+  }
+
+  /**
+   * Game returned to the live lobby — fired when its schedule is resumed.
+   * The next round:opened (from the scheduler) will carry the live round.
+   */
+  emitGameListed(payload: { gameId: number }) {
+    const room = `game:${payload.gameId}`;
+    this.server.to(room).emit('game:listed', {
+      ...payload,
+      announcedAt: new Date().toISOString(),
+    });
+    this.logger.debug(`Emitted game:listed to ${room}`);
+  }
+
+  /**
    * Hot numbers changed for a game.
    * Fired when admin adds, deletes, or toggles a hot number,
    * and when the cleanup cron expires old ones.
