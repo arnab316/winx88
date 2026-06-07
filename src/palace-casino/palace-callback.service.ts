@@ -111,13 +111,14 @@ export class PalaceCallbackService {
 
       await q.query(
         `INSERT INTO slot_transactions
-           (trans_guid, user_id, round_id, game_code, type, amount, balance_after)
-         VALUES ($1, $2, $3, $4, 'cancel', $5, $6)`,
+           (trans_guid, user_id, round_id, game_code, provider_id, type, amount, balance_after)
+         VALUES ($1, $2, $3, $4, $5, 'cancel', $6, $7)`,
         [
           data.trans_guid,
           user.id,
           data.round_id,
           data.game_code,
+          data.provider_id ?? null,
           data.amount,
           newBalance,
         ],
@@ -252,13 +253,14 @@ export class PalaceCallbackService {
 
       await q.query(
         `INSERT INTO slot_transactions
-           (trans_guid, user_id, round_id, game_code, type, amount, balance_after)
-         VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+           (trans_guid, user_id, round_id, game_code, provider_id, type, amount, balance_after)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
         [
           data.trans_guid,
           user.id,
           data.round_id,
           data.game_code,
+          data.provider_id ?? null,
           type,
           data.amount,
           newBalance,

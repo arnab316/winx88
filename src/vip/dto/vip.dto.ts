@@ -40,6 +40,60 @@ export class UpdateVipLevelConfigDto {
   benefits?: Record<string, any>;
 }
 
+export class CreateVipLevelConfigDto {
+  // The numeric tier key (PK). Must be unique. 0 = lowest.
+  @IsInt()
+  @Min(0)
+  level!: number;
+
+  @IsString()
+  @Length(1, 80)
+  levelName!: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(1, 80)
+  groupName?: string;
+
+  // Points threshold for AUTOMATIC promotion. Required unless invitationOnly.
+  // For invitation-only tiers it is ignored and stored as an unreachable sentinel.
+  @IsOptional()
+  @IsNumber()
+  @Min(0)
+  coinsRequired?: number;
+
+  @IsOptional()
+  @IsBoolean()
+  invitationOnly?: boolean;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  sequence?: number;
+
+  @IsOptional()
+  @IsString()
+  @Length(0, 20)
+  uiColor?: string;
+
+  @IsOptional()
+  @IsIn(['ACTIVE', 'INACTIVE'])
+  status?: string;
+
+  @IsOptional()
+  @IsString()
+  @Length(2, 10)
+  currency?: string;
+
+  @IsOptional()
+  @IsString()
+  badgeIconUrl?: string;
+
+  @IsOptional()
+  @IsObject()
+  benefits?: Record<string, any>;
+}
+
 export class AdminSetVipLevelDto {
   @IsNumber()
   userId: number;

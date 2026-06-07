@@ -33,6 +33,8 @@ export class GameHistoryController {
     @Req() req: any,
     @Query('category') category?: string,
     @Query('status') status?: string,
+    @Query('settled') settled?: string,
+    @Query('providerId') providerId?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
@@ -48,6 +50,10 @@ export class GameHistoryController {
           : undefined,
         status: status && validStatuses.includes(status.toUpperCase())
           ? status.toUpperCase()
+          : undefined,
+        settled: settled === undefined ? undefined : settled === 'true',
+        providerId: providerId !== undefined && providerId !== '' && !isNaN(Number(providerId))
+          ? Number(providerId)
           : undefined,
         from,
         to,
@@ -96,6 +102,48 @@ export class GameHistoryController {
         {
           statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
           message: error?.message || 'Failed to fetch combined game history',
+        },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
+   * Grouped view: one card per (provider, day) with totalGames, turnover,
+   * totalWon and netPL — the "JILI · May 17 · ৳5" list. Drill into a card with
+   * GET /me/game-history?providerId=&category=&from=&to= for the game rows.
+   *
+   *   GET /me/game-history/by-provider?category=SLOT&settled=true&from=&to=
+   */
+  @Get('by-provider')
+  async getByProvider(
+    @Req() req: any,
+    @Query('category') category?: string,
+    @Query('settled') settled?: string,
+    @Query('providerId') providerId?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    try {
+      const validCategories: GameCategory[] = ['LOTTERY', 'JACKPOT', 'SLOT'];
+      const data = await this.history.getHistoryByProvider(req.user.sub, {
+        category: category && validCategories.includes(category.toUpperCase() as GameCategory)
+          ? (category.toUpperCase() as GameCategory)
+          : undefined,
+        settled: settled === undefined ? undefined : settled === 'true',
+        providerId: providerId !== undefined && providerId !== '' && !isNaN(Number(providerId))
+          ? Number(providerId)
+          : undefined,
+        from,
+        to,
+      });
+
+      return { statusCode: HttpStatus.OK, message: 'Game history by provider', ...data };
+    } catch (error: any) {
+      throw new HttpException(
+        {
+          statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          message: error?.message || 'Failed to fetch grouped game history',
         },
         error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
       );

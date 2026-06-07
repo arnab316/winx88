@@ -39,10 +39,34 @@ export class PalaceCasinoController {
     try {
       const list = await this.palace.providerList(lang ? Number(lang) : 1);
       this.logger.log(`Fetched ${list} providers from Palace`);
+      // Opportunistically cache id -> name so game history can show provider
+      // names (e.g. "JILI") without an extra Palace call. Best-effort: never
+      // let a cache failure break the provider listing.
+      this.cacheProviderNames((list as any)?.data).catch((e) =>
+        this.logger.warn(`Provider name cache failed: ${e.message}`),
+      );
       return list;
     } catch (err: any) {
       this.logger.error(`Error fetching providers: ${JSON.stringify(err)}`);
       throw err;
+    }
+  }
+
+  // Upsert provider id -> name into palace_providers. Defensive about the
+  // exact field names Palace returns.
+  private async cacheProviderNames(items: any[]): Promise<void> {
+    if (!Array.isArray(items)) return;
+    for (const it of items) {
+      const id = it?.provider_id ?? it?.id ?? it?.providerId;
+      const name = it?.name ?? it?.provider_name ?? it?.title ?? it?.en_name;
+      if (id == null || !name) continue;
+      await this.dataSource.query(
+        `INSERT INTO palace_providers (provider_id, name, updated_at)
+         VALUES ($1, $2, NOW())
+         ON CONFLICT (provider_id)
+         DO UPDATE SET name = EXCLUDED.name, updated_at = NOW()`,
+        [Number(id), String(name)],
+      );
     }
   }
 

@@ -4,6 +4,7 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
@@ -18,6 +19,7 @@ import { VipService } from './vip.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
 import {
+  CreateVipLevelConfigDto,
   UpdateVipLevelConfigDto,
   AdminSetVipLevelDto,
 } from './dto/vip.dto';
@@ -52,6 +54,13 @@ export class VipController {
     return this.vipService.getConfig();
   }
 
+  // POST /vip/admin/config — create a new VIP level / tier
+  @UseGuards(AdminGuard)
+  @Post('admin/config')
+  createConfig(@Body() dto: CreateVipLevelConfigDto) {
+    return this.vipService.createLevel(dto);
+  }
+
   // PATCH /vip/admin/config/:level
   @UseGuards(AdminGuard)
   @Patch('admin/config/:level')
@@ -60,6 +69,13 @@ export class VipController {
     @Body() dto: UpdateVipLevelConfigDto,
   ) {
     return this.vipService.updateConfig(level, dto);
+  }
+
+  // DELETE /vip/admin/config/:level — remove a VIP level / tier
+  @UseGuards(AdminGuard)
+  @Delete('admin/config/:level')
+  deleteConfig(@Param('level', ParseIntPipe) level: number) {
+    return this.vipService.deleteLevel(level);
   }
 
   // POST /vip/admin/set-level

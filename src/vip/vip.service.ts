@@ -8,11 +8,21 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { CoinLedgerService } from '../ledger/coin-ledger.service';
 import {
+  CreateVipLevelConfigDto,
   UpdateVipLevelConfigDto,
   AdminSetVipLevelDto,
   UpdateTierLimitsDto,
   SetTierBanksDto,
 } from './dto/vip.dto';
+
+// coins_required is NUMERIC(14,4): the integer part has at most 10 digits,
+// so values must stay strictly below 10^10.
+const COINS_REQUIRED_MAX = 9_999_999_999;
+
+// Sentinel threshold for invitation-only tiers: the column max, so points can
+// never auto-reach them. (invitation_only = TRUE already excludes them from the
+// auto-promote query — this is just belt-and-suspenders.)
+const INVITE_ONLY_SENTINEL = COINS_REQUIRED_MAX;
 
 /**
  * Single Responsibility: manage users.vip_level + vip_level_config CRUD.
@@ -257,6 +267,103 @@ export class VipService {
     return this.dataSource.query(
       `SELECT * FROM vip_level_config ORDER BY level ASC`,
     );
+  }
+
+  // POST /vip/admin/config — create a new VIP level / tier
+  async createLevel(dto: CreateVipLevelConfigDto) {
+    const dupe = await this.dataSource.query(
+      `SELECT level FROM vip_level_config WHERE level = $1`,
+      [dto.level],
+    );
+    if (dupe.length) {
+      throw new BadRequestException(`Level ${dto.level} already exists`);
+    }
+
+    const invitationOnly = dto.invitationOnly ?? false;
+
+    // Automatic tiers need a real points threshold; invitation-only tiers use
+    // the unreachable sentinel so the auto-promote query never selects them.
+    let coinsRequired: number;
+    if (invitationOnly) {
+      coinsRequired = INVITE_ONLY_SENTINEL;
+    } else {
+      if (dto.coinsRequired === undefined) {
+        throw new BadRequestException(
+          'coinsRequired is required for automatic (non invitation-only) tiers',
+        );
+      }
+      if (dto.coinsRequired > COINS_REQUIRED_MAX) {
+        throw new BadRequestException(
+          `coinsRequired must be at most ${COINS_REQUIRED_MAX}`,
+        );
+      }
+      coinsRequired = dto.coinsRequired;
+    }
+
+    try {
+      const result = await this.dataSource.query(
+        `INSERT INTO vip_level_config
+           (level, level_name, group_name, coins_required, invitation_only,
+            sequence, ui_color, status, currency, badge_icon_url, benefits)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,COALESCE($8,'ACTIVE'),COALESCE($9,'BDT'),$10,$11)
+         RETURNING *`,
+        [
+          dto.level,
+          dto.levelName,
+          dto.groupName ?? dto.levelName,
+          coinsRequired,
+          invitationOnly,
+          dto.sequence ?? dto.level,
+          dto.uiColor ?? null,
+          dto.status ?? null,
+          dto.currency ?? null,
+          dto.badgeIconUrl ?? null,
+          dto.benefits ? JSON.stringify(dto.benefits) : null,
+        ],
+      );
+      return result[0];
+    } catch (e: any) {
+      // Unique violation (race on the level PK)
+      if (e?.code === '23505') {
+        throw new BadRequestException(`Level ${dto.level} already exists`);
+      }
+      throw e;
+    }
+  }
+
+  // DELETE /vip/admin/config/:level — remove a VIP level / tier
+  //   Guards: cannot delete the default tier, and cannot delete a tier that
+  //   still has players assigned (reassign them first). tier_banks rows are
+  //   removed automatically via ON DELETE CASCADE.
+  async deleteLevel(level: number) {
+    const existing = await this.dataSource.query(
+      `SELECT level, is_default FROM vip_level_config WHERE level = $1`,
+      [level],
+    );
+    if (!existing.length) {
+      throw new NotFoundException(`Level ${level} not configured`);
+    }
+    if (existing[0].is_default) {
+      throw new BadRequestException(
+        'Cannot delete the default tier. Set another tier as default first.',
+      );
+    }
+
+    const inUse = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS n FROM users WHERE vip_level = $1`,
+      [level],
+    );
+    if (inUse[0].n > 0) {
+      throw new BadRequestException(
+        `Cannot delete: ${inUse[0].n} player(s) are currently in this tier. Reassign them first.`,
+      );
+    }
+
+    await this.dataSource.query(
+      `DELETE FROM vip_level_config WHERE level = $1`,
+      [level],
+    );
+    return { message: `Level ${level} deleted`, level };
   }
 
   async updateConfig(level: number, dto: UpdateVipLevelConfigDto) {

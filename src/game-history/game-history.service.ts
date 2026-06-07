@@ -6,6 +6,8 @@ export type GameCategory = 'LOTTERY' | 'JACKPOT' | 'SLOT';
 export interface GameHistoryQuery {
   category?: GameCategory; // filter to one product; omit for all
   status?: string;         // WON | LOST | PLACED | CANCELLED
+  settled?: boolean;       // true => WON/LOST/CANCELLED, false => PLACED
+  providerId?: number;     // filter slots to one Palace provider
   from?: string;           // ISO date (inclusive)
   to?: string;             // ISO date (inclusive)
   page?: number;
@@ -34,17 +36,9 @@ export interface GameHistoryQuery {
 export class GameHistoryService {
   constructor(private readonly dataSource: DataSource) {}
 
-  async getHistory(userId: number, q: GameHistoryQuery) {
-    const page  = Math.max(q.page ?? 1, 1);
-    const limit = Math.min(Math.max(q.limit ?? 20, 1), 100);
-    const offset = (page - 1) * limit;
-
-    const category = q.category;
-    const status   = q.status?.toUpperCase();
-
-    // ── Source A: lottery + jackpot, from the bets table ──────────────────
-    //  category is derived from the game's display_category.
-    const betsSelect = `
+  // ── Source A: lottery + jackpot, from the bets table ($1 = userId) ──────
+  private betsSourceSql(): string {
+    return `
       SELECT
         b.id::text                                            AS ref_id,
         b.bet_code                                            AS ref_code,
@@ -52,6 +46,8 @@ export class GameHistoryService {
              THEN 'JACKPOT' ELSE 'LOTTERY' END                AS category,
         g.code                                                AS game_code,
         g.name                                                AS game_name,
+        NULL::int                                             AS provider_id,
+        NULL::text                                            AS provider_name,
         b.bet_number                                          AS bet_number,
         b.bet_amount::numeric                                 AS bet_amount,
         b.payout_multiplier::numeric                          AS payout_multiplier,
@@ -72,21 +68,21 @@ export class GameHistoryService {
       LEFT JOIN game_results res ON res.round_id = b.round_id
       WHERE b.user_id = $1
     `;
+  }
 
-    // ── Source B: Palace slots, collapsed from slot_transactions ──────────
-    //  One synthetic wager per round. A round with only a `bet` row and no
-    //  `win` is LOST; with a `win` row it's WON; if cancelled, CANCELLED.
-    //  round_id can be NULL on a transaction, so we group by
-    //  COALESCE(round_id, trans_guid): each round collapses together, while
-    //  round-less transactions each stand alone (keyed by their unique guid)
-    //  instead of being lumped into one bogus group.
-    const slotSelect = `
+  // ── Source B: Palace slots, collapsed per round from slot_transactions ──
+  //  A round with only a `bet` row is LOST; with a `win` row WON; cancelled →
+  //  CANCELLED. round_id can be NULL, so group by COALESCE(round_id, trans_guid).
+  private slotSourceSql(): string {
+    return `
       SELECT
         COALESCE(st.round_id, st.trans_guid)                  AS ref_id,
         COALESCE(st.round_id, st.trans_guid)                  AS ref_code,
         'SLOT'                                                AS category,
         MAX(st.game_code)                                     AS game_code,
         MAX(st.game_code)                                     AS game_name,
+        MAX(st.provider_id)                                   AS provider_id,
+        MAX(pp.name)                                          AS provider_name,
         NULL::text                                            AS bet_number,
         COALESCE(SUM(st.amount) FILTER (WHERE st.type = 'bet'), 0)  AS bet_amount,
         NULL::numeric                                         AS payout_multiplier,
@@ -102,9 +98,22 @@ export class GameHistoryService {
         COALESCE(st.round_id, st.trans_guid)                  AS round_code,
         NULL::text                                            AS result_number
       FROM slot_transactions st
+      LEFT JOIN palace_providers pp ON pp.provider_id = st.provider_id
       WHERE st.user_id = $1
       GROUP BY COALESCE(st.round_id, st.trans_guid)
     `;
+  }
+
+  async getHistory(userId: number, q: GameHistoryQuery) {
+    const page  = Math.max(q.page ?? 1, 1);
+    const limit = Math.min(Math.max(q.limit ?? 20, 1), 100);
+    const offset = (page - 1) * limit;
+
+    const category = q.category;
+    const status   = q.status?.toUpperCase();
+
+    const betsSelect = this.betsSourceSql();
+    const slotSelect = this.slotSourceSql();
 
     // Decide which sources to union based on the category filter.
     const parts: string[] = [];
@@ -127,6 +136,19 @@ export class GameHistoryService {
     if (status) {
       filters.push(`h.status = $${i++}`);
       params.push(status);
+    }
+    // Settled tab = finished wagers (WON/LOST/CANCELLED); Unsettled = PLACED.
+    // Ignored when an explicit `status` is given.
+    if (!status && q.settled !== undefined) {
+      filters.push(
+        q.settled
+          ? `h.status IN ('WON','LOST','CANCELLED')`
+          : `h.status = 'PLACED'`,
+      );
+    }
+    if (q.providerId !== undefined) {
+      filters.push(`h.provider_id = $${i++}`);
+      params.push(q.providerId);
     }
     // Default window: last 7 days when no `from` is supplied.
     const fromTs = q.from
@@ -198,6 +220,8 @@ export class GameHistoryService {
         category:         r.category,
         gameCode:         r.game_code,
         gameName:         r.game_name,
+        providerId:       r.provider_id === null ? null : Number(r.provider_id),
+        providerName:     r.provider_name ?? null,
         betNumber:        r.bet_number,
         betAmount:        r.bet_amount === null ? null : Number(r.bet_amount),
         payoutMultiplier: r.payout_multiplier === null ? null : Number(r.payout_multiplier),
@@ -237,6 +261,102 @@ export class GameHistoryService {
           staked,
           won_amount: won,
           netPL: Number((won - staked).toFixed(2)),
+        };
+      }),
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // GROUPED: provider × day cards (the "JILI · May 17 · ৳5" list).
+  //   Each group carries totalGames, turnover (staked), totalWon, netPL.
+  //   Drill down with getHistory({ providerId, category, from, to }) for the
+  //   underlying game rows.
+  // ════════════════════════════════════════════════════════════════════════
+  async getHistoryByProvider(userId: number, q: GameHistoryQuery) {
+    const category = q.category;
+
+    const parts: string[] = [];
+    if (!category || category === 'LOTTERY' || category === 'JACKPOT') {
+      parts.push(this.betsSourceSql());
+    }
+    if (!category || category === 'SLOT') {
+      parts.push(this.slotSourceSql());
+    }
+
+    const filters: string[] = [];
+    const params: any[] = [userId];
+    let i = 2;
+
+    if (category) {
+      filters.push(`h.category = $${i++}`);
+      params.push(category);
+    }
+    if (q.settled !== undefined) {
+      filters.push(
+        q.settled
+          ? `h.status IN ('WON','LOST','CANCELLED')`
+          : `h.status = 'PLACED'`,
+      );
+    }
+    if (q.providerId !== undefined) {
+      filters.push(`h.provider_id = $${i++}`);
+      params.push(q.providerId);
+    }
+    const fromTs = q.from
+      ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    filters.push(`h.placed_at >= $${i++}`);
+    params.push(fromTs);
+    if (q.to) {
+      filters.push(`h.placed_at < ($${i++}::date + INTERVAL '1 day')`);
+      params.push(q.to);
+    }
+    const toTs = q.to ?? new Date().toISOString();
+
+    const whereClause = `WHERE ${filters.join(' AND ')}`;
+    const unioned = `(${parts.join('\n      UNION ALL\n')}) h`;
+
+    // Label a group: slot → provider name (or "Provider <id>" / "Slots"),
+    // lottery/jackpot → the product name.
+    const providerLabel = `
+      COALESCE(
+        h.provider_name,
+        CASE
+          WHEN h.category = 'SLOT' AND h.provider_id IS NOT NULL THEN 'Provider ' || h.provider_id
+          WHEN h.category = 'SLOT' THEN 'Slots'
+          ELSE initcap(lower(h.category))
+        END
+      )`;
+
+    const rows = await this.dataSource.query(
+      `SELECT
+         TO_CHAR(h.placed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD')          AS day,
+         h.provider_id                                                  AS provider_id,
+         ${providerLabel}                                               AS provider_name,
+         h.category                                                     AS category,
+         COUNT(*)::int                                                  AS total_games,
+         COALESCE(SUM(h.bet_amount), 0)::numeric                        AS turnover,
+         COALESCE(SUM(h.actual_payout) FILTER (WHERE h.status = 'WON'), 0)::numeric AS total_won
+       FROM ${unioned}
+       ${whereClause}
+       GROUP BY TO_CHAR(h.placed_at AT TIME ZONE 'UTC', 'YYYY-MM-DD'), h.provider_id, ${providerLabel}, h.category
+       ORDER BY day DESC, provider_name ASC`,
+      params,
+    );
+
+    return {
+      window: { from: fromTs, to: toTs },
+      groups: rows.map((r: any) => {
+        const turnover = Number(r.turnover ?? 0);
+        const totalWon = Number(r.total_won ?? 0);
+        return {
+          date:         r.day,
+          providerId:   r.provider_id === null ? null : Number(r.provider_id),
+          providerName: r.provider_name,
+          category:     r.category,
+          totalGames:   r.total_games,
+          turnover,
+          totalWon,
+          netPL: Number((totalWon - turnover).toFixed(2)),
         };
       }),
     };
