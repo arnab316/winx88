@@ -433,7 +433,7 @@ async register(dto: any) {
     }
 
     const payload = { sub: a.id, role: a.role ?? 'ADMIN' };
-    const accessToken  = this.jwtService.sign(payload, { expiresIn: '15m' });
+    const accessToken  = this.jwtService.sign(payload, { expiresIn: '7d' });
     const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
     const hashedToken  = await bcrypt.hash(refreshToken, 10);
 
