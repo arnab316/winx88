@@ -566,6 +566,68 @@ export class VipService {
   }
 
   // ═════════════════════════════════════════════════════════════
+  // ADMIN: ALL USERS BY VIP LEVEL (every tier in one list)
+  //   Sorted by vip_level then lifetime coins. Optional ?level= filter
+  //   and ?search= (username / full_name / user_code).
+  // ═════════════════════════════════════════════════════════════
+  async getAllUsersByLevel(
+    page = 1,
+    limit = 50,
+    level?: number,
+    search?: string,
+  ) {
+    const safeLimit = Math.min(Math.max(limit, 1), 200);
+    const safePage = Math.max(page, 1);
+    const offset = (safePage - 1) * safeLimit;
+
+    const where: string[] = [];
+    const params: any[] = [];
+    let i = 1;
+
+    if (level !== undefined) {
+      where.push(`u.vip_level = $${i++}`);
+      params.push(level);
+    }
+    if (search?.trim()) {
+      where.push(
+        `(u.username ILIKE $${i} OR u.full_name ILIKE $${i} OR u.user_code ILIKE $${i})`,
+      );
+      params.push(`%${search.trim()}%`);
+      i++;
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const data = await this.dataSource.query(
+      `SELECT u.id, u.user_code, u.username, u.full_name,
+              u.vip_level,
+              vc.level_name,
+              vc.group_name,
+              COALESCE(uc.lifetime_coins, 0) AS lifetime_coins,
+              COALESCE(uc.total_coins, 0)    AS total_coins
+         FROM users u
+         LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
+         LEFT JOIN user_coins uc        ON uc.user_id = u.id
+         ${whereSql}
+         ORDER BY u.vip_level DESC, lifetime_coins DESC, u.id ASC
+         LIMIT $${i} OFFSET $${i + 1}`,
+      [...params, safeLimit, offset],
+    );
+
+    const count = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total FROM users u ${whereSql}`,
+      params,
+    );
+
+    return {
+      data,
+      page: safePage,
+      limit: safeLimit,
+      total: count[0].total,
+      totalPages: Math.ceil(count[0].total / safeLimit) || 0,
+    };
+  }
+
+  // ═════════════════════════════════════════════════════════════
   // CRON: refresh cached_player_count per tier (build-guide §4.6)
   //   Runs daily at midnight server time. Not real-time by design.
   // ═════════════════════════════════════════════════════════════

@@ -86,6 +86,22 @@ export class VipController {
     return this.vipService.adminSetLevel(dto, req.user.sub);
   }
 
+  // GET /vip/admin/users — ALL users across every tier (optional ?level= & ?search=)
+  @UseGuards(AdminGuard)
+  @Get('admin/users')
+  allUsersByLevel(
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('level') level?: string,
+    @Query('search') search?: string,
+  ) {
+    const lvl =
+      level !== undefined && level !== '' && !isNaN(Number(level))
+        ? Number(level)
+        : undefined;
+    return this.vipService.getAllUsersByLevel(page, limit, lvl, search);
+  }
+
   // GET /vip/admin/users/:level — players currently in a tier
   @UseGuards(AdminGuard)
   @Get('admin/users/:level')
