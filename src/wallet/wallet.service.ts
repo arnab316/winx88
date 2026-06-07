@@ -889,56 +889,78 @@ async getLedgerHistory(
 
   const labelMap = role === 'ADMIN' ? ADMIN_LABELS : USER_LABELS;
 
-  // ─── Type filter → entry_type array ──────────────────────
-  const TYPE_REVERSE: Record<string, string[]> = {
-    // USER filter tabs
-    'DEPOSIT':    ['DEPOSIT_PENDING', 'DEPOSIT_APPROVED', 'DEPOSIT_REJECTED', 'MANUAL_DEPOSIT'],
-    'WITHDRAWAL': ['WITHDRAWAL_REQUESTED', 'WITHDRAWAL_APPROVED', 'WITHDRAWAL_REJECTED'],
-    'BONUS':      ['REFERRAL_BONUS_CREDIT', 'PROMOTION_BONUS'],
-    'WIN':        ['WIN_CREDIT'],
-    'BET':        ['BET_PLACED', 'BET_CANCELLED'],
-    // ADMIN-only filter tabs
-    'MANUAL DEPOSIT': ['MANUAL_DEPOSIT'],
-    'MANUAL ADJUST':  ['MANUAL_ADJUSTMENT'],
-  };
+  // ─── Transaction-only feed ───────────────────────────────
+  // This endpoint is the money-movement statement: DEPOSITS and
+  // WITHDRAWALS only. Bets/wins/bonuses/adjustments are intentionally
+  // excluded (those live in game-history / other views).
+  const DEPOSIT_TYPES = [
+    'DEPOSIT_PENDING', 'DEPOSIT_APPROVED', 'DEPOSIT_REJECTED', 'MANUAL_DEPOSIT',
+  ];
+  const WITHDRAWAL_TYPES = [
+    'WITHDRAWAL_REQUESTED', 'WITHDRAWAL_APPROVED', 'WITHDRAWAL_REJECTED',
+  ];
 
-  let whereClause = `WHERE user_id = $1`;
-  const params: any[] = [userId];
-
-  if (typeFilter && TYPE_REVERSE[typeFilter]) {
-    const placeholders = TYPE_REVERSE[typeFilter]
-      .map((_, idx) => `$${idx + 2}`)
-      .join(', ');
-    whereClause += ` AND entry_type IN (${placeholders})`;
-    params.push(...TYPE_REVERSE[typeFilter]);
+  // Optional ?type=DEPOSIT | WITHDRAWAL narrows the feed; anything else
+  // (or no filter) returns both. Bet/win/bonus filters return nothing.
+  const filter = typeFilter?.trim().toUpperCase();
+  let effectiveTypes: string[];
+  if (filter === 'DEPOSIT') {
+    effectiveTypes = DEPOSIT_TYPES;
+  } else if (filter === 'WITHDRAWAL') {
+    effectiveTypes = WITHDRAWAL_TYPES;
+  } else {
+    effectiveTypes = [...DEPOSIT_TYPES, ...WITHDRAWAL_TYPES];
   }
+
+  const params: any[] = [userId, ...effectiveTypes];
+  const typePlaceholders = effectiveTypes
+    .map((_, idx) => `$${idx + 2}`)
+    .join(', ');
+  const whereClause = `WHERE fl.user_id = $1 AND fl.entry_type IN (${typePlaceholders})`;
 
   const dataParams  = [...params, safeLimit, offset];
   const countParams = [...params];
 
+  // Join through the deposit → agent chain so deposit rows carry the
+  // agent's wallet type (bKash / Nagad / Upay) the user paid into.
+  // Withdrawal rows have no agent, so these come back null.
   const rows = await this.dataSource.query(
     `SELECT
-        id, ledger_code, entry_type, flow, amount,
-        balance_before, balance_after,
-        reference_type, reference_id,
-        status, description, created_by_type, created_at
-     FROM financial_ledger
+        fl.id, fl.ledger_code, fl.entry_type, fl.flow, fl.amount,
+        fl.balance_before, fl.balance_after,
+        fl.reference_type, fl.reference_id,
+        fl.status, fl.description, fl.created_by_type, fl.created_at,
+        a.wallet_type   AS agent_wallet_type,
+        a.agent_number  AS agent_number,
+        g.name          AS gateway_name
+     FROM financial_ledger fl
+     LEFT JOIN deposits d
+            ON fl.reference_type = 'DEPOSIT' AND fl.reference_id = d.id
+     LEFT JOIN agents a            ON a.id = d.agent_id
+     LEFT JOIN payment_gateways g  ON g.id = d.gateway_id
      ${whereClause}
-     ORDER BY created_at DESC, id DESC
+     ORDER BY fl.created_at DESC, fl.id DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     dataParams,
   );
 
   const count = await this.dataSource.query(
-    `SELECT COUNT(*)::int AS total FROM financial_ledger ${whereClause}`,
+    `SELECT COUNT(*)::int AS total FROM financial_ledger fl ${whereClause}`,
     countParams,
   );
 
   return {
-    data: rows.map((row) => ({
-      ...row,
-      typeLabel: labelMap[row.entry_type] ?? row.entry_type,
-    })),
+    data: rows.map((row) => {
+      const { agent_wallet_type, agent_number, gateway_name, ...rest } = row;
+      return {
+        ...rest,
+        typeLabel: labelMap[row.entry_type] ?? row.entry_type,
+        // Where the money went/came from — populated for deposits only.
+        walletType:  agent_wallet_type ?? null,
+        agentNumber: agent_number ?? null,
+        gatewayName: gateway_name ?? null,
+      };
+    }),
     page: safePage,
     limit: safeLimit,
     total: count[0].total,

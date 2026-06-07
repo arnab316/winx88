@@ -791,20 +791,20 @@ export class GameService {
   // ╚═══════════════════════════════════════════════════════════╝
 
   async listHotNumbersForGame(gameId: number) {
-    // Hot numbers are only visible when the game has a live OPEN round.
-    // They also auto-expire 24h after creation (expires_at column).
+    // Suggestions stay visible for the whole 24h window (expires_at), NOT tied
+    // to a live round — so they don't disappear during the gap between rounds.
+    // Hidden only when expired, deactivated, or the game's schedule is paused.
     return this.dataSource.query(
       `SELECT id, number, note, priority,
               expires_at,
               EXTRACT(EPOCH FROM (expires_at - NOW()))::int AS seconds_until_expiry
-       FROM game_hot_numbers
-       WHERE game_id = $1
-         AND (expires_at IS NULL OR expires_at > NOW())
-         AND EXISTS (
-           SELECT 1 FROM game_rounds gr
-           WHERE gr.game_id = $1
-             AND gr.status = 'OPEN'
-             AND gr.close_time > NOW()
+       FROM game_hot_numbers hn
+       WHERE hn.game_id = $1
+         AND hn.is_active = TRUE
+         AND (hn.expires_at IS NULL OR hn.expires_at > NOW())
+         AND NOT EXISTS (
+           SELECT 1 FROM game_schedules gs
+           WHERE gs.game_id = hn.game_id AND gs.is_active = FALSE
          )
        ORDER BY priority DESC, id ASC`,
       [gameId],

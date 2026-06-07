@@ -58,6 +58,7 @@ import { BetTicketService } from './bet-ticket.service';
 import { RoundSchedulerService } from './round-scheduler.service';
 import { RoundWatcherService } from './round-watcher.service';
 import { LobbyService } from './lobby.service';
+import { HotNumberCleanupService } from './hot-number-cleanup.service';
 
 // ── Shared / infrastructure ──────────────────────────────────
 import { GamesGateway } from './games.gateway';
@@ -81,6 +82,7 @@ import { AuthModule } from 'src/auth/auth.module';
     BetTicketService,
     RoundSchedulerService,
     LobbyService,
+    HotNumberCleanupService,
   ],
   exports: [GameValidationService],
 })

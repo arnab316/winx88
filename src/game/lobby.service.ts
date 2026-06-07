@@ -302,14 +302,12 @@ export class LobbyService {
          hn.is_active
        FROM game_hot_numbers hn
        JOIN games g ON g.id = hn.game_id
-       -- Only show hot numbers when the game has a live round RIGHT NOW
+       -- Suggestions stay visible for the whole 24h window — NOT tied to a
+       -- live round, so they don't flicker during the gap between rounds.
+       -- Still gated by: not expired, game active, schedule not paused.
        WHERE (hn.expires_at IS NULL OR hn.expires_at > NOW())
-         AND EXISTS (
-           SELECT 1 FROM game_rounds gr
-           WHERE gr.game_id = hn.game_id
-             AND gr.status = 'OPEN'
-             AND gr.close_time > NOW()
-         )
+         AND hn.is_active = TRUE
+         AND g.is_active  = TRUE
          AND NOT EXISTS (
            SELECT 1 FROM game_schedules gs
            WHERE gs.game_id = hn.game_id AND gs.is_active = FALSE
