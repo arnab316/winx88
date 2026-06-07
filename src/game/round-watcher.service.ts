@@ -41,7 +41,7 @@ export class RoundWatcherService {
     try {
       // 1. Auto-close any OPEN rounds whose close_time has passed.
       //    Exclude JACKPOT game rounds — those are closed explicitly by admin.
-      const closed = await this.dataSource.query(
+      const [closedRows] = await this.dataSource.query(
         `UPDATE game_rounds gr
          SET status = 'CLOSED'
          FROM games g
@@ -52,7 +52,7 @@ export class RoundWatcherService {
          RETURNING gr.id, gr.game_id, gr.close_time`,
       );
 
-      for (const r of closed) {
+      for (const r of closedRows || []) {
         this.gateway.emitRoundClosed({
           gameId: Number(r.game_id),
           roundId: Number(r.id),

@@ -128,6 +128,14 @@ export class GameService {
         roundId: round_id,
         resultNumber: result_number,
       });
+
+      // Automatically settle the round immediately after publishing result
+      try {
+        await this.settleRound(round_id, result_number);
+      } catch (settleErr) {
+        this.logger.error(`Failed to auto-settle round ${round_id}: ${settleErr.message}`, settleErr.stack);
+      }
+
       return { message: 'Result published' };
     } catch (err) {
       await qr.rollbackTransaction();

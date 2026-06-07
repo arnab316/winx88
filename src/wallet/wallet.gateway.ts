@@ -14,7 +14,7 @@ import { WalletService } from './wallet.service';
 import { Logger , Inject, forwardRef} from '@nestjs/common';
 
 @WebSocketGateway({
-  namespace: 'wallet',       // ws://yourhost/wallet
+  namespace: '/wallet',       // ws://yourhost/wallet
   cors: { origin: '*' },     // tighten in production
 })
 export class WalletGateway implements OnGatewayConnection, OnGatewayDisconnect {
