@@ -100,7 +100,11 @@ export class JackpotService {
     throw new BadRequestException('Invalid periodType');
   }
 
-  private gameCodeFor(digitLength: number): string {
+  // Resolve the backing game code: use the admin-supplied override when given,
+  // otherwise derive the default `{digitLength}D_JACKPOT`.
+  private gameCodeFor(digitLength: number, override?: string): string {
+    const custom = override?.trim();
+    if (custom) return custom.toUpperCase();
     return `${digitLength}D_JACKPOT`;
   }
 
@@ -144,6 +148,9 @@ export class JackpotService {
     };
     if (dto.minBet !== undefined) meta.minBet = dto.minBet;
     if (dto.maxBet !== undefined) meta.maxBet = dto.maxBet;
+    // Admin-supplied game code (normalized). Falls back to the derived
+    // default at activation if omitted.
+    if (dto.gameCode) meta.gameCode = dto.gameCode.trim().toUpperCase();
 
     const rows = await this.dataSource.query(
       `INSERT INTO jackpot_pools
@@ -199,7 +206,11 @@ export class JackpotService {
 
     // minBet/maxBet live inside eligibility_rules (jsonb), not their own column.
     // Merge them into the existing meta so they reach the game at activation.
-    if (dto.minBet !== undefined || dto.maxBet !== undefined) {
+    if (
+      dto.minBet !== undefined ||
+      dto.maxBet !== undefined ||
+      dto.gameCode !== undefined
+    ) {
       const cur = await this.dataSource.query(
         `SELECT eligibility_rules FROM jackpot_pools WHERE id = $1`,
         [id],
@@ -207,6 +218,8 @@ export class JackpotService {
       const meta = { ...(cur[0]?.eligibility_rules ?? {}) };
       if (dto.minBet !== undefined) meta.minBet = dto.minBet;
       if (dto.maxBet !== undefined) meta.maxBet = dto.maxBet;
+      if (dto.gameCode !== undefined)
+        meta.gameCode = dto.gameCode.trim().toUpperCase();
       if (
         meta.minBet !== undefined &&
         meta.maxBet !== undefined &&
@@ -261,7 +274,8 @@ export class JackpotService {
       const digitLength: number = meta.digitLength;
       if (!digitLength) throw new BadRequestException('Session has no digitLength in config');
 
-      const gameCode = this.gameCodeFor(digitLength);
+      // Admin-supplied code wins; otherwise fall back to the derived default.
+      const gameCode = this.gameCodeFor(digitLength, meta.gameCode);
 
       // Resolve the permanent jackpot game. It's shared across all sessions of
       // the same digit length. Self-heal: if it doesn't exist (migration not

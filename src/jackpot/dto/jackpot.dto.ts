@@ -44,6 +44,17 @@ export class CreateJackpotSessionDto {
   @IsOptional() @IsString() @Length(2, 10)
   currency?: string;
 
+  /**
+   * Game code for the backing jackpot game. Optional — if omitted, defaults
+   * to `{digitLength}D_JACKPOT`. If a game with this code already exists it is
+   * linked; otherwise it is created at activation. Stored/used uppercased.
+   */
+  @IsOptional() @IsString() @Length(2, 40)
+  @Matches(/^[A-Za-z0-9_]+$/, {
+    message: 'gameCode must contain only letters, digits or underscores',
+  })
+  gameCode?: string;
+
   /** Per-bet stake limits for this jackpot's game. Optional — default min 10. */
   @IsOptional() @IsNumber() @Min(0.01)
   minBet?: number;
@@ -76,6 +87,11 @@ export class UpdateJackpotSessionDto {
   @IsOptional() @IsString() @Length(0, 2000) descriptionBn?: string;
   @IsOptional() @IsString() bannerUrl?: string;
   @IsOptional() @IsNumber() @Min(1) prizeAmount?: number;
+  @IsOptional() @IsString() @Length(2, 40)
+  @Matches(/^[A-Za-z0-9_]+$/, {
+    message: 'gameCode must contain only letters, digits or underscores',
+  })
+  gameCode?: string;
   @IsOptional() @IsNumber() @Min(0.01) minBet?: number;
   @IsOptional() @IsNumber() @Min(0.01) maxBet?: number;
   @IsOptional() @IsDateString() startsAt?: string;
