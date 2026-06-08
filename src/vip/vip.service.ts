@@ -535,6 +535,39 @@ export class VipService {
     );
   }
 
+  // GET /tiers/admin/member-groups — the Member Group withdrawal-limits table,
+  //   grouped by currency. Columns mirror the admin screen: name, withdrawal
+  //   min/max, daily count, daily max, default setting, status.
+  async getMemberGroupList() {
+    const rows = await this.dataSource.query(
+      `SELECT level, level_name, group_name, COALESCE(currency, 'BDT') AS currency,
+              withdrawal_min, withdrawal_max,
+              withdrawal_daily_count, withdrawal_daily_max,
+              is_default, status, sequence
+         FROM vip_level_config
+        ORDER BY COALESCE(currency, 'BDT') ASC, sequence ASC, level ASC`,
+    );
+
+    const num = (v: any) => (v === null || v === undefined ? null : Number(v));
+    const groups: Record<string, any> = {};
+    for (const r of rows) {
+      const cur = r.currency;
+      if (!groups[cur]) groups[cur] = { currency: cur, tiers: [] };
+      groups[cur].tiers.push({
+        level:                Number(r.level),
+        name:                 r.level_name,
+        groupName:            r.group_name,
+        withdrawalMin:        num(r.withdrawal_min),
+        withdrawalMax:        num(r.withdrawal_max),
+        withdrawalDailyCount: num(r.withdrawal_daily_count),
+        withdrawalDailyMax:   num(r.withdrawal_daily_max),
+        isDefault:            r.is_default === true,
+        status:               r.status,
+      });
+    }
+    return Object.values(groups);
+  }
+
   // PATCH /tiers/admin/:level/limits — banking limits (Member Group screen)
   async updateTierLimits(level: number, dto: UpdateTierLimitsDto) {
     const existing = await this.dataSource.query(
@@ -644,9 +677,19 @@ export class VipService {
   }
 
   // GET /vip/admin/users/:level — players currently in a tier
-  //   Powers the "<Level> Users" modal: username, member ID, email,
-  //   registered date, status. Optional ?search= (username/member ID/email).
-  async getUsersInTier(level: number, page = 1, limit = 50, search?: string) {
+  //   Full member-group list: currency, member group, member ID, user ID,
+  //   name, primary mobile, email, referrer, affiliate, status.
+  //   Filters: ?search= (username / member ID / name / email / mobile /
+  //   referrer) and a registered date range ?dateFrom=&dateTo= (YYYY-MM-DD,
+  //   inclusive).
+  async getUsersInTier(
+    level: number,
+    page = 1,
+    limit = 50,
+    search?: string,
+    dateFrom?: string,
+    dateTo?: string,
+  ) {
     const safeLimit = Math.min(Math.max(limit, 1), 200);
     const safePage = Math.max(page, 1);
     const offset = (safePage - 1) * safeLimit;
@@ -654,24 +697,66 @@ export class VipService {
     const where: string[] = [`u.vip_level = $1`];
     const params: any[] = [level];
     let i = 2;
+
     if (search?.trim()) {
+      // Combination search: one term matched across username, member ID, name,
+      // email, primary/any mobile, and the referrer (their code/username/name).
       where.push(
-        `(u.username ILIKE $${i} OR u.user_code ILIKE $${i} OR u.email ILIKE $${i})`,
+        `(u.username ILIKE $${i}
+          OR u.user_code ILIKE $${i}
+          OR u.full_name ILIKE $${i}
+          OR u.email ILIKE $${i}
+          OR EXISTS (SELECT 1 FROM user_phone_numbers p
+                      WHERE p.user_id = u.id AND p.phone_number ILIKE $${i})
+          OR EXISTS (SELECT 1 FROM users r
+                      WHERE r.id = u.referred_by_user_id
+                        AND (r.user_code ILIKE $${i}
+                             OR r.username ILIKE $${i}
+                             OR r.full_name ILIKE $${i})))`,
       );
       params.push(`%${search.trim()}%`);
+      i++;
+    }
+    if (dateFrom?.trim()) {
+      where.push(`u.created_at >= $${i}::date`);
+      params.push(dateFrom.trim());
+      i++;
+    }
+    if (dateTo?.trim()) {
+      // inclusive of the whole end day
+      where.push(`u.created_at < ($${i}::date + 1)`);
+      params.push(dateTo.trim());
       i++;
     }
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const rows = await this.dataSource.query(
-      `SELECT u.id, u.user_code, u.username, u.full_name, u.email,
-              u.account_status, u.created_at, u.vip_level,
-              COALESCE(uc.lifetime_coins, 0) AS lifetime_coins
-         FROM users u
-         LEFT JOIN user_coins uc ON uc.user_id = u.id
-         ${whereSql}
-         ORDER BY uc.lifetime_coins DESC NULLS LAST
-         LIMIT $${i} OFFSET $${i + 1}`,
+      `SELECT
+          u.id, u.user_code, u.username, u.full_name, u.email,
+          u.account_status, u.created_at, u.vip_level,
+          COALESCE(uc.lifetime_coins, 0)   AS lifetime_coins,
+          COALESCE(vc.currency, 'BDT')     AS currency,
+          vc.group_name                    AS member_group,
+          ph.phone_number                  AS mobile,
+          ref.id                           AS referrer_id,
+          ref.user_code                    AS referrer_code,
+          ref.username                     AS referrer_username,
+          ref.full_name                    AS referrer_name,
+          (au.id IS NOT NULL)              AS referrer_is_affiliate
+        FROM users u
+        LEFT JOIN user_coins uc       ON uc.user_id = u.id
+        LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
+        LEFT JOIN users ref           ON ref.id = u.referred_by_user_id
+        LEFT JOIN affiliate_users au  ON au.user_id = u.referred_by_user_id AND au.is_active = true
+        LEFT JOIN LATERAL (
+          SELECT phone_number FROM user_phone_numbers
+           WHERE user_id = u.id
+           ORDER BY is_primary DESC, is_verified DESC, id ASC
+           LIMIT 1
+        ) ph ON true
+        ${whereSql}
+        ORDER BY uc.lifetime_coins DESC NULLS LAST
+        LIMIT $${i} OFFSET $${i + 1}`,
       [...params, safeLimit, offset],
     );
     const count = await this.dataSource.query(
@@ -679,16 +764,32 @@ export class VipService {
       params,
     );
 
-    const data = rows.map((u: any) => ({
-      id:             Number(u.id),
-      username:       u.username,
-      memberId:       u.user_code,
-      email:          u.email,
-      fullName:       u.full_name,
-      registeredDate: u.created_at,
-      status:         u.account_status,
-      lifetimeCoins:  Number(u.lifetime_coins),
-    }));
+    const data = rows.map((u: any) => {
+      const referrer = u.referrer_id
+        ? {
+            userId:   Number(u.referrer_id),
+            memberId: u.referrer_code,
+            name:     u.referrer_name ?? u.referrer_username,
+          }
+        : null;
+      return {
+        currency:       u.currency ?? 'BDT',
+        memberGroup:    u.member_group,
+        memberId:       u.user_code,
+        userId:         Number(u.id),
+        name:           u.full_name,
+        mobile:         u.mobile ?? null,
+        email:          u.email,
+        referrer,
+        // Affiliate = the referring affiliate (the referrer, only when that
+        // referrer is an active affiliate). Null otherwise.
+        affiliate:      u.referrer_is_affiliate ? referrer : null,
+        registeredDate: u.created_at,
+        status:         u.account_status,
+        vipLevel:       Number(u.vip_level),
+        lifetimeCoins:  Number(u.lifetime_coins),
+      };
+    });
 
     return { data, page: safePage, limit: safeLimit, total: count[0].total };
   }

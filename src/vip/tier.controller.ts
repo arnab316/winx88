@@ -31,11 +31,18 @@ export class TierController {
     return this.vipService.getPublicLadder();
   }
 
-  // GET /tiers/admin — list tiers with banking-side fields
+  // GET /tiers/admin — list tiers with banking-side fields (raw)
   @UseGuards(AdminGuard)
   @Get('admin')
   listAdmin() {
     return this.vipService.getTiersAdmin();
+  }
+
+  // GET /tiers/admin/member-groups — withdrawal-limits table, grouped by currency
+  @UseGuards(AdminGuard)
+  @Get('admin/member-groups')
+  memberGroupList() {
+    return this.vipService.getMemberGroupList();
   }
 
   // PATCH /tiers/admin/:level/limits — deposit/withdrawal limits, turnover, etc.

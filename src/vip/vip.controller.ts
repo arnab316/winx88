@@ -125,7 +125,9 @@ export class VipController {
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
     @Query('search') search?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
   ) {
-    return this.vipService.getUsersInTier(level, page, limit, search);
+    return this.vipService.getUsersInTier(level, page, limit, search, dateFrom, dateTo);
   }
 }
