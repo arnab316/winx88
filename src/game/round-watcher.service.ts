@@ -49,6 +49,7 @@ export class RoundWatcherService {
            AND gr.status = 'OPEN'
            AND gr.close_time <= NOW()
            AND g.display_category != 'JACKPOT'
+           AND g.round_mode != 'MANUAL'
          RETURNING gr.id, gr.game_id, gr.close_time`,
       );
 
@@ -72,7 +73,8 @@ export class RoundWatcherService {
          WHERE gr.status = 'OPEN'
            AND gr.close_time > NOW()
            AND gr.close_time <= NOW() + INTERVAL '30 seconds'
-           AND g.display_category != 'JACKPOT'`,
+           AND g.display_category != 'JACKPOT'
+           AND g.round_mode != 'MANUAL'`,
       );
 
       for (const r of closing) {

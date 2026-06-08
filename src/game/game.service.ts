@@ -1400,14 +1400,9 @@ export class GameService {
       throw new BadRequestException('draw_time must be >= close_time');
     }
  
-    // Check for duplicate round_code on this game
-    const dup = await this.dataSource.query(
-      `SELECT id FROM game_rounds WHERE game_id = $1 AND round_code = $2`,
-      [payload.game_id, payload.round_code],
-    );
-    if (dup.length) {
-      throw new BadRequestException(`Round code "${payload.round_code}" already exists for this game`);
-    }
+    // NOTE: round codes are intentionally repeatable (a per-game series that
+    // stays the same until the admin changes it), so we no longer reject a
+    // code that already exists for this game.
  
     const rows = await this.dataSource.query(
       `INSERT INTO game_rounds
@@ -1430,6 +1425,115 @@ export class GameService {
  
     return { game: game[0], round };
   }
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: SET THE GAME'S ROUND CODE
+  //   The code applied to every NEW round of this game. It repeats until
+  //   changed; changing it does NOT touch the currently open round — it
+  //   takes effect on the next round that opens.
+  //   PATCH /games/admin/:gameId/round-code
+  // ═════════════════════════════════════════════════════════════
+  async setRoundCode(gameId: number, roundCode: string) {
+    const code = (roundCode ?? '').trim();
+    if (code.length < 1 || code.length > 40) {
+      throw new BadRequestException('roundCode must be 1–40 characters');
+    }
+
+    const rows = await this.dataSource.query(
+      `UPDATE games SET round_code = $1, updated_at = NOW()
+       WHERE id = $2
+       RETURNING id, code, name, round_code, round_mode`,
+      [code, gameId],
+    );
+    if (!rows.length) throw new NotFoundException('Game not found');
+
+    return {
+      message: 'Round code updated. It applies to the next round that opens.',
+      game: rows[0],
+    };
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: OPEN THE NEXT ROUND (MANUAL games — 4D / 5D)
+  //   Closes the current OPEN round (if any) and opens a fresh one using
+  //   the game's saved round_code. The round never auto-closes (the
+  //   round-watcher skips MANUAL games) — admin advances it by calling
+  //   this again. Settle the closed round via the existing result flow.
+  //   POST /games/admin/:gameId/open-round
+  // ═════════════════════════════════════════════════════════════
+  async openManualRound(gameId: number) {
+    const games = await this.dataSource.query(
+      `SELECT id, name, round_code, round_mode, is_active FROM games WHERE id = $1`,
+      [gameId],
+    );
+    if (!games.length) throw new NotFoundException('Game not found');
+    const game = games[0];
+
+    if (game.round_mode !== 'MANUAL') {
+      throw new BadRequestException(
+        `Game is ${game.round_mode}. open-round is only for MANUAL games.`,
+      );
+    }
+    if (!game.is_active) throw new BadRequestException('Game is inactive');
+    if (!game.round_code || !String(game.round_code).trim()) {
+      throw new BadRequestException(
+        'Set a round code first (PATCH /games/admin/:gameId/round-code).',
+      );
+    }
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      // Close any currently OPEN round for this game (only one live at a time).
+      const closed = await qr.query(
+        `UPDATE game_rounds SET status = 'CLOSED', close_time = NOW(), updated_at = NOW()
+         WHERE game_id = $1 AND status = 'OPEN'
+         RETURNING id, round_code`,
+        [gameId],
+      );
+
+      // Open the new round. No auto-close: close/draw times are far in the
+      // future so timer-based logic never closes it; admin controls it.
+      const rows = await qr.query(
+        `INSERT INTO game_rounds
+           (game_id, round_code, open_time, close_time, draw_time, status, source)
+         VALUES ($1, $2, NOW(),
+                 NOW() + INTERVAL '100 years',
+                 NOW() + INTERVAL '100 years',
+                 'OPEN', 'MANUAL')
+         RETURNING *`,
+        [gameId, String(game.round_code).trim()],
+      );
+      const round = rows[0];
+
+      await qr.commitTransaction();
+
+      this.gateway.emitRoundOpened({
+        gameId:    Number(round.game_id),
+        roundId:   Number(round.id),
+        roundCode: round.round_code,
+        openTime:  round.open_time,
+        closeTime: round.close_time,
+        drawTime:  round.draw_time,
+      });
+
+      return {
+        message: 'New round opened',
+        roundCode: round.round_code,
+        round,
+        closedRound: closed.length
+          ? { id: Number(closed[0].id), roundCode: closed[0].round_code }
+          : null,
+      };
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+  }
+
  // ═════════════════════════════════════════════════════════════
   // ADMIN: LIST ALL GAMES WITH ROUND INFO
   //   Returns each game with:
