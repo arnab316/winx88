@@ -1078,6 +1078,7 @@ export class JackpotService {
          p.ends_at,
          p.status,
          p.eligibility_rules,
+         g.code    AS game_code,
          g.min_bet,
          g.max_bet
        FROM jackpot_pools p
@@ -1087,9 +1088,11 @@ export class JackpotService {
     );
 
     return rows.map((r: any) => {
-      const { min_bet, max_bet, ...rest } = r;
+      const { min_bet, max_bet, game_code, ...rest } = r;
       return {
         ...rest,
+        // Game code from the linked game row (e.g. "6D_JACKPOT").
+        gameCode: game_code ?? null,
         // Per-bet stake limits come from the linked game row.
         minBet: min_bet === null ? null : parseFloat(min_bet),
         maxBet: max_bet === null ? null : parseFloat(max_bet),
