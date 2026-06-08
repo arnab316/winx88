@@ -54,6 +54,25 @@ export class WalletService {
     return rows[0];
   }
 
+  // ─── Helper: banking-side limits for the user's VIP tier ──────
+  //   Returns the deposit/withdrawal min/max + daily caps configured on
+  //   the user's current tier (vip_level_config). Any column may be NULL,
+  //   meaning "no limit for that dimension". Returns null if the user's
+  //   tier has no config row (then nothing is enforced).
+  private async getTierLimits(qr: QueryRunner, userId: number) {
+    const rows = await qr.query(
+      `SELECT vc.deposit_min, vc.deposit_max,
+              vc.withdrawal_min, vc.withdrawal_max,
+              vc.withdrawal_daily_count, vc.withdrawal_daily_max
+         FROM users u
+         JOIN vip_level_config vc ON vc.level = u.vip_level
+        WHERE u.id = $1
+        LIMIT 1`,
+      [userId],
+    );
+    return rows.length ? rows[0] : null;
+  }
+
   // ═════════════════════════════════════════════════════════════
   // DEPOSIT: USER REQUESTS
   //   Pre-flight validates promotion (if attached) before creating
@@ -65,6 +84,23 @@ export class WalletService {
     await qr.startTransaction();
 
     try {
+      // Tier deposit limits (min/max) — enforced only when configured.
+      const limits = await this.getTierLimits(qr, dto.userId);
+      if (limits) {
+        const min =
+          limits.deposit_min != null ? parseFloat(limits.deposit_min) : null;
+        const max =
+          limits.deposit_max != null ? parseFloat(limits.deposit_max) : null;
+        if (min != null && dto.amount < min)
+          throw new BadRequestException(
+            `Minimum deposit for your tier is ${min}`,
+          );
+        if (max != null && dto.amount > max)
+          throw new BadRequestException(
+            `Maximum deposit for your tier is ${max}`,
+          );
+      }
+
       // Pre-flight promo validation (cheap; throws on bad promo)
       if (dto.promotionId) {
         await this.promotionEngine.validateForUser(qr, dto.userId, dto.promotionId, {
@@ -324,6 +360,59 @@ export class WalletService {
       );
       if (!gateway.length)
         throw new BadRequestException('Payment gateway not found or inactive');
+
+      // Tier withdrawal limits (min/max + daily caps) — enforced only when configured.
+      const limits = await this.getTierLimits(qr, dto.userId);
+      if (limits) {
+        const wmin =
+          limits.withdrawal_min != null
+            ? parseFloat(limits.withdrawal_min)
+            : null;
+        const wmax =
+          limits.withdrawal_max != null
+            ? parseFloat(limits.withdrawal_max)
+            : null;
+        if (wmin != null && dto.amount < wmin)
+          throw new BadRequestException(
+            `Minimum withdrawal for your tier is ${wmin}`,
+          );
+        if (wmax != null && dto.amount > wmax)
+          throw new BadRequestException(
+            `Maximum withdrawal for your tier is ${wmax}`,
+          );
+
+        const dailyCountLimit =
+          limits.withdrawal_daily_count != null
+            ? Number(limits.withdrawal_daily_count)
+            : null;
+        const dailyMaxLimit =
+          limits.withdrawal_daily_max != null
+            ? parseFloat(limits.withdrawal_daily_max)
+            : null;
+        if (dailyCountLimit != null || dailyMaxLimit != null) {
+          // Count today's non-rejected withdrawals (PENDING + APPROVED both
+          // consume the daily allowance; rejected ones are released).
+          const todays = await qr.query(
+            `SELECT COUNT(*)::int AS cnt, COALESCE(SUM(amount), 0) AS total
+               FROM withdrawals
+              WHERE user_id = $1
+                AND status <> 'REJECTED'
+                AND requested_at::date = CURRENT_DATE`,
+            [dto.userId],
+          );
+          const cnt = Number(todays[0].cnt);
+          const total = parseFloat(todays[0].total);
+          if (dailyCountLimit != null && cnt >= dailyCountLimit)
+            throw new BadRequestException(
+              `Daily withdrawal limit reached (${dailyCountLimit} per day for your tier)`,
+            );
+          if (dailyMaxLimit != null && total + dto.amount > dailyMaxLimit)
+            throw new BadRequestException(
+              `Daily withdrawal amount limit for your tier is ${dailyMaxLimit}. ` +
+                `Already withdrawn today: ${total}`,
+            );
+        }
+      }
 
       // No unsettled bets allowed (strict rule)
       await this.gameValidation.ensureNoPendingBets(qr, dto.userId);
