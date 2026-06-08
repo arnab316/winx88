@@ -676,14 +676,14 @@ export class VipService {
     return { message: `Tier ${level} is now the default`, level };
   }
 
-  // GET /vip/admin/users/:level — players currently in a tier
-  //   Full member-group list: currency, member group, member ID, user ID,
-  //   name, primary mobile, email, referrer, affiliate, status.
+  // GET /vip/admin/users/:level — players in a tier (or ALL tiers if level is
+  //   undefined). Full member-group list: currency, member group, member ID,
+  //   user ID, name, primary mobile, email, referrer, affiliate, status, level.
   //   Filters: ?search= (username / member ID / name / email / mobile /
   //   referrer) and a registered date range ?dateFrom=&dateTo= (YYYY-MM-DD,
   //   inclusive).
   async getUsersInTier(
-    level: number,
+    level: number | undefined,
     page = 1,
     limit = 50,
     search?: string,
@@ -694,9 +694,15 @@ export class VipService {
     const safePage = Math.max(page, 1);
     const offset = (safePage - 1) * safeLimit;
 
-    const where: string[] = [`u.vip_level = $1`];
-    const params: any[] = [level];
-    let i = 2;
+    const where: string[] = [];
+    const params: any[] = [];
+    let i = 1;
+
+    // Omit the level filter to search across ALL levels.
+    if (level !== undefined) {
+      where.push(`u.vip_level = $${i++}`);
+      params.push(level);
+    }
 
     if (search?.trim()) {
       // Combination search: one term matched across username, member ID, name,
@@ -728,7 +734,7 @@ export class VipService {
       params.push(dateTo.trim());
       i++;
     }
-    const whereSql = `WHERE ${where.join(' AND ')}`;
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const rows = await this.dataSource.query(
       `SELECT
@@ -736,6 +742,7 @@ export class VipService {
           u.account_status, u.created_at, u.vip_level,
           COALESCE(uc.lifetime_coins, 0)   AS lifetime_coins,
           COALESCE(vc.currency, 'BDT')     AS currency,
+          vc.level_name                    AS level_name,
           vc.group_name                    AS member_group,
           ph.phone_number                  AS mobile,
           ref.id                           AS referrer_id,
@@ -755,7 +762,7 @@ export class VipService {
            LIMIT 1
         ) ph ON true
         ${whereSql}
-        ORDER BY uc.lifetime_coins DESC NULLS LAST
+        ORDER BY u.vip_level DESC, uc.lifetime_coins DESC NULLS LAST, u.id ASC
         LIMIT $${i} OFFSET $${i + 1}`,
       [...params, safeLimit, offset],
     );
@@ -777,6 +784,7 @@ export class VipService {
         memberGroup:    u.member_group,
         memberId:       u.user_code,
         userId:         Number(u.id),
+        username:       u.username,
         name:           u.full_name,
         mobile:         u.mobile ?? null,
         email:          u.email,
@@ -787,11 +795,19 @@ export class VipService {
         registeredDate: u.created_at,
         status:         u.account_status,
         vipLevel:       Number(u.vip_level),
+        levelName:      u.level_name,
         lifetimeCoins:  Number(u.lifetime_coins),
       };
     });
 
-    return { data, page: safePage, limit: safeLimit, total: count[0].total };
+    const total = count[0].total;
+    return {
+      data,
+      page: safePage,
+      limit: safeLimit,
+      total,
+      totalPages: Math.ceil(total / safeLimit) || 0,
+    };
   }
 
   // GET /vip/admin/levels/summary — every tier with its player count
@@ -819,61 +835,17 @@ export class VipService {
   //   Sorted by vip_level then lifetime coins. Optional ?level= filter
   //   and ?search= (username / full_name / user_code).
   // ═════════════════════════════════════════════════════════════
+  //   Delegates to getUsersInTier (level optional) so the all-levels list has
+  //   the same rich fields, combined search, and date-range filter.
   async getAllUsersByLevel(
     page = 1,
     limit = 50,
     level?: number,
     search?: string,
+    dateFrom?: string,
+    dateTo?: string,
   ) {
-    const safeLimit = Math.min(Math.max(limit, 1), 200);
-    const safePage = Math.max(page, 1);
-    const offset = (safePage - 1) * safeLimit;
-
-    const where: string[] = [];
-    const params: any[] = [];
-    let i = 1;
-
-    if (level !== undefined) {
-      where.push(`u.vip_level = $${i++}`);
-      params.push(level);
-    }
-    if (search?.trim()) {
-      where.push(
-        `(u.username ILIKE $${i} OR u.full_name ILIKE $${i} OR u.user_code ILIKE $${i})`,
-      );
-      params.push(`%${search.trim()}%`);
-      i++;
-    }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
-
-    const data = await this.dataSource.query(
-      `SELECT u.id, u.user_code, u.username, u.full_name,
-              u.vip_level,
-              vc.level_name,
-              vc.group_name,
-              COALESCE(uc.lifetime_coins, 0) AS lifetime_coins,
-              COALESCE(uc.total_coins, 0)    AS total_coins
-         FROM users u
-         LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
-         LEFT JOIN user_coins uc        ON uc.user_id = u.id
-         ${whereSql}
-         ORDER BY u.vip_level DESC, lifetime_coins DESC, u.id ASC
-         LIMIT $${i} OFFSET $${i + 1}`,
-      [...params, safeLimit, offset],
-    );
-
-    const count = await this.dataSource.query(
-      `SELECT COUNT(*)::int AS total FROM users u ${whereSql}`,
-      params,
-    );
-
-    return {
-      data,
-      page: safePage,
-      limit: safeLimit,
-      total: count[0].total,
-      totalPages: Math.ceil(count[0].total / safeLimit) || 0,
-    };
+    return this.getUsersInTier(level, page, limit, search, dateFrom, dateTo);
   }
 
   // ═════════════════════════════════════════════════════════════

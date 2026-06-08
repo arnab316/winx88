@@ -93,7 +93,8 @@ export class VipController {
     return this.vipService.adminSetLevel(dto, req.user.sub);
   }
 
-  // GET /vip/admin/users — ALL users across every tier (optional ?level= & ?search=)
+  // GET /vip/admin/users — users across ALL tiers (optional ?level=, ?search=,
+  //   ?dateFrom=, ?dateTo=). Same rich fields as the per-level list.
   @UseGuards(AdminGuard)
   @Get('admin/users')
   allUsersByLevel(
@@ -101,12 +102,14 @@ export class VipController {
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
     @Query('level') level?: string,
     @Query('search') search?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
   ) {
     const lvl =
       level !== undefined && level !== '' && !isNaN(Number(level))
         ? Number(level)
         : undefined;
-    return this.vipService.getAllUsersByLevel(page, limit, lvl, search);
+    return this.vipService.getAllUsersByLevel(page, limit, lvl, search, dateFrom, dateTo);
   }
 
   // GET /vip/admin/levels/summary — every tier with its player count (grouped)
