@@ -12,6 +12,8 @@ import {
   UpdateVipLevelConfigDto,
   AdminSetVipLevelDto,
   UpdateTierLimitsDto,
+  CreateMemberGroupDto,
+  UpdateMemberGroupDto,
   SetTierBanksDto,
 } from './dto/vip.dto';
 
@@ -421,6 +423,89 @@ export class VipService {
     }
   }
 
+  // POST /tiers/admin — create a member group / tier WITH banking limits
+  //   (name, level, currency, withdrawal limits, status, default). Same
+  //   coins_required rules as createLevel: invitation-only tiers use the
+  //   unreachable sentinel; automatic tiers require coinsRequired.
+  async createMemberGroup(dto: CreateMemberGroupDto) {
+    const dupe = await this.dataSource.query(
+      `SELECT level FROM vip_level_config WHERE level = $1`,
+      [dto.level],
+    );
+    if (dupe.length) {
+      throw new BadRequestException(`Level ${dto.level} already exists`);
+    }
+
+    const invitationOnly = dto.invitationOnly ?? false;
+    let coinsRequired: number;
+    if (invitationOnly) {
+      coinsRequired = INVITE_ONLY_SENTINEL;
+    } else {
+      if (dto.coinsRequired === undefined) {
+        throw new BadRequestException(
+          'coinsRequired is required for automatic (non invitation-only) tiers',
+        );
+      }
+      if (dto.coinsRequired > COINS_REQUIRED_MAX) {
+        throw new BadRequestException(
+          `coinsRequired must be at most ${COINS_REQUIRED_MAX}`,
+        );
+      }
+      coinsRequired = dto.coinsRequired;
+    }
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      const res = await qr.query(
+        `INSERT INTO vip_level_config
+           (level, level_name, group_name, coins_required, invitation_only,
+            sequence, status, currency,
+            withdrawal_min, withdrawal_max, withdrawal_daily_count, withdrawal_daily_max)
+         VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'ACTIVE'),COALESCE($8,'BDT'),
+                 $9,$10,$11,$12)
+         RETURNING *`,
+        [
+          dto.level,
+          dto.name,
+          dto.groupName ?? dto.name,
+          coinsRequired,
+          invitationOnly,
+          dto.sequence ?? dto.level,
+          dto.status ?? null,
+          dto.currency ?? null,
+          dto.withdrawalMin ?? null,
+          dto.withdrawalMax ?? null,
+          dto.withdrawalDailyCount ?? null,
+          dto.withdrawalDailyMax ?? null,
+        ],
+      );
+      let row = res[0];
+
+      if (dto.isDefault === true) {
+        await qr.query(`UPDATE vip_level_config SET is_default = FALSE WHERE is_default = TRUE`);
+        const upd = await qr.query(
+          `UPDATE vip_level_config SET is_default = TRUE, updated_at = NOW()
+           WHERE level = $1 RETURNING *`,
+          [dto.level],
+        );
+        row = upd[0];
+      }
+
+      await qr.commitTransaction();
+      return { message: 'Member group created', tier: row };
+    } catch (e: any) {
+      await qr.rollbackTransaction();
+      if (e?.code === '23505') {
+        throw new BadRequestException(`Level ${dto.level} already exists`);
+      }
+      throw e;
+    } finally {
+      await qr.release();
+    }
+  }
+
   // DELETE /vip/admin/config/:level — remove a VIP level / tier
   //   Guards: cannot delete the default tier, and cannot delete a tier that
   //   still has players assigned (reassign them first). tier_banks rows are
@@ -613,6 +698,77 @@ export class VipService {
       values,
     );
     return result[0];
+  }
+
+  // PATCH /tiers/admin/:level — edit a member group (one call for the whole
+  //   "Action" edit row): name, withdrawal limits, status, currency, and the
+  //   default flag. Setting isDefault=true atomically moves the default here.
+  async updateMemberGroup(level: number, dto: UpdateMemberGroupDto) {
+    const existing = await this.dataSource.query(
+      `SELECT level FROM vip_level_config WHERE level = $1`,
+      [level],
+    );
+    if (!existing.length) throw new NotFoundException(`Tier ${level} not configured`);
+
+    const map: Record<string, any> = {
+      level_name:             dto.name,
+      withdrawal_min:         dto.withdrawalMin,
+      withdrawal_max:         dto.withdrawalMax,
+      withdrawal_daily_count: dto.withdrawalDailyCount,
+      withdrawal_daily_max:   dto.withdrawalDailyMax,
+      status:                 dto.status,
+      currency:               dto.currency,
+    };
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      const fields: string[] = [];
+      const values: any[] = [];
+      let i = 1;
+      for (const [col, val] of Object.entries(map)) {
+        if (val !== undefined) {
+          fields.push(`${col} = $${i++}`);
+          values.push(val);
+        }
+      }
+
+      let row: any;
+      if (fields.length) {
+        fields.push(`updated_at = NOW()`);
+        values.push(level);
+        const res = await qr.query(
+          `UPDATE vip_level_config SET ${fields.join(', ')} WHERE level = $${i} RETURNING *`,
+          values,
+        );
+        row = res[0];
+      }
+
+      // Default flag: only act on an explicit true (moving the default here).
+      if (dto.isDefault === true) {
+        await qr.query(`UPDATE vip_level_config SET is_default = FALSE WHERE is_default = TRUE`);
+        const res = await qr.query(
+          `UPDATE vip_level_config SET is_default = TRUE, updated_at = NOW()
+           WHERE level = $1 RETURNING *`,
+          [level],
+        );
+        row = res[0];
+      }
+
+      if (!row) {
+        await qr.rollbackTransaction();
+        throw new BadRequestException('No fields to update');
+      }
+
+      await qr.commitTransaction();
+      return { message: 'Member group updated', tier: row };
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
   }
 
   // GET /tiers/admin/:level/banks — allowed payment channels

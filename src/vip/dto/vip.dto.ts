@@ -148,6 +148,37 @@ export class UpdateTierLimitsDto {
   @IsOptional() @IsString() @Length(2, 10) currency?: string;
 }
 
+// ─── MEMBER GROUP: create a new tier (with banking limits) ──────────────
+export class CreateMemberGroupDto {
+  @IsInt() @Min(0) level!: number;          // numeric tier key (PK), unique
+  @IsString() @Length(1, 80) name!: string; // level_name
+  @IsOptional() @IsString() @Length(1, 80) groupName?: string;
+  // Points threshold for auto-promotion. Required unless invitationOnly.
+  @IsOptional() @IsNumber() @Min(0) coinsRequired?: number;
+  @IsOptional() @IsBoolean() invitationOnly?: boolean;
+  @IsOptional() @IsString() @Length(2, 10) currency?: string;
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: string;
+  @IsOptional() @IsNumber() @Min(0) withdrawalMin?: number;
+  @IsOptional() @IsNumber() @Min(0) withdrawalMax?: number;
+  @IsOptional() @IsInt() @Min(0) withdrawalDailyCount?: number;
+  @IsOptional() @IsNumber() @Min(0) withdrawalDailyMax?: number;
+  @IsOptional() @IsInt() @Min(0) sequence?: number;
+  @IsOptional() @IsBoolean() isDefault?: boolean;
+}
+
+// ─── MEMBER GROUP: unified edit (the "Action" pencil on the list) ───────
+//   One call to edit name + withdrawal limits + status + currency + default.
+export class UpdateMemberGroupDto {
+  @IsOptional() @IsString() @Length(1, 80) name?: string; // level_name
+  @IsOptional() @IsNumber() @Min(0) withdrawalMin?: number;
+  @IsOptional() @IsNumber() @Min(0) withdrawalMax?: number;
+  @IsOptional() @IsInt() @Min(0) withdrawalDailyCount?: number;
+  @IsOptional() @IsNumber() @Min(0) withdrawalDailyMax?: number;
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: string;
+  @IsOptional() @IsString() @Length(2, 10) currency?: string;
+  @IsOptional() @IsBoolean() isDefault?: boolean;
+}
+
 // ─── TIER: allowed payment channels ─────────────────────────────
 export class TierBankChannelDto {
   @IsString() @Length(1, 30) channel!: string;
