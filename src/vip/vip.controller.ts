@@ -47,6 +47,13 @@ export class VipController {
 
   // ─── ADMIN ───────────────────────────────────────────────────
 
+  // GET /vip/admin/stats — dashboard summary cards
+  @UseGuards(AdminGuard)
+  @Get('admin/stats')
+  getDashboardStats() {
+    return this.vipService.getDashboardStats();
+  }
+
   // GET /vip/admin/config
   @UseGuards(AdminGuard)
   @Get('admin/config')
@@ -102,14 +109,23 @@ export class VipController {
     return this.vipService.getAllUsersByLevel(page, limit, lvl, search);
   }
 
-  // GET /vip/admin/users/:level — players currently in a tier
+  // GET /vip/admin/levels/summary — every tier with its player count (grouped)
+  @UseGuards(AdminGuard)
+  @Get('admin/levels/summary')
+  levelsSummary() {
+    return this.vipService.getLevelsUserCounts();
+  }
+
+  // GET /vip/admin/users/:level — players currently in a tier (modal list)
+  //   Optional ?search= (username / member ID / email)
   @UseGuards(AdminGuard)
   @Get('admin/users/:level')
   usersInTier(
     @Param('level', ParseIntPipe) level: number,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('search') search?: string,
   ) {
-    return this.vipService.getUsersInTier(level, page, limit);
+    return this.vipService.getUsersInTier(level, page, limit, search);
   }
 }

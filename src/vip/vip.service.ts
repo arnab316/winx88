@@ -334,6 +334,31 @@ export class VipService {
     );
   }
 
+  // GET /vip/admin/stats — dashboard summary cards
+  //   totalPlayers     : all users
+  //   vipLevels        : configured tiers
+  //   automaticLevels  : tiers reachable by points (invitation_only = FALSE)
+  //   invitationOnly   : invite-only tiers (invitation_only = TRUE)
+  async getDashboardStats() {
+    const [players] = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS n FROM users`,
+    );
+    const [levels] = await this.dataSource.query(
+      `SELECT
+         COUNT(*)::int                                          AS total,
+         COUNT(*) FILTER (WHERE invitation_only = FALSE)::int   AS automatic,
+         COUNT(*) FILTER (WHERE invitation_only = TRUE)::int    AS invitation
+       FROM vip_level_config`,
+    );
+
+    return {
+      totalPlayers:    players.n,
+      vipLevels:       levels.total,
+      automaticLevels: levels.automatic,
+      invitationOnly:  levels.invitation,
+    };
+  }
+
   // POST /vip/admin/config — create a new VIP level / tier
   async createLevel(dto: CreateVipLevelConfigDto) {
     const dupe = await this.dataSource.query(
@@ -619,24 +644,73 @@ export class VipService {
   }
 
   // GET /vip/admin/users/:level — players currently in a tier
-  async getUsersInTier(level: number, page = 1, limit = 50) {
+  //   Powers the "<Level> Users" modal: username, member ID, email,
+  //   registered date, status. Optional ?search= (username/member ID/email).
+  async getUsersInTier(level: number, page = 1, limit = 50, search?: string) {
     const safeLimit = Math.min(Math.max(limit, 1), 200);
-    const offset = (Math.max(page, 1) - 1) * safeLimit;
-    const data = await this.dataSource.query(
-      `SELECT u.id, u.user_code, u.username, u.full_name, u.vip_level,
+    const safePage = Math.max(page, 1);
+    const offset = (safePage - 1) * safeLimit;
+
+    const where: string[] = [`u.vip_level = $1`];
+    const params: any[] = [level];
+    let i = 2;
+    if (search?.trim()) {
+      where.push(
+        `(u.username ILIKE $${i} OR u.user_code ILIKE $${i} OR u.email ILIKE $${i})`,
+      );
+      params.push(`%${search.trim()}%`);
+      i++;
+    }
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
+    const rows = await this.dataSource.query(
+      `SELECT u.id, u.user_code, u.username, u.full_name, u.email,
+              u.account_status, u.created_at, u.vip_level,
               COALESCE(uc.lifetime_coins, 0) AS lifetime_coins
          FROM users u
          LEFT JOIN user_coins uc ON uc.user_id = u.id
-        WHERE u.vip_level = $1
-        ORDER BY uc.lifetime_coins DESC NULLS LAST
-        LIMIT $2 OFFSET $3`,
-      [level, safeLimit, offset],
+         ${whereSql}
+         ORDER BY uc.lifetime_coins DESC NULLS LAST
+         LIMIT $${i} OFFSET $${i + 1}`,
+      [...params, safeLimit, offset],
     );
     const count = await this.dataSource.query(
-      `SELECT COUNT(*)::int AS total FROM users WHERE vip_level = $1`,
-      [level],
+      `SELECT COUNT(*)::int AS total FROM users u ${whereSql}`,
+      params,
     );
-    return { data, page, limit: safeLimit, total: count[0].total };
+
+    const data = rows.map((u: any) => ({
+      id:             Number(u.id),
+      username:       u.username,
+      memberId:       u.user_code,
+      email:          u.email,
+      fullName:       u.full_name,
+      registeredDate: u.created_at,
+      status:         u.account_status,
+      lifetimeCoins:  Number(u.lifetime_coins),
+    }));
+
+    return { data, page: safePage, limit: safeLimit, total: count[0].total };
+  }
+
+  // GET /vip/admin/levels/summary — every tier with its player count
+  //   The "grouped by level" overview: level, level_name, group_name + count.
+  async getLevelsUserCounts() {
+    const rows = await this.dataSource.query(
+      `SELECT vc.level, vc.level_name, vc.group_name, vc.invitation_only,
+              COUNT(u.id)::int AS user_count
+         FROM vip_level_config vc
+         LEFT JOIN users u ON u.vip_level = vc.level
+        GROUP BY vc.level, vc.level_name, vc.group_name, vc.invitation_only
+        ORDER BY vc.level ASC`,
+    );
+    return rows.map((r: any) => ({
+      level:          Number(r.level),
+      levelName:      r.level_name,
+      groupName:      r.group_name,
+      invitationOnly: r.invitation_only,
+      userCount:      r.user_count,
+    }));
   }
 
   // ═════════════════════════════════════════════════════════════
