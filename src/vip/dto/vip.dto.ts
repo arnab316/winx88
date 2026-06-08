@@ -16,6 +16,7 @@ import {
 } from 'class-validator';
 
 export class UpdateVipLevelConfigDto {
+  // ── Tier identity ──
   @IsOptional()
   @IsString()
   @Length(1, 80)
@@ -38,6 +39,26 @@ export class UpdateVipLevelConfigDto {
   @IsOptional()
   @IsObject()
   benefits?: Record<string, any>;
+
+  // ── Presentation / status ──
+  @IsOptional() @IsString() @Length(0, 20) uiColor?: string;
+  @IsOptional() @IsInt() @Min(0) sequence?: number;
+  @IsOptional() @IsIn(['ACTIVE', 'INACTIVE']) status?: string;
+  @IsOptional() @IsString() @Length(2, 10) currency?: string;
+  @IsOptional() @IsBoolean() invitationOnly?: boolean;
+
+  // ── Banking-side limits ──
+  @IsOptional() @IsNumber() @Min(0) depositMin?: number;
+  @IsOptional() @IsNumber() @Min(0) depositMax?: number;
+  @IsOptional() @IsNumber() @Min(0) balanceBelow?: number;
+  @IsOptional() @IsNumber() @Min(0) withdrawalMin?: number;
+  @IsOptional() @IsNumber() @Min(0) withdrawalMax?: number;
+  @IsOptional() @IsInt() @Min(0) withdrawalDailyCount?: number;
+  @IsOptional() @IsNumber() @Min(0) withdrawalDailyMax?: number;
+  @IsOptional() @IsNumber() @Min(0) withdrawalTurnover?: number;
+  @IsOptional() @IsBoolean() allowClearBalance?: boolean;
+  @IsOptional() @IsBoolean() autoClearTurnover?: boolean;
+  @IsOptional() @IsString() @Length(0, 2000) internalRemark?: string;
 }
 
 export class CreateVipLevelConfigDto {

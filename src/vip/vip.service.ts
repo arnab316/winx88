@@ -192,6 +192,7 @@ export class VipService {
           vc.coins_required AS current_threshold,
           vc.benefits,
           vc.badge_icon_url,
+          vc.ui_color,
           COALESCE(uc.lifetime_coins, 0) AS lifetime_coins,
           COALESCE(uc.total_coins, 0)    AS total_coins
        FROM users u
@@ -202,52 +203,106 @@ export class VipService {
     );
     if (!rows.length) throw new NotFoundException('User not found');
 
-    // Compute progress to the next AUTOMATIC tier (§4.4). Invitation-only
-    // tiers are excluded, so a Master (top automatic tier) shows a full bar.
-    const nextRows = await this.dataSource.query(
-      `SELECT level, level_name, coins_required
-       FROM vip_level_config
-       WHERE level > $1
-         AND invitation_only = FALSE
-       ORDER BY level ASC
-       LIMIT 1`,
-      [rows[0].vip_level],
-    );
-
-    const lifetime = parseFloat(rows[0].lifetime_coins);
-    const currentThreshold = rows[0].current_threshold
-      ? parseFloat(rows[0].current_threshold)
+    const me = rows[0];
+    const currentLevelNo = Number(me.vip_level);
+    const lifetime = parseFloat(me.lifetime_coins);
+    const currentThreshold = me.current_threshold
+      ? parseFloat(me.current_threshold)
       : 0;
 
+    // The full ladder — used both for the next-tier calc and the UI list.
+    const all = await this.dataSource.query(
+      `SELECT level, level_name, group_name, coins_required,
+              badge_icon_url, ui_color, invitation_only, status
+       FROM vip_level_config
+       ORDER BY level ASC`,
+    );
+
+    // Next AUTOMATIC tier (invitation-only tiers can't be reached by coins).
+    const nextRow = all.find(
+      (l: any) => Number(l.level) > currentLevelNo && l.invitation_only === false,
+    );
+
     let nextLevel: any = null;
-    if (nextRows.length) {
-      const nt = parseFloat(nextRows[0].coins_required);
+    let progress: any;
+    if (nextRow) {
+      const nextThreshold = parseFloat(nextRow.coins_required);
+      // Band-relative progress: earned + remaining = target.
+      const target = Math.max(1, nextThreshold - currentThreshold);
+      const earned = Math.max(0, lifetime - currentThreshold);
+      const remaining = Math.max(0, nextThreshold - lifetime);
+      const percent = Math.min(100, Math.max(0, Math.round((earned / target) * 100)));
+
       nextLevel = {
-        level:           Number(nextRows[0].level),
-        levelName:       nextRows[0].level_name,
-        coinsRequired:   nt,
-        coinsRemaining:  Math.max(0, nt - lifetime),
-        progressPercent: Math.min(
-          100,
-          Math.round(
-            ((lifetime - currentThreshold) /
-              Math.max(1, nt - currentThreshold)) * 100,
-          ),
-        ),
+        level:         Number(nextRow.level),
+        levelName:     nextRow.level_name,
+        groupName:     nextRow.group_name,
+        coinsRequired: nextThreshold,
+        badgeIconUrl:  nextRow.badge_icon_url,
+        uiColor:       nextRow.ui_color,
+      };
+      progress = {
+        coinsEarned:    earned,          // "XP EARNED"  (within current band)
+        coinsRemaining: remaining,       // "XP REMAINING"
+        coinsTarget:    nextThreshold - currentThreshold, // "XP TARGET" (band size)
+        percent,                         // progress-bar fill %
+        lifetimeCoins:  lifetime,
+        currentThreshold,
+        nextThreshold,
+      };
+    } else {
+      // Top automatic tier reached — full bar, nothing left to earn.
+      progress = {
+        coinsEarned:    Math.max(0, lifetime - currentThreshold),
+        coinsRemaining: 0,
+        coinsTarget:    0,
+        percent:        100,
+        lifetimeCoins:  lifetime,
+        currentThreshold,
+        nextThreshold:  null,
       };
     }
 
+    // Full ladder with a per-row status the UI can render directly:
+    //   CURRENT (you are here) / ACHIEVED (passed) / OPEN (reachable by coins)
+    //   / INVITATION (invite-only, not yet granted)
+    const levels = all.map((l: any) => {
+      const lvl = Number(l.level);
+      const invitationOnly = l.invitation_only === true;
+      let status: string;
+      if (lvl === currentLevelNo) status = 'CURRENT';
+      else if (lvl < currentLevelNo) status = 'ACHIEVED';
+      else if (invitationOnly) status = 'INVITATION';
+      else status = 'OPEN';
+
+      return {
+        level:         lvl,
+        levelName:     l.level_name,
+        groupName:     l.group_name,
+        coinsRequired: parseFloat(l.coins_required),
+        badgeIconUrl:  l.badge_icon_url,
+        uiColor:       l.ui_color,
+        invitationOnly,
+        isCurrent:     lvl === currentLevelNo,
+        achieved:      lvl <= currentLevelNo,
+        status,
+      };
+    });
+
     return {
       currentLevel: {
-        level:        Number(rows[0].vip_level),
-        levelName:    rows[0].level_name,
-        groupName:    rows[0].group_name,
-        benefits:     rows[0].benefits,
-        badgeIconUrl: rows[0].badge_icon_url,
+        level:        currentLevelNo,
+        levelName:    me.level_name,
+        groupName:    me.group_name,
+        benefits:     me.benefits,
+        badgeIconUrl: me.badge_icon_url,
+        uiColor:      me.ui_color,
       },
       lifetimeCoins: lifetime,
-      totalCoins:    parseFloat(rows[0].total_coins),
+      totalCoins:    parseFloat(me.total_coins),
       nextLevel,
+      progress,
+      levels,
     };
   }
 
@@ -389,11 +444,30 @@ export class VipService {
     const values: any[] = [];
     let i = 1;
     const map: Record<string, any> = {
+      // identity
       level_name:     dto.levelName,
       group_name:     dto.groupName,
       coins_required: dto.coinsRequired,
       badge_icon_url: dto.badgeIconUrl,
       benefits:       dto.benefits ? JSON.stringify(dto.benefits) : undefined,
+      // presentation / status
+      ui_color:       dto.uiColor,
+      sequence:       dto.sequence,
+      status:         dto.status,
+      currency:       dto.currency,
+      invitation_only: dto.invitationOnly,
+      // banking-side limits
+      deposit_min:            dto.depositMin,
+      deposit_max:            dto.depositMax,
+      balance_below:          dto.balanceBelow,
+      withdrawal_min:         dto.withdrawalMin,
+      withdrawal_max:         dto.withdrawalMax,
+      withdrawal_daily_count: dto.withdrawalDailyCount,
+      withdrawal_daily_max:   dto.withdrawalDailyMax,
+      withdrawal_turnover:    dto.withdrawalTurnover,
+      allow_clear_balance:    dto.allowClearBalance,
+      auto_clear_turnover:    dto.autoClearTurnover,
+      internal_remark:        dto.internalRemark,
     };
     for (const [col, val] of Object.entries(map)) {
       if (val !== undefined) {

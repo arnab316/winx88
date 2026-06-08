@@ -311,6 +311,49 @@ export class GameController {
     }
   }
 
+  // PATCH /games/admin/:gameId/round-code
+  //   Set the game's repeatable round code. Applies to the NEXT round only;
+  //   the currently open round keeps its code.
+  //   Body: { roundCode: "win4x" }
+  @UseGuards(AdminGuard)
+  @Patch('admin/:gameId/round-code')
+  async setRoundCode(
+    @Param('gameId', ParseIntPipe) gameId: number,
+    @Body('roundCode') roundCode: string,
+  ) {
+    if (!roundCode || !String(roundCode).trim()) {
+      throw new BadRequestException('roundCode is required');
+    }
+    const data = await this.gameService.setRoundCode(gameId, roundCode);
+    return { statusCode: HttpStatus.OK, ...data };
+  }
+
+  // PATCH /games/admin/:id/code
+  //   Change a game's unique code (games.code). Works for any game.
+  //   Body: { code: "4D_NEW" }
+  @UseGuards(AdminGuard)
+  @Patch('admin/:id/code')
+  async updateGameCode(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('code') code: string,
+  ) {
+    if (!code || !String(code).trim()) {
+      throw new BadRequestException('code is required');
+    }
+    const data = await this.gameService.updateGameCode(id, code);
+    return { statusCode: HttpStatus.OK, ...data };
+  }
+
+  // POST /games/admin/:gameId/open-round
+  //   MANUAL games (4D/5D): close the current open round and open a new one
+  //   using the game's saved round_code. No body required.
+  @UseGuards(AdminGuard)
+  @Post('admin/:gameId/open-round')
+  async openManualRound(@Param('gameId', ParseIntPipe) gameId: number) {
+    const data = await this.gameService.openManualRound(gameId);
+    return { statusCode: HttpStatus.CREATED, ...data };
+  }
+
   // GET /games/active-rounds
   // GET /games/active-rounds?digitLength=3
   // GET /games/active-rounds?gameId=1

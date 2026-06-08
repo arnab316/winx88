@@ -48,7 +48,8 @@ export class RoundSchedulerService {
            gs.round_code_prefix,
            gs.next_run_at,
            g.name             AS game_name,
-           g.is_active        AS game_active
+           g.is_active        AS game_active,
+           g.round_code       AS game_round_code
          FROM game_schedules gs
          JOIN games g ON g.id = gs.game_id
          WHERE gs.is_active = TRUE
@@ -153,29 +154,43 @@ export class RoundSchedulerService {
         closeTime.getTime() + sched.draw_offset_minutes * 60_000,
       );
 
-      // Round code: PREFIX-YYYYMMDD-HHmmss (based on draw_time)
-      const dtStr = this.formatRoundCodeDate(drawTime);
-      const roundCode = sched.round_code_prefix
-        ? `${sched.round_code_prefix}-${dtStr}`
-        : dtStr;
+      // Round code resolution:
+      //   - If the admin set games.round_code, use it verbatim. It is a
+      //     repeatable per-game series (same code every round until changed),
+      //     so we do NOT dedupe it.
+      //   - Otherwise fall back to the auto code PREFIX-YYYYMMDD-HHmmss, which
+      //     is unique per draw_time and IS guarded against duplicates.
+      const customCode = sched.game_round_code
+        ? String(sched.game_round_code).trim()
+        : '';
+      let roundCode: string;
 
-      // 4. Guard against accidental duplicate round code
-      const dup = await qr.query(
-        `SELECT id FROM game_rounds WHERE game_id = $1 AND round_code = $2`,
-        [sched.game_id, roundCode],
-      );
-      if (dup.length) {
-        this.logger.warn(
-          `Duplicate round code ${roundCode} for game ${sched.game_id} — skipping insert`,
+      if (customCode) {
+        roundCode = customCode;
+      } else {
+        const dtStr = this.formatRoundCodeDate(drawTime);
+        roundCode = sched.round_code_prefix
+          ? `${sched.round_code_prefix}-${dtStr}`
+          : dtStr;
+
+        // 4. Guard against accidental duplicate auto round code
+        const dup = await qr.query(
+          `SELECT id FROM game_rounds WHERE game_id = $1 AND round_code = $2`,
+          [sched.game_id, roundCode],
         );
-        await this.advanceNextRunInTx(
-          qr,
-          sched.schedule_id,
-          sched.interval_minutes,
-          openTime.toISOString(),
-        );
-        await qr.commitTransaction();
-        return;
+        if (dup.length) {
+          this.logger.warn(
+            `Duplicate round code ${roundCode} for game ${sched.game_id} — skipping insert`,
+          );
+          await this.advanceNextRunInTx(
+            qr,
+            sched.schedule_id,
+            sched.interval_minutes,
+            openTime.toISOString(),
+          );
+          await qr.commitTransaction();
+          return;
+        }
       }
 
       // 5. Insert round
