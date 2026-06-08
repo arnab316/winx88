@@ -1454,6 +1454,54 @@ export class GameService {
   }
 
   // ═════════════════════════════════════════════════════════════
+  // ADMIN: CHANGE A GAME'S CODE (games.code)
+  //   Works for any game. The code is UNIQUE across games, so a clash
+  //   returns 400. Trimmed; case preserved.
+  //   PATCH /games/admin/:id/code
+  // ═════════════════════════════════════════════════════════════
+  async updateGameCode(gameId: number, code: string) {
+    const newCode = (code ?? '').trim();
+    if (newCode.length < 1 || newCode.length > 50) {
+      throw new BadRequestException('code must be 1–50 characters');
+    }
+
+    const exists = await this.dataSource.query(
+      `SELECT id, code FROM games WHERE id = $1`,
+      [gameId],
+    );
+    if (!exists.length) throw new NotFoundException('Game not found');
+
+    // Pre-check the unique clash for a clean message (the DB constraint is the
+    // real guard against races).
+    const clash = await this.dataSource.query(
+      `SELECT id FROM games WHERE code = $1 AND id <> $2 LIMIT 1`,
+      [newCode, gameId],
+    );
+    if (clash.length) {
+      throw new BadRequestException(`Game code "${newCode}" is already in use`);
+    }
+
+    try {
+      const rows = await this.dataSource.query(
+        `UPDATE games SET code = $1, updated_at = NOW()
+         WHERE id = $2
+         RETURNING id, code, name, digit_length, round_mode`,
+        [newCode, gameId],
+      );
+      return {
+        message: 'Game code updated',
+        previousCode: exists[0].code,
+        game: rows[0],
+      };
+    } catch (e: any) {
+      if (e.code === '23505') {
+        throw new BadRequestException(`Game code "${newCode}" is already in use`);
+      }
+      throw e;
+    }
+  }
+
+  // ═════════════════════════════════════════════════════════════
   // ADMIN: OPEN THE NEXT ROUND (MANUAL games — 4D / 5D)
   //   Closes the current OPEN round (if any) and opens a fresh one using
   //   the game's saved round_code. The round never auto-closes (the

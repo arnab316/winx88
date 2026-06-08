@@ -328,6 +328,22 @@ export class GameController {
     return { statusCode: HttpStatus.OK, ...data };
   }
 
+  // PATCH /games/admin/:id/code
+  //   Change a game's unique code (games.code). Works for any game.
+  //   Body: { code: "4D_NEW" }
+  @UseGuards(AdminGuard)
+  @Patch('admin/:id/code')
+  async updateGameCode(
+    @Param('id', ParseIntPipe) id: number,
+    @Body('code') code: string,
+  ) {
+    if (!code || !String(code).trim()) {
+      throw new BadRequestException('code is required');
+    }
+    const data = await this.gameService.updateGameCode(id, code);
+    return { statusCode: HttpStatus.OK, ...data };
+  }
+
   // POST /games/admin/:gameId/open-round
   //   MANUAL games (4D/5D): close the current open round and open a new one
   //   using the game's saved round_code. No body required.
