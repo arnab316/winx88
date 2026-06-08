@@ -197,6 +197,8 @@ export class UserService {
        u.username,
        u.email,
        u.vip_level,
+       vc.level_name          AS vip_level_name,
+       vc.group_name          AS vip_group_name,
        u.account_status,
        u.is_email_verified,
        u.is_kyc_verified,
@@ -221,6 +223,8 @@ export class UserService {
      FROM users u
      LEFT JOIN wallets w
        ON w.user_id = u.id
+     LEFT JOIN vip_level_config vc
+       ON vc.level = u.vip_level
      LEFT JOIN LATERAL (
        SELECT phone_number
        FROM user_phone_numbers
@@ -248,10 +252,14 @@ export class UserService {
     return this.dataSource.query(
       `SELECT
          u.id, u.user_code, u.full_name, u.username, u.email,
-         u.vip_level, u.account_status, u.created_at,
+         u.vip_level,
+         vc.level_name AS vip_level_name,
+         vc.group_name AS vip_group_name,
+         u.account_status, u.created_at,
          (SELECT phone_number FROM user_phone_numbers
           WHERE user_id = u.id AND is_primary = true LIMIT 1) AS primary_phone
        FROM users u
+       LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
        WHERE u.full_name ILIKE $1
           OR u.username   ILIKE $1
           OR u.email      ILIKE $1
