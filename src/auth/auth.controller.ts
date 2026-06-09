@@ -318,6 +318,14 @@ async register(
       ip: req.ip,
     });
 
+    // Fraud tracking — capture IP + device fingerprint (best-effort).
+    await this.authService.recordLoginEvent(
+      result.userId,
+      'REGISTER',
+      req.ip,
+      (req.headers['x-device-fingerprint'] as string) || undefined,
+    );
+
     return {
       success: true,
       code: 201,
@@ -451,6 +459,14 @@ async register(
         phoneVerified: result.user.phoneVerified,
         ip: req.ip,
       });
+
+      // Fraud tracking — capture IP + device fingerprint (best-effort).
+      await this.authService.recordLoginEvent(
+        result.user.id,
+        'LOGIN',
+        req.ip,
+        (req.headers['x-device-fingerprint'] as string) || undefined,
+      );
 
       return {
         success: true,

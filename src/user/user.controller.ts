@@ -539,6 +539,27 @@ export class UserController {
     }
   }
 
+  // GET /user/admin/:userId/compliance?keyword=
+  //   Fraud / linked-accounts check: the user's own device fingerprints +
+  //   IPs, plus other accounts sharing any fingerprint or IP.
+  @UseGuards(AdminGuard)
+  @Get('admin/:userId/compliance')
+  async complianceCheck(
+    @Req() req: any,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query('keyword') keyword?: string,
+  ) {
+    try {
+      const data = await this.userService.getComplianceCheck(userId, keyword);
+      return { success: true, code: 200, message: 'Compliance check', data };
+    } catch (error: any) {
+      throw new HttpException(
+        { success: false, message: error?.message || 'Failed' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   // PATCH /user/admin/:userId
   // body: { full_name?, email?, username?, dob?,
   //         vip_level?, account_status?, password? }

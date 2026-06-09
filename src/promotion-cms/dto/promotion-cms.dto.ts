@@ -20,6 +20,16 @@ const toBool = ({ value }: { value: any }) => {
   return value;
 };
 
+// Accept enum values case-insensitively (e.g. "Grey" -> "GREY"); empty -> undefined.
+const toUpperEnum = ({ value }: { value: any }) => {
+  if (value === '' || value === null || value === undefined) return undefined;
+  return typeof value === 'string' ? value.trim().toUpperCase() : value;
+};
+
+// Empty optional date strings -> undefined (so "" doesn't fail @IsDateString).
+const emptyToUndefined = ({ value }: { value: any }) =>
+  value === '' || value === null ? undefined : value;
+
 // ─── ADMIN: CREATE ──────────────────────────────────────────────
 export class CreatePromotionCmsDto {
   @IsOptional() @IsInt() promotionId?: number;
@@ -34,12 +44,12 @@ export class CreatePromotionCmsDto {
   @IsOptional() @IsBoolean() showRemainingTime?: boolean;
   @IsOptional() @IsBoolean() allowApply?: boolean;
 
-  @IsOptional() @IsIn(REDIRECT_TARGETS) redirectTarget?: RedirectTarget;
-  @IsOptional() @IsIn(NON_ELIGIBLE_DISPLAYS) nonEligibleDisplay?: NonEligibleDisplay;
+  @IsOptional() @Transform(toUpperEnum) @IsIn(REDIRECT_TARGETS) redirectTarget?: RedirectTarget;
+  @IsOptional() @Transform(toUpperEnum) @IsIn(NON_ELIGIBLE_DISPLAYS) nonEligibleDisplay?: NonEligibleDisplay;
   @IsOptional() @IsInt() eligibleMemberGroupId?: number;
 
-  @IsOptional() @IsDateString() startsAt?: string;
-  @IsOptional() @IsDateString() endsAt?: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsDateString() startsAt?: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsDateString() endsAt?: string;
 
   @IsOptional() @IsString() @Length(0, 200) titleEn?: string;
   @IsOptional() @IsString() descriptionEn?: string;
