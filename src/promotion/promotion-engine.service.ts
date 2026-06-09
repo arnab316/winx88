@@ -911,6 +911,59 @@ export class PromotionEngineService  {
     if (!r.length) throw new NotFoundException('Promotion not found');
     return { message: 'Promotion deactivated' };
   }
+
+  // DELETE /promotion/admin/:id           → soft delete (deactivate)
+  // DELETE /promotion/admin/:id?hard=true → permanent delete (only if unused)
+  async deletePromotion(id: number, hard = false) {
+    const existing = await this.dataSource.query(
+      `SELECT id FROM promotions WHERE id = $1`,
+      [id],
+    );
+    if (!existing.length) throw new NotFoundException('Promotion not found');
+
+    if (!hard) {
+      await this.dataSource.query(
+        `UPDATE promotions SET is_active = FALSE, updated_at = NOW() WHERE id = $1`,
+        [id],
+      );
+      return { message: 'Promotion deactivated', id, mode: 'SOFT' };
+    }
+
+    // Hard delete: refuse if anything references this promotion (would orphan
+    // claims/deposits or break a CMS card / linked promo).
+    const [refs] = await this.dataSource.query(
+      `SELECT
+         (SELECT COUNT(*) FROM user_promotion_claims WHERE promotion_id = $1)::int AS claims,
+         (SELECT COUNT(*) FROM deposits             WHERE promotion_id = $1)::int AS deposits,
+         (SELECT COUNT(*) FROM promotion_cms        WHERE promotion_id = $1)::int AS cms_cards,
+         (SELECT COUNT(*) FROM promotions           WHERE linked_promotion_id = $1)::int AS linked`,
+      [id],
+    );
+
+    const blocking: string[] = [];
+    if (refs.claims    > 0) blocking.push(`${refs.claims} claim(s)`);
+    if (refs.deposits  > 0) blocking.push(`${refs.deposits} deposit(s)`);
+    if (refs.cms_cards > 0) blocking.push(`${refs.cms_cards} CMS card(s)`);
+    if (refs.linked    > 0) blocking.push(`${refs.linked} linked promotion(s)`);
+    if (blocking.length) {
+      throw new BadRequestException(
+        `Cannot permanently delete: ${blocking.join(', ')} reference this promotion. ` +
+          `Deactivate it instead, or remove those references first.`,
+      );
+    }
+
+    try {
+      await this.dataSource.query(`DELETE FROM promotions WHERE id = $1`, [id]);
+    } catch (e: any) {
+      if (e?.code === '23503') {
+        throw new BadRequestException(
+          'Cannot permanently delete: other records reference this promotion. Deactivate instead.',
+        );
+      }
+      throw e;
+    }
+    return { message: 'Promotion permanently deleted', id, mode: 'HARD' };
+  }
  
 async listPromotions(q: ListPromotionsQueryDto) {
   const where: string[] = [];
