@@ -54,6 +54,7 @@ export class RoundSchedulerService {
          JOIN games g ON g.id = gs.game_id
          WHERE gs.is_active = TRUE
            AND gs.next_run_at <= NOW()
+           AND g.round_mode != 'MANUAL'
          ORDER BY gs.next_run_at ASC
          LIMIT 50`,
       );

@@ -31,6 +31,15 @@ export class PromotionStatsService {
     const { startSql, endSql, params } = this.buildRange(q);
     const currency = q.currency ?? 'BDT';
 
+    // Shared promotion filters (status / code search / single promo). Inlined
+    // safely: status is enum-validated; code is escaped; id is numeric.
+    const promoFilters: string[] = [];
+    if (q.status === 'ACTIVE')   promoFilters.push('AND p.is_active = TRUE');
+    if (q.status === 'INACTIVE') promoFilters.push('AND p.is_active = FALSE');
+    if (q.promotionId)           promoFilters.push(`AND p.id = ${Number(q.promotionId)}`);
+    if (q.code)                  promoFilters.push(`AND p.code ILIKE '%${String(q.code).replace(/'/g, "''")}%'`);
+    const promoFilterSql = promoFilters.join('\n         ');
+
     const rows = await this.dataSource.query(
       `WITH claims AS (
          SELECT upc.promotion_id,
@@ -72,6 +81,8 @@ export class PromotionStatsService {
          GROUP BY upc.promotion_id
        )
        SELECT p.id, p.title, p.code, p.kind, p.is_active, p.currency,
+              p.max_bonus_pool                AS max_total_limit,
+              p.created_at                    AS applied_date,
               COALESCE(c.total_claims, 0)     AS total_claims,
               COALESCE(c.unique_players, 0)   AS unique_players,
               COALESCE(c.total_bonus, 0)      AS total_bonus,
@@ -87,13 +98,42 @@ export class PromotionStatsService {
        LEFT JOIN deps     d  ON d.promotion_id  = p.id
        LEFT JOIN bets_agg bt ON bt.promotion_id = p.id
        WHERE p.currency = $1
-         ${q.promotionId ? `AND p.id = ${Number(q.promotionId)}` : ''}
-         ${q.code ? `AND p.code = '${String(q.code).replace(/'/g, "''")}'` : ''}
+         ${promoFilterSql}
        ORDER BY total_bonus DESC, p.id DESC`,
       [currency, ...params],
     );
 
-    return { range: this.describeRange(q), currency, data: rows };
+    // ── Dashboard cards: company-wide totals for the same filters/range ──
+    //   Money/claims sums come straight from the grid rows (already filtered
+    //   & aggregated per promo). unique_claimers needs a distinct count.
+    const num = (v: any) => parseFloat(v ?? '0') || 0;
+    const totalDeposits = rows.reduce((s: number, r: any) => s + num(r.total_deposit), 0);
+    const totalBonus    = rows.reduce((s: number, r: any) => s + num(r.total_bonus), 0);
+    const totalWagered  = rows.reduce((s: number, r: any) => s + num(r.total_wagered), 0);
+    const netWinLoss    = rows.reduce((s: number, r: any) => s + num(r.total_win_loss), 0);
+    const totalClaims   = rows.reduce((s: number, r: any) => s + Number(r.total_claims ?? 0), 0);
+
+    const uniqRows = await this.dataSource.query(
+      `SELECT COUNT(DISTINCT upc.user_id)::int AS unique_claimers
+       FROM user_promotion_claims upc
+       JOIN promotions p ON p.id = upc.promotion_id
+       WHERE upc.claimed_at >= ${startSql}
+         AND upc.claimed_at <  ${endSql}
+         AND p.currency = $1
+         ${promoFilterSql}`,
+      [currency, ...params],
+    );
+
+    const summary = {
+      total_deposits:    totalDeposits,    // card: TOTAL DEPOSITS
+      total_bonus_issued: totalBonus,      // card: TOTAL BONUS ISSUED
+      net_win_loss:      netWinLoss,       // card: NET WIN / LOSS
+      total_wagered:     totalWagered,
+      players_engaged:   totalClaims,      // card: PLAYERS ENGAGED (participation count)
+      unique_claimers:   uniqRows[0]?.unique_claimers ?? 0,
+    };
+
+    return { range: this.describeRange(q), currency, summary, data: rows };
   }
 
   // ═════════════════════════════════════════════════════════════

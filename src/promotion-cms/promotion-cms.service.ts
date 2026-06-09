@@ -189,12 +189,15 @@ export class PromotionCmsService {
     const params: any[] = [];
     let i = 1;
 
-    if (q.currency)               { where.push(`currency = $${i++}`);     params.push(q.currency); }
-    if (q.isActive !== undefined) { where.push(`is_active = $${i++}`);    params.push(q.isActive); }
-    if (q.tag)                    { where.push(`tags @> $${i++}::jsonb`); params.push(JSON.stringify([q.tag])); }
-    if (q.promotionId)            { where.push(`promotion_id = $${i++}`); params.push(q.promotionId); }
+    // Qualify every column with the `pc` alias — the data query JOINs
+    // `promotions p`, which shares column names (currency, is_active, …), so
+    // unqualified references are ambiguous (Postgres 42702).
+    if (q.currency)               { where.push(`pc.currency = $${i++}`);     params.push(q.currency); }
+    if (q.isActive !== undefined) { where.push(`pc.is_active = $${i++}`);    params.push(q.isActive); }
+    if (q.tag)                    { where.push(`pc.tags @> $${i++}::jsonb`); params.push(JSON.stringify([q.tag])); }
+    if (q.promotionId)            { where.push(`pc.promotion_id = $${i++}`); params.push(q.promotionId); }
     if (q.search) {
-      where.push(`(title_en ILIKE $${i} OR title_bn ILIKE $${i})`);
+      where.push(`(pc.title_en ILIKE $${i} OR pc.title_bn ILIKE $${i})`);
       params.push(`%${q.search}%`);
       i++;
     }
@@ -219,7 +222,7 @@ export class PromotionCmsService {
     );
 
     const totalRows = await this.dataSource.query(
-      `SELECT COUNT(*)::int AS total FROM promotion_cms ${whereSql}`,
+      `SELECT COUNT(*)::int AS total FROM promotion_cms pc ${whereSql}`,
       params,
     );
 

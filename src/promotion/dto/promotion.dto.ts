@@ -65,6 +65,11 @@ const toBool = ({ value }: { value: any }) => {
   return value;
 };
 
+// Empty form fields arrive as '' (or null). Treat them as "not provided" so an
+// empty optional date doesn't fail @IsDateString — the field is simply skipped.
+const emptyToUndefined = ({ value }: { value: any }) =>
+  value === '' || value === null ? undefined : value;
+
 // ─── ADMIN: CREATE PROMOTION ────────────────────────────────────
 export class CreatePromotionDto {
   @IsString() @Length(3, 150)
@@ -101,8 +106,8 @@ export class CreatePromotionDto {
 
   @IsOptional() @IsBoolean() isActive?: boolean;
 
-  @IsOptional() @IsDateString() startsAt?: string;
-  @IsOptional() @IsDateString() endsAt?: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsDateString() startsAt?: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsDateString() endsAt?: string;
 
   @IsOptional() @IsArray() @ArrayUnique()
   @IsIn(DEVICE_TYPES, { each: true })
@@ -172,8 +177,8 @@ export class UpdatePromotionDto {
   @IsOptional() @IsInt() @Min(1) maxUsesGlobal?: number;
   @IsOptional() @IsNumber() @Min(1) maxBonusPool?: number;
   @IsOptional() @IsBoolean() isActive?: boolean;
-  @IsOptional() @IsDateString() startsAt?: string;
-  @IsOptional() @IsDateString() endsAt?: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsDateString() startsAt?: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsDateString() endsAt?: string;
 
   @IsOptional() @IsArray() @ArrayUnique() @IsIn(DEVICE_TYPES, { each: true })
   deviceTypes?: DeviceType[];
