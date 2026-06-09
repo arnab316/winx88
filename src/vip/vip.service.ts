@@ -461,10 +461,13 @@ export class VipService {
       const res = await qr.query(
         `INSERT INTO vip_level_config
            (level, level_name, group_name, coins_required, invitation_only,
-            sequence, status, currency,
-            withdrawal_min, withdrawal_max, withdrawal_daily_count, withdrawal_daily_max)
-         VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'ACTIVE'),COALESCE($8,'BDT'),
-                 $9,$10,$11,$12)
+            sequence, status, currency, ui_color, badge_icon_url, benefits,
+            deposit_min, deposit_max, balance_below,
+            withdrawal_min, withdrawal_max, withdrawal_daily_count, withdrawal_daily_max,
+            withdrawal_turnover, allow_clear_balance, auto_clear_turnover, internal_remark)
+         VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'ACTIVE'),COALESCE($8,'BDT'),$9,$10,$11,
+                 $12,$13,$14,$15,$16,$17,$18,$19,
+                 COALESCE($20,FALSE),COALESCE($21,FALSE),$22)
          RETURNING *`,
         [
           dto.level,
@@ -475,10 +478,20 @@ export class VipService {
           dto.sequence ?? dto.level,
           dto.status ?? null,
           dto.currency ?? null,
+          dto.uiColor ?? null,
+          dto.badgeIconUrl ?? null,
+          dto.benefits ? JSON.stringify(dto.benefits) : null,
+          dto.depositMin ?? null,
+          dto.depositMax ?? null,
+          dto.balanceBelow ?? null,
           dto.withdrawalMin ?? null,
           dto.withdrawalMax ?? null,
           dto.withdrawalDailyCount ?? null,
           dto.withdrawalDailyMax ?? null,
+          dto.withdrawalTurnover ?? null,
+          dto.allowClearBalance ?? null,
+          dto.autoClearTurnover ?? null,
+          dto.internalRemark ?? null,
         ],
       );
       let row = res[0];
@@ -625,10 +638,13 @@ export class VipService {
   //   min/max, daily count, daily max, default setting, status.
   async getMemberGroupList() {
     const rows = await this.dataSource.query(
-      `SELECT level, level_name, group_name, COALESCE(currency, 'BDT') AS currency,
+      `SELECT level, level_name, group_name, coins_required, invitation_only,
+              sequence, ui_color, badge_icon_url, benefits, is_default, status,
+              COALESCE(currency, 'BDT') AS currency,
+              deposit_min, deposit_max, balance_below,
               withdrawal_min, withdrawal_max,
-              withdrawal_daily_count, withdrawal_daily_max,
-              is_default, status, sequence
+              withdrawal_daily_count, withdrawal_daily_max, withdrawal_turnover,
+              allow_clear_balance, auto_clear_turnover, internal_remark
          FROM vip_level_config
         ORDER BY COALESCE(currency, 'BDT') ASC, sequence ASC, level ASC`,
     );
@@ -642,10 +658,23 @@ export class VipService {
         level:                Number(r.level),
         name:                 r.level_name,
         groupName:            r.group_name,
+        coinsRequired:        num(r.coins_required),
+        invitationOnly:       r.invitation_only === true,
+        sequence:             num(r.sequence),
+        uiColor:              r.ui_color,
+        badgeIconUrl:         r.badge_icon_url,
+        benefits:             r.benefits,
+        depositMin:           num(r.deposit_min),
+        depositMax:           num(r.deposit_max),
+        balanceBelow:         num(r.balance_below),
         withdrawalMin:        num(r.withdrawal_min),
         withdrawalMax:        num(r.withdrawal_max),
         withdrawalDailyCount: num(r.withdrawal_daily_count),
         withdrawalDailyMax:   num(r.withdrawal_daily_max),
+        withdrawalTurnover:   num(r.withdrawal_turnover),
+        allowClearBalance:    r.allow_clear_balance === true,
+        autoClearTurnover:    r.auto_clear_turnover === true,
+        internalRemark:       r.internal_remark,
         isDefault:            r.is_default === true,
         status:               r.status,
       });
@@ -712,12 +741,26 @@ export class VipService {
 
     const map: Record<string, any> = {
       level_name:             dto.name,
+      group_name:             dto.groupName,
+      coins_required:         dto.coinsRequired,
+      invitation_only:        dto.invitationOnly,
+      sequence:               dto.sequence,
+      ui_color:               dto.uiColor,
+      badge_icon_url:         dto.badgeIconUrl,
+      benefits:               dto.benefits ? JSON.stringify(dto.benefits) : undefined,
+      status:                 dto.status,
+      currency:               dto.currency,
+      deposit_min:            dto.depositMin,
+      deposit_max:            dto.depositMax,
+      balance_below:          dto.balanceBelow,
       withdrawal_min:         dto.withdrawalMin,
       withdrawal_max:         dto.withdrawalMax,
       withdrawal_daily_count: dto.withdrawalDailyCount,
       withdrawal_daily_max:   dto.withdrawalDailyMax,
-      status:                 dto.status,
-      currency:               dto.currency,
+      withdrawal_turnover:    dto.withdrawalTurnover,
+      allow_clear_balance:    dto.allowClearBalance,
+      auto_clear_turnover:    dto.autoClearTurnover,
+      internal_remark:        dto.internalRemark,
     };
 
     const qr = this.dataSource.createQueryRunner();
