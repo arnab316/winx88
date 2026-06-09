@@ -44,6 +44,7 @@ app.useGlobalPipes(
     'Accept',
     'Origin',
     'X-Requested-With',
+    'X-Device-Fingerprint',
   ],
 });
 
