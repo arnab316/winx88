@@ -14,7 +14,7 @@ async function bootstrap() {
 
   app.use(cookieParser());
 
-app.useGlobalPipes(
+  app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,                          // strip unknown props
       forbidNonWhitelisted: false,
@@ -24,28 +24,30 @@ app.useGlobalPipes(
       },
     }),
   );
- app.enableCors({
-  origin: [
-    'http://localhost:5173',
-    'http://localhost:5174',
-    'http://localhost:4173',
-    'http://15.207.97.72:5173',
-    'http://15.207.97.72:4173',
-    'https://winx-88.com',
-    'https://www.winx-88.com',
-    'https://test.safurion.online',
-    'https://winx-88.pages.dev'
-  ],
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-  credentials: true,
-  allowedHeaders: [
-    'Content-Type',
-    'Authorization',
-    'Accept',
-    'Origin',
-    'X-Requested-With',
-  ],
-});
+  app.enableCors({
+    origin: [
+      'http://localhost:5173',
+      'http://localhost:5174',
+      'http://localhost:4173',
+      'http://15.207.97.72:5173',
+      'http://15.207.97.72:4173',
+      'https://winx-88.com',
+      'https://www.winx-88.com',
+      'https://test.safurion.online',
+      'https://winx-88.pages.dev',
+      'https://zjj3kjsz-5173.inc1.devtunnels.ms',
+      'http://zjj3kjsz-5173.inc1.devtunnels.ms',
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+    credentials: true,
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'Accept',
+      'Origin',
+      'X-Requested-With',
+    ],
+  });
 
   await app.listen(process.env.PORT ?? 3000, '0.0.0.0');
 }

@@ -35,6 +35,7 @@ import { LaafficModule } from './laaffic/laaffic.module';
 import { PromotionStatsModule } from './promotion-stats/promotion-stats.module';
 import { ReportsModule } from './reports/reports.module';
 import { AnnouncementModule } from './announcement/announcement.module';
+import { CasinoModule } from './casino/casino.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -86,6 +87,7 @@ import { AnnouncementModule } from './announcement/announcement.module';
   PromotionStatsModule,
   ReportsModule,
   AnnouncementModule,
+  CasinoModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],

@@ -1608,6 +1608,10 @@ export class GameService {
          g.max_payout_per_round,
          g.is_hot, g.is_jackpot_badge, g.display_category,
          g.is_active, g.created_at,
+
+         -- Schedule info
+         gs.id            AS schedule_id,
+         gs.is_active     AS schedule_is_active,
  
          -- Latest round info (most recently created)
          lr.id            AS latest_round_id,
@@ -1641,6 +1645,7 @@ export class GameService {
            WHERE b.round_id = lr.id AND b.result_status = 'PLACED') AS latest_round_unique_numbers
  
        FROM games g
+       LEFT JOIN game_schedules gs ON gs.game_id = g.id
        -- Get the most recently created round per game
        LEFT JOIN LATERAL (
          SELECT * FROM game_rounds gr
@@ -1667,6 +1672,8 @@ export class GameService {
       displayCategory:     g.display_category,
       isActive:            g.is_active,
       createdAt:           g.created_at,
+      scheduleId:          g.schedule_id ? Number(g.schedule_id) : null,
+      scheduleIsActive:    g.schedule_is_active !== null ? g.schedule_is_active : null,
  
       // Round summary
       rounds: {

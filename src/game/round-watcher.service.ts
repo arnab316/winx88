@@ -104,7 +104,7 @@ export class RoundWatcherService {
         }
       }
     } catch (e: any) {
-      this.logger.error(`tick failed: ${e.message}`);
+      this.logger.error(`tick failed: ${e.message}`, e.stack);
     }
   }
 }
