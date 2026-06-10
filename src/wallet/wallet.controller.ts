@@ -159,7 +159,24 @@ export class WalletController {
   // ═════════════════════════════════════════════════════════════
   // ADMIN ROUTES
   // ═════════════════════════════════════════════════════════════
- 
+
+  // GET /wallet/admin/transactions?userId=42&page=1&limit=20&type=DEPOSIT|WITHDRAWAL
+  // Money-movement statement (deposits + withdrawals) for one player.
+  // Same feed as the user-facing /wallet/history, but targets any userId and
+  // uses admin-facing labels (e.g. "MANUAL DEPOSIT", "MANUAL ADJUST").
+  @UseGuards(AdminGuard)
+  @Get('admin/transactions')
+  getUserTransactions(
+    @Query('userId', ParseIntPipe) userId: number,
+    @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('type') typeFilter?: string,
+  ) {
+    return this.walletService.getLedgerHistory(
+      userId, page, limit, typeFilter, 'ADMIN',
+    );
+  }
+
   // GET /wallet/admin/deposits?page=1&limit=20
   // Now returns agent_number, agent_code, wallet_type per deposit
   // (so admin sees WHERE the user was told to send the money)
