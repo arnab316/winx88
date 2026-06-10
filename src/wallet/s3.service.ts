@@ -1,4 +1,4 @@
-import { Injectable, InternalServerErrorException } from '@nestjs/common';
+import { Injectable, InternalServerErrorException, Logger } from '@nestjs/common';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { extname } from 'path';
@@ -8,18 +8,28 @@ export class S3Service {
   private readonly s3: S3Client;
   private readonly bucket: string;
 
+  private readonly logger = new Logger(S3Service.name);
+
   constructor() {
-    // ── debug: log what env vars are loaded ──────────────────
-    console.log('AWS_REGION:', process.env.AWS_REGION);
-    console.log('AWS_BUCKET_NAME:', process.env.AWS_BUCKET_NAME);
-    console.log('AWS_ACCESS_KEY_ID:', process.env.AWS_ACCESS_KEY_ID ? 'SET' : 'MISSING');
-    console.log('AWS_SECRET_ACCESS_KEY:', process.env.AWS_SECRET_ACCESS_KEY ? 'SET' : 'MISSING');
-    // ─────────────────────────────────────────────────────────
+    // Sanity-check env at boot (non-prod only). Never logs secret values.
+    if (process.env.NODE_ENV !== 'production') {
+      this.logger.debug(
+        `AWS env — region=${process.env.AWS_REGION}, bucket=${process.env.AWS_BUCKET_NAME}, ` +
+          `accessKeyId=${process.env.AWS_ACCESS_KEY_ID ? 'SET' : 'MISSING'}, ` +
+          `secretAccessKey=${process.env.AWS_SECRET_ACCESS_KEY ? 'SET' : 'MISSING'}`,
+      );
+    }
 
     this.bucket = process.env.AWS_BUCKET_NAME!;
 
     this.s3 = new S3Client({
       region: process.env.AWS_REGION!,
+      // Fail fast instead of hanging the HTTP request (which surfaces in the
+      // browser as "Failed to fetch") when S3 is slow/misconfigured.
+      requestHandler: {
+        connectionTimeout: 3000, // ms to establish the TCP/TLS connection
+        requestTimeout:    8000, // ms for the full PutObject to complete
+      },
       credentials: {
         accessKeyId:     process.env.AWS_ACCESS_KEY_ID!,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY!,
@@ -28,7 +38,7 @@ export class S3Service {
   }
 
 async uploadDepositScreenshot(file: Express.Multer.File): Promise<string> {
-  console.log('uploadDepositScreenshot called, file:', file?.originalname);
+  this.logger.debug(`uploadDepositScreenshot called, file=${file?.originalname ?? 'NONE'}`);
 
   if (!file || !file.buffer) {
     throw new InternalServerErrorException('File buffer is empty');
@@ -53,15 +63,13 @@ async uploadDepositScreenshot(file: Express.Multer.File): Promise<string> {
       }),
     );
 
-    console.log('S3 upload success, key:', key);
+    this.logger.debug(`S3 upload success, key=${key}`);
 
-    // ✅ FIX: return full URL instead of key
-    const fullUrl = `https://${this.bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
-
-    return fullUrl;
+    // Return full URL instead of the bare key.
+    return `https://${this.bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
 
   } catch (err: any) {
-    console.error('S3 upload FAILED:', err.message);
+    this.logger.error(`S3 upload FAILED: ${err.message}`);
     throw new InternalServerErrorException(`S3 upload failed: ${err.message}`);
   }
 }
