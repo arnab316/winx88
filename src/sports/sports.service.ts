@@ -8,7 +8,12 @@ import * as querystring from 'querystring';
 import axios from 'axios';
 import { v4 as createUUid } from 'uuid';
 import { WalletGateway } from '../wallet/wallet.gateway';
-import { GetMiniBalanceDTO, MiniBetWinDTO, MiniDepositDTO, MiniWithdrawDTO } from './dto/minicallback.dto';
+import {
+  GetMiniBalanceDTO,
+  MiniBetWinDTO,
+  MiniDepositDTO,
+  MiniWithdrawDTO,
+} from './dto/minicallback.dto';
 import { SlotGameCallbackDataDTO } from './dto/slotgamecallback.dto';
 import { SportsCallbackDataDTO } from './dto/sportscallback.dto';
 
@@ -29,7 +34,7 @@ function getCasinoConfig(
   headers: any,
   requestParams: any,
   merchantKey: string,
-  method = 'get'
+  method = 'get',
 ) {
   const combined = { ...headers, ...requestParams };
   const sortedKeys = Object.keys(combined).sort();
@@ -47,7 +52,10 @@ function getCasinoConfig(
     headers: {
       ...headers,
       'X-Sign': signature,
-      'Content-Type': method === 'post' ? 'application/x-www-form-urlencoded' : 'application/json',
+      'Content-Type':
+        method === 'post'
+          ? 'application/x-www-form-urlencoded'
+          : 'application/json',
     },
   };
 }
@@ -55,16 +63,37 @@ function getCasinoConfig(
 @Injectable()
 export class SportsService {
   private readonly logger = new Logger(SportsService.name);
-  private readonly casinoInfo: { apiUrl: string; merchantID: string; merchantKey: string; callbackToken: string };
-  private readonly slotInfo: { apiUrl: string; apiToken: string; callbackToken: string };
-  private readonly spotsInfo: { apiUrl: string; apiToken: string; callbackToken: string };
-  private readonly oroplayInfo: { apiUrl: string; clientId: string; clientSecret: string };
-  private readonly miniInfo: { endpoint: string; apiToken: string; callbackToken: string };
+  private readonly casinoInfo: {
+    apiUrl: string;
+    merchantID: string;
+    merchantKey: string;
+    callbackToken: string;
+  };
+  private readonly slotInfo: {
+    apiUrl: string;
+    apiToken: string;
+    callbackToken: string;
+  };
+  private readonly spotsInfo: {
+    apiUrl: string;
+    apiToken: string;
+    callbackToken: string;
+  };
+  private readonly oroplayInfo: {
+    apiUrl: string;
+    clientId: string;
+    clientSecret: string;
+  };
+  private readonly miniInfo: {
+    endpoint: string;
+    apiToken: string;
+    callbackToken: string;
+  };
   private readonly nounce = 'e115cf0f66a645aca08225c9c1b20b81';
 
   // OroPlay token cache
   private oroplayToken = '';
-  private oroplayTokenExpiration = 0; 
+  private oroplayTokenExpiration = 0;
 
   constructor(
     private readonly configService: ConfigService,
@@ -73,30 +102,46 @@ export class SportsService {
     private readonly walletGateway: WalletGateway,
   ) {
     this.casinoInfo = {
-      apiUrl: this.configService.get<string>('CASINO_API_URL') ?? 'https://api.slotegrator.com',
+      apiUrl:
+        this.configService.get<string>('CASINO_API_URL') ??
+        'https://api.slotegrator.com',
       merchantID: this.configService.get<string>('CASINO_MERCHANT_ID') ?? '',
       merchantKey: this.configService.get<string>('CASINO_MERCHANT_KEY') ?? '',
-      callbackToken: this.configService.get<string>('CASINO_CALLBACK_TOKEN') ?? '',
+      callbackToken:
+        this.configService.get<string>('CASINO_CALLBACK_TOKEN') ?? '',
     };
     this.slotInfo = {
-      apiUrl: this.configService.get<string>('SLOT_API_ENDPOINT') ?? 'https://agent.goldslotpalase.com',
+      apiUrl:
+        this.configService.get<string>('SLOT_API_ENDPOINT') ??
+        'https://agent.goldslotpalase.com',
       apiToken: this.configService.get<string>('SLOT_API_TOKEN') ?? '',
-      callbackToken: this.configService.get<string>('SLOT_CALLBACK_TOKEN') ?? '',
+      callbackToken:
+        this.configService.get<string>('SLOT_CALLBACK_TOKEN') ?? '',
     };
     this.spotsInfo = {
-      apiUrl: this.configService.get<string>('SPORTS_API_URL') ?? 'https://sportsapi.needforspeedau.com/sportsAPI',
+      apiUrl:
+        this.configService.get<string>('SPORTS_API_URL') ??
+        'https://sportsapi.needforspeedau.com/sportsAPI',
       apiToken: this.configService.get<string>('SPORTS_API_TOKEN') ?? '',
-      callbackToken: this.configService.get<string>('SPORTS_CALLBACK_TOKEN') ?? '',
+      callbackToken:
+        this.configService.get<string>('SPORTS_CALLBACK_TOKEN') ?? '',
     };
     this.oroplayInfo = {
-      apiUrl: this.configService.get<string>('OROPLAY_API_ENDPOINT') ?? 'https://bs.sxvwlkohlv.com/api/v2',
-      clientId: this.configService.get<string>('OROPLAY_CLIENT_ID') ?? 'Dark_BDT',
-      clientSecret: this.configService.get<string>('OROPLAY_CLIENT_SECRET') ?? '',
+      apiUrl:
+        this.configService.get<string>('OROPLAY_API_ENDPOINT') ??
+        'https://bs.sxvwlkohlv.com/api/v2',
+      clientId:
+        this.configService.get<string>('OROPLAY_CLIENT_ID') ?? 'Dark_BDT',
+      clientSecret:
+        this.configService.get<string>('OROPLAY_CLIENT_SECRET') ?? '',
     };
     this.miniInfo = {
-      endpoint: this.configService.get<string>('MINI_API_URL') ?? 'https://miniback.betjoyful.com/api',
+      endpoint:
+        this.configService.get<string>('MINI_API_URL') ??
+        'https://miniback.betjoyful.com/api',
       apiToken: this.configService.get<string>('MINI_API_TOKEN') ?? '',
-      callbackToken: this.configService.get<string>('MINI_CALLBACK_TOKEN') ?? '',
+      callbackToken:
+        this.configService.get<string>('MINI_CALLBACK_TOKEN') ?? '',
     };
   }
 
@@ -124,7 +169,9 @@ export class SportsService {
       );
       return data;
     } catch (error: any) {
-      this.logger.error(`casinoInitDemo ::: ${error?.response?.data?.message ?? error.message}`);
+      this.logger.error(
+        `casinoInitDemo ::: ${error?.response?.data?.message ?? error.message}`,
+      );
       return null;
     }
   }
@@ -142,12 +189,16 @@ export class SportsService {
     if (isMobile === 'true') {
       conditions.push(`is_mobile = 1`);
     } else {
-      conditions.push(`((name NOT ILIKE '%Mobile%' AND is_mobile = 0) OR (name NOT ILIKE '%Mobile%' AND is_mobile = 1))`);
+      conditions.push(
+        `((name NOT ILIKE '%Mobile%' AND is_mobile = 0) OR (name NOT ILIKE '%Mobile%' AND is_mobile = 1))`,
+      );
     }
 
     // RTP filter
     if (query?.filters?.is_rtp) {
-      conditions.push(`parameters IS NOT NULL AND (parameters->>'rtp') IS NOT NULL`);
+      conditions.push(
+        `parameters IS NOT NULL AND (parameters->>'rtp') IS NOT NULL`,
+      );
     }
 
     // Search filter
@@ -159,7 +210,9 @@ export class SportsService {
     // Type filter
     if (query?.filters?.type) {
       if (query.filters.type === 'live') {
-        conditions.push(`type NOT IN ('slots', 'instant') AND vendor_code IS NOT NULL`);
+        conditions.push(
+          `type NOT IN ('slots', 'instant') AND vendor_code IS NOT NULL`,
+        );
       } else {
         conditions.push(`type = $${paramIndex++}`);
         values.push(query.filters.type);
@@ -169,11 +222,17 @@ export class SportsService {
     // New filter
     if (query?.filters?.is_new !== undefined) {
       conditions.push(`is_new = $${paramIndex++}`);
-      values.push(query.filters.is_new === 'true' || query.filters.is_new === true);
+      values.push(
+        query.filters.is_new === 'true' || query.filters.is_new === true,
+      );
     }
 
     // Providers filter
-    if (query?.filters?.providers && Array.isArray(query.filters.providers) && query.filters.providers.length > 0) {
+    if (
+      query?.filters?.providers &&
+      Array.isArray(query.filters.providers) &&
+      query.filters.providers.length > 0
+    ) {
       conditions.push(`provider = ANY($${paramIndex++})`);
       values.push(query.filters.providers);
     }
@@ -184,13 +243,18 @@ export class SportsService {
       values.push(Number(query.filters.has_tables));
     }
 
-    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+    const whereClause =
+      conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
 
     const countQuery = `SELECT COUNT(*)::int AS total FROM casino_games ${whereClause}`;
     const dataQuery = `SELECT * FROM casino_games ${whereClause} ORDER BY created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
 
     const countResult = await this.dataSource.query(countQuery, values);
-    const dataResult = await this.dataSource.query(dataQuery, [...values, size, offset]);
+    const dataResult = await this.dataSource.query(dataQuery, [
+      ...values,
+      size,
+      offset,
+    ]);
 
     return {
       items: dataResult,
@@ -202,75 +266,62 @@ export class SportsService {
     const rows = await this.dataSource.query(
       `SELECT DISTINCT provider FROM casino_games 
        WHERE vendor_code IS NOT NULL AND type NOT IN ('slots', 'instant') 
-       ORDER BY provider ASC`
+       ORDER BY provider ASC`,
     );
     return rows.map((r: any) => r.provider);
   }
 
-  async getSportsLink(_query: any, userPayload: any, _isMobile: string, language?: string): Promise<string | null> {
+  async getSportsLink(
+    _query: any,
+    userPayload: any,
+    _isMobile: string,
+    language?: string,
+  ) {
+    if (!userPayload) return null;
+
     try {
       const SPORTS_SUPPORTED_LANGS = ['en', 'fr', 'fa', 'ar', 'tr'];
-      const sportsLang = SPORTS_SUPPORTED_LANGS.includes(language ?? '') ? language : 'en';
-      let userCode = '';
-      let resUrl;
+      const sportsLang = SPORTS_SUPPORTED_LANGS.includes(language ?? '')
+        ? language
+        : 'en';
 
-      if (userPayload !== undefined) {
-        const userId = userPayload.sub;
-        const userRows = await this.dataSource.query(`SELECT username FROM users WHERE id = $1`, [userId]);
-        if (!userRows.length) return null;
-        userCode = userRows[0].username;
+      const userId = userPayload.sub;
+      const [user] = await this.dataSource.query(
+        `SELECT username FROM users WHERE id = $1`,
+        [userId],
+      );
+      if (!user?.username) return null;
 
-        const userCreateRes = await axios.post<any>(
-          `${this.spotsInfo.apiUrl}/v1/user/create`,
-          { name: userCode },
-          {
-            headers: {
-              Authorization: `Bearer ${this.spotsInfo.apiToken}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        );
+      const sportsHeaders = {
+        Authorization: `Bearer ${this.spotsInfo.apiToken}`,
+        'Content-Type': 'application/json',
+      };
 
-        // code 0 = created, code 1 = already exists — both return user_code in data
-        console.log(`[getSportsLink] userCreate response: code=${userCreateRes.data.code} message=${userCreateRes.data.message} user_code=${userCreateRes.data.data?.user_code}`);
-        if (userCreateRes.data.code !== 0 && userCreateRes.data.code !== 1) {
-          console.error(`[getSportsLink] User creation failed: code=${userCreateRes.data.code} message=${userCreateRes.data.message}`);
-          return null;
-        }
+      const { data: createUserRes } = await axios.post<any>(
+        `${this.spotsInfo.apiUrl}/v1/user/create`,
+        { name: user.username },
+        { headers: sportsHeaders },
+      );
 
-        const sportsUserCode = userCreateRes.data.data?.user_code;
-        if (!sportsUserCode) {
-          console.error(`[getSportsLink] user_code missing from userCreate response: ${JSON.stringify(userCreateRes.data)}`);
-          return null;
-        }
+      this.logger.log(`[getSportsLink] userCreate response ${JSON.stringify(createUserRes)}`);
 
-        const gameUrlRes = await axios.post<any>(
-          `${this.spotsInfo.apiUrl}/v1/game/game-url`,
-          {
-            userCode: sportsUserCode,
-            language: sportsLang,
-            returnUrl: this.configService.get<string>('APP_BASE_URL') ?? '',
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${this.spotsInfo.apiToken}`,
-              'Content-Type': 'application/json',
-            },
-          }
-        );
-
-        console.log(`[getSportsLink] gameUrl response: code=${gameUrlRes.data.code} message=${gameUrlRes.data.message} data=${JSON.stringify(gameUrlRes.data.data)}`);
-
-        if (gameUrlRes.data.code !== 0) {
-          console.error(`[getSportsLink] Failed to get game URL: code=${gameUrlRes.data.code} message=${gameUrlRes.data.message}`);
-          return null;
-        }
-
-        resUrl = gameUrlRes.data.data.gameUrl;
+      if (!createUserRes?.data?.userCode) {
+        this.logger.error(`[getSportsLink] userCode missing from userCreate response`);
+        return null;
       }
-      return resUrl;
+
+      const { data } = await axios.post<any>(
+        `${this.spotsInfo.apiUrl}/v1/game/game-url`,
+        { userCode: createUserRes.data.userCode, language: sportsLang },
+        { headers: sportsHeaders },
+      );
+
+      this.logger.log(`[getSportsLink] gameUrl response ${JSON.stringify(data)}`);
+      return data?.data?.gameUrl ?? null;
     } catch (error: any) {
-      this.logger.error(`Error in getSportsLink: ${error?.response?.data ? JSON.stringify(error.response.data) : error?.message}`);
+      this.logger.error(
+        `Error in getSportsLink: ${error?.response?.data ? JSON.stringify(error.response.data) : error?.message}`,
+      );
       return null;
     }
   }
@@ -279,7 +330,7 @@ export class SportsService {
     const userId = userPayload.sub;
     const userRows = await this.dataSource.query(
       `SELECT * FROM users WHERE id = $1`,
-      [userId]
+      [userId],
     );
     if (!userRows.length) return { items: [], total: 0 };
     const user = userRows[0];
@@ -291,7 +342,9 @@ export class SportsService {
     if (isMobile === 'true') {
       conditions.push(`is_mobile = 1`);
     } else {
-      conditions.push(`((name NOT ILIKE '%Mobile%' AND is_mobile = 0) OR (name NOT ILIKE '%Mobile%' AND is_mobile = 1))`);
+      conditions.push(
+        `((name NOT ILIKE '%Mobile%' AND is_mobile = 0) OR (name NOT ILIKE '%Mobile%' AND is_mobile = 1))`,
+      );
     }
 
     if (query?.search) {
@@ -299,7 +352,11 @@ export class SportsService {
       values.push(`%${query.search}%`);
     }
 
-    if (query?.filters?.providers && Array.isArray(query.filters.providers) && query.filters.providers.length > 0) {
+    if (
+      query?.filters?.providers &&
+      Array.isArray(query.filters.providers) &&
+      query.filters.providers.length > 0
+    ) {
       conditions.push(`provider = ANY($${paramIndex++})`);
       values.push(query.filters.providers);
     }
@@ -324,9 +381,16 @@ export class SportsService {
       }
     }
 
-    const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-    const items = await this.dataSource.query(`SELECT * FROM casino_games ${whereClause}`, values);
-    const total = await this.dataSource.query(`SELECT COUNT(*)::int AS total FROM casino_games ${whereClause}`, values);
+    const whereClause =
+      conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+    const items = await this.dataSource.query(
+      `SELECT * FROM casino_games ${whereClause}`,
+      values,
+    );
+    const total = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total FROM casino_games ${whereClause}`,
+      values,
+    );
 
     return {
       items,
@@ -334,16 +398,28 @@ export class SportsService {
     };
   }
 
-  async getGameUrl(uuid: string, query: any, userPayload: any, isMobile: string) {
-    this.logger.log(`[getGameUrl] START - uuid: ${uuid}, user: ${userPayload?.sub}, isMobile: ${isMobile}, searchType: ${query?.searchType}`);
-    
-    const games = await this.dataSource.query(`SELECT * FROM casino_games WHERE uuid = $1 LIMIT 1`, [uuid]);
+  async getGameUrl(
+    uuid: string,
+    query: any,
+    userPayload: any,
+    isMobile: string,
+  ) {
+    this.logger.log(
+      `[getGameUrl] START - uuid: ${uuid}, user: ${userPayload?.sub}, isMobile: ${isMobile}, searchType: ${query?.searchType}`,
+    );
+
+    const games = await this.dataSource.query(
+      `SELECT * FROM casino_games WHERE uuid = $1 LIMIT 1`,
+      [uuid],
+    );
     if (!games.length) {
       throw new HttpException('Game not found', HttpStatus.NOT_FOUND);
     }
     const game = games[0];
 
-    this.logger.log(`[getGameUrl] game found: true, name: ${game?.name}, type: ${game?.type}, provider: ${game?.provider}, provider_id: ${game?.provider_id}, game_symbol: ${game?.game_symbol}`);
+    this.logger.log(
+      `[getGameUrl] game found: true, name: ${game?.name}, type: ${game?.type}, provider: ${game?.provider}, provider_id: ${game?.provider_id}, game_symbol: ${game?.game_symbol}`,
+    );
 
     if (isMobile === 'true') {
       if (!game.is_mobile && game.name.includes('Mobile')) {
@@ -362,17 +438,28 @@ export class SportsService {
     }
 
     const userId = userPayload.sub;
-    const userRows = await this.dataSource.query(`SELECT username, email FROM users WHERE id = $1`, [userId]);
+    const userRows = await this.dataSource.query(
+      `SELECT username, email FROM users WHERE id = $1`,
+      [userId],
+    );
     if (!userRows.length) {
       throw new HttpException('User not found', HttpStatus.NOT_FOUND);
     }
     const user = userRows[0];
 
     if (query?.searchType === 'real') {
-      if (game.type === 'slots' || game.provider === 'Spribe' || game.provider === 'Tydo') {
-        this.logger.log(`[getGameUrl] SLOT/Spribe/Tydo path - checking slot user: ${user.username}`);
+      if (
+        game.type === 'slots' ||
+        game.provider === 'Spribe' ||
+        game.provider === 'Tydo'
+      ) {
+        this.logger.log(
+          `[getGameUrl] SLOT/Spribe/Tydo path - checking slot user: ${user.username}`,
+        );
         const checkSlotGameUser = await this.checkSlotGameUser(user.username);
-        this.logger.log(`[getGameUrl] checkSlotGameUser result: ${JSON.stringify(checkSlotGameUser)}`);
+        this.logger.log(
+          `[getGameUrl] checkSlotGameUser result: ${JSON.stringify(checkSlotGameUser)}`,
+        );
         if (!checkSlotGameUser) return null;
         try {
           const apiEndpoint = `${this.slotInfo.apiUrl}/v4/game/game-url`;
@@ -384,7 +471,9 @@ export class SportsService {
             return_url: process.env.LOBBY_URL || 'https://lobby.slotcity.com',
             win_ratio: 0,
           };
-          this.logger.log(`[getGameUrl] SLOT API request - endpoint: ${apiEndpoint}, body: ${JSON.stringify(requestBody)}`);
+          this.logger.log(
+            `[getGameUrl] SLOT API request - endpoint: ${apiEndpoint}, body: ${JSON.stringify(requestBody)}`,
+          );
           const { data } = await firstValueFrom(
             this.httpService.post(
               apiEndpoint,
@@ -392,10 +481,14 @@ export class SportsService {
               getSlotConfig(this.slotInfo.apiToken),
             ),
           );
-          this.logger.log(`[getGameUrl] SLOT API response: ${JSON.stringify(data)}`);
+          this.logger.log(
+            `[getGameUrl] SLOT API response: ${JSON.stringify(data)}`,
+          );
           return { url: data?.data?.game_url };
         } catch (ex: any) {
-          this.logger.error(`[getGameUrl] SLOT API error: ${ex?.message}, response: ${JSON.stringify(ex?.response?.data)}`);
+          this.logger.error(
+            `[getGameUrl] SLOT API error: ${ex?.message}, response: ${JSON.stringify(ex?.response?.data)}`,
+          );
           return null;
         }
       }
@@ -425,7 +518,9 @@ export class SportsService {
       else {
         // OroPlay Live Casino
         try {
-          this.logger.log(`[getGameUrl] LIVE (OroPlay) path - uuid: ${uuid}, user: ${user.username}`);
+          this.logger.log(
+            `[getGameUrl] LIVE (OroPlay) path - uuid: ${uuid}, user: ${user.username}`,
+          );
           const launchUrl = await this.getOroPlayLaunchUrl(
             game.vendor_code,
             game.game_code,
@@ -435,7 +530,9 @@ export class SportsService {
           this.logger.log(`[getGameUrl] LIVE (OroPlay) launch URL received`);
           return { url: launchUrl };
         } catch (error: any) {
-          this.logger.error(`[getGameUrl] LIVE (OroPlay) error - game: ${uuid}, message: ${error?.message}`);
+          this.logger.error(
+            `[getGameUrl] LIVE (OroPlay) error - game: ${uuid}, message: ${error?.message}`,
+          );
           return null;
         }
       }
@@ -472,12 +569,12 @@ export class SportsService {
 
     const items = await this.dataSource.query(
       `SELECT * FROM casino_game_logs ${whereClause} ORDER BY created_at DESC LIMIT $${paramIndex++} OFFSET $${paramIndex++}`,
-      [...values, size, offset]
+      [...values, size, offset],
     );
 
     const countResult = await this.dataSource.query(
       `SELECT COUNT(*)::int AS total FROM casino_game_logs ${whereClause}`,
-      values
+      values,
     );
 
     return {
@@ -490,9 +587,13 @@ export class SportsService {
     try {
       this.logger.log('[OroPlay] Starting live casino games sync...');
       const liveVendors = await this.getOroPlayLiveVendors();
-      this.logger.log(`[OroPlay] Found ${liveVendors.length} live casino vendors`);
+      this.logger.log(
+        `[OroPlay] Found ${liveVendors.length} live casino vendors`,
+      );
 
-      await this.dataSource.query(`DELETE FROM casino_games WHERE type NOT IN ('slots', 'instant')`);
+      await this.dataSource.query(
+        `DELETE FROM casino_games WHERE type NOT IN ('slots', 'instant')`,
+      );
 
       let totalInserted = 0;
 
@@ -507,7 +608,11 @@ export class SportsService {
             if (nameLower.includes('roulette')) type = 'roulette';
             else if (nameLower.includes('baccarat')) type = 'baccarat';
             else if (nameLower.includes('blackjack')) type = 'blackjack';
-            else if (nameLower.includes('poker') || nameLower.includes('holdem')) type = 'table';
+            else if (
+              nameLower.includes('poker') ||
+              nameLower.includes('holdem')
+            )
+              type = 'table';
 
             const uuid = `${vendor.vendorCode}_${game.gameCode}`;
             await this.dataSource.query(
@@ -542,25 +647,38 @@ export class SportsService {
                 0,
                 0,
                 0,
-                JSON.stringify({ rtp: 95, volatility: null, reels_count: null, lines_count: null }),
+                JSON.stringify({
+                  rtp: 95,
+                  volatility: null,
+                  reels_count: null,
+                  lines_count: null,
+                }),
                 '[]',
                 '[]',
                 '[]',
                 game.isNew || false,
-              ]
+              ],
             );
             totalInserted++;
           }
           await wait(500);
         } catch (vendorError: any) {
-          this.logger.error(`[OroPlay] Error fetching games for ${vendor.vendorCode}: ${vendorError?.message}`);
+          this.logger.error(
+            `[OroPlay] Error fetching games for ${vendor.vendorCode}: ${vendorError?.message}`,
+          );
         }
       }
 
-      this.logger.log(`[OroPlay] Live casino sync complete. Total: ${totalInserted} games`);
-      return { msg: `all games updated. Total: ${totalInserted} games from ${liveVendors.length} vendors` };
+      this.logger.log(
+        `[OroPlay] Live casino sync complete. Total: ${totalInserted} games`,
+      );
+      return {
+        msg: `all games updated. Total: ${totalInserted} games from ${liveVendors.length} vendors`,
+      };
     } catch (ex: any) {
-      this.logger.error(`[OroPlay] updateLiveCasinoGames error: ${ex?.message}`);
+      this.logger.error(
+        `[OroPlay] updateLiveCasinoGames error: ${ex?.message}`,
+      );
       return { msg: 'error occurred: ' + ex?.message };
     }
   }
@@ -590,9 +708,15 @@ export class SportsService {
 
   validateOroPlayBasicAuth(authHeader: string): boolean {
     if (!authHeader || !authHeader.startsWith('Basic ')) return false;
-    const decoded = Buffer.from(authHeader.replace('Basic ', ''), 'base64').toString('utf-8');
+    const decoded = Buffer.from(
+      authHeader.replace('Basic ', ''),
+      'base64',
+    ).toString('utf-8');
     const [clientId, clientSecret] = decoded.split(':');
-    return clientId === this.oroplayInfo.clientId && clientSecret === this.oroplayInfo.clientSecret;
+    return (
+      clientId === this.oroplayInfo.clientId &&
+      clientSecret === this.oroplayInfo.clientSecret
+    );
   }
 
   validateMiniCallbackSign(sign: string): boolean {
@@ -607,12 +731,17 @@ export class SportsService {
       { headers: { Authorization: `Bearer ${token}` } },
     );
     if (!response.data.success) {
-      throw new Error(`OroPlay vendors/list failed: errorCode=${response.data.errorCode}`);
+      throw new Error(
+        `OroPlay vendors/list failed: errorCode=${response.data.errorCode}`,
+      );
     }
     return response.data.message.filter((v: any) => v.type === 1);
   }
 
-  async getOroPlayGamesList(vendorCode: string, language = 'en'): Promise<any[]> {
+  async getOroPlayGamesList(
+    vendorCode: string,
+    language = 'en',
+  ): Promise<any[]> {
     const token = await this.getOroPlayToken();
     const response = await axios.post(
       `${this.oroplayInfo.apiUrl}/games/list`,
@@ -620,12 +749,19 @@ export class SportsService {
       { headers: { Authorization: `Bearer ${token}` } },
     );
     if (!response.data.success) {
-      throw new Error(`OroPlay games/list failed for ${vendorCode}: errorCode=${response.data.errorCode}`);
+      throw new Error(
+        `OroPlay games/list failed for ${vendorCode}: errorCode=${response.data.errorCode}`,
+      );
     }
     return response.data.message;
   }
 
-  async getOroPlayLaunchUrl(vendorCode: string, gameCode: string, userCode: string, language = 'en'): Promise<string> {
+  async getOroPlayLaunchUrl(
+    vendorCode: string,
+    gameCode: string,
+    userCode: string,
+    language = 'en',
+  ): Promise<string> {
     const token = await this.getOroPlayToken();
     const response = await axios.post(
       `${this.oroplayInfo.apiUrl}/game/launch-url`,
@@ -639,7 +775,9 @@ export class SportsService {
       { headers: { Authorization: `Bearer ${token}` } },
     );
     if (!response.data.success) {
-      throw new Error(`OroPlay launch-url failed: errorCode=${response.data.errorCode}`);
+      throw new Error(
+        `OroPlay launch-url failed: errorCode=${response.data.errorCode}`,
+      );
     }
     return response.data.message;
   }
@@ -649,7 +787,7 @@ export class SportsService {
       `SELECT u.id, w.balance FROM users u 
        JOIN wallets w ON w.user_id = u.id 
        WHERE u.username = $1 LIMIT 1`,
-      [userCode]
+      [userCode],
     );
     if (!rows.length) {
       return { success: false, message: 0, errorCode: 2 }; // USER_DOES_NOT_EXIST
@@ -671,7 +809,9 @@ export class SportsService {
     _detail: string,
     _createdAt: string,
   ) {
-    this.logger.log(`[OroPlay TX] userCode=${userCode}, vendorCode=${vendorCode}, gameCode=${gameCode}, amount=${amount}, txCode=${transactionCode}, isCanceled=${isCanceled}`);
+    this.logger.log(
+      `[OroPlay TX] userCode=${userCode}, vendorCode=${vendorCode}, gameCode=${gameCode}, amount=${amount}, txCode=${transactionCode}, isCanceled=${isCanceled}`,
+    );
 
     const qr = this.dataSource.createQueryRunner();
     await qr.connect();
@@ -680,24 +820,30 @@ export class SportsService {
     try {
       const existingTx = await qr.query(
         `SELECT id FROM casino_game_logs WHERE transaction_id = $1 LIMIT 1`,
-        [transactionCode]
+        [transactionCode],
       );
       if (existingTx.length > 0) {
-        this.logger.warn(`[OroPlay TX] Duplicate transaction: ${transactionCode}`);
+        this.logger.warn(
+          `[OroPlay TX] Duplicate transaction: ${transactionCode}`,
+        );
         const userWallet = await qr.query(
           `SELECT w.balance FROM users u 
            JOIN wallets w ON w.user_id = u.id 
            WHERE u.username = $1 LIMIT 1`,
-          [userCode]
+          [userCode],
         );
         await qr.rollbackTransaction();
         await qr.release();
-        return { success: false, message: Number(userWallet[0]?.balance ?? 0), errorCode: 6 }; // DUPLICATE_TRANSACTION
+        return {
+          success: false,
+          message: Number(userWallet[0]?.balance ?? 0),
+          errorCode: 6,
+        }; // DUPLICATE_TRANSACTION
       }
 
       const userRows = await qr.query(
         `SELECT id, username, vip_level FROM users WHERE username = $1 LIMIT 1`,
-        [userCode]
+        [userCode],
       );
       if (!userRows.length) {
         await qr.rollbackTransaction();
@@ -708,7 +854,7 @@ export class SportsService {
 
       const walletRows = await qr.query(
         `SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`,
-        [user.id]
+        [user.id],
       );
       if (!walletRows.length) {
         await qr.rollbackTransaction();
@@ -725,62 +871,92 @@ export class SportsService {
 
       const newBalance = currentBalance + amount;
 
-      await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBalance, user.id]);
+      await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [
+        newBalance,
+        user.id,
+      ]);
 
       const gameRows = await qr.query(
         `SELECT uuid, name, provider, type FROM casino_games 
          WHERE (vendor_code = $1 AND game_code = $2) OR uuid = $3 LIMIT 1`,
-        [vendorCode, gameCode, gameCode]
+        [vendorCode, gameCode, gameCode],
       );
       const game = gameRows[0];
 
       const isBet = amount < 0;
-      const action = isCanceled ? 'cancel' : (isBet ? 'bet' : 'win');
+      const action = isCanceled ? 'cancel' : isBet ? 'bet' : 'win';
       const absAmount = Math.abs(amount);
 
       const tx_id = `${user.username}_${game?.uuid ?? gameCode}_${Date.now()}`;
-      const userData = { user_id: user.id, username: user.username, vip_level: user.vip_level };
+      const userData = {
+        user_id: user.id,
+        username: user.username,
+        vip_level: user.vip_level,
+      };
 
       await qr.query(
         `INSERT INTO casino_game_logs 
            (user_id, user_name, game_uuid, game_name, game_provider, game_type, action, type, amount, tx_id, transaction_id, round_id, user_data)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
-         [
-           user.id,
-           user.username,
-           game?.uuid ?? gameCode,
-           game?.name ?? gameCode,
-           game?.provider ?? vendorCode,
-           game?.type ?? 'live',
-           action,
-           action,
-           absAmount,
-           tx_id,
-           transactionCode,
-           roundId,
-           JSON.stringify(userData),
-         ]
+        [
+          user.id,
+          user.username,
+          game?.uuid ?? gameCode,
+          game?.name ?? gameCode,
+          game?.provider ?? vendorCode,
+          game?.type ?? 'live',
+          action,
+          action,
+          absAmount,
+          tx_id,
+          transactionCode,
+          roundId,
+          JSON.stringify(userData),
+        ],
       );
 
-      const userCashLogType = isCanceled ? 'CasinoRefund' : (isBet ? 'CasinoBet' : 'CasinoWin');
+      const userCashLogType = isCanceled
+        ? 'CasinoRefund'
+        : isBet
+          ? 'CasinoBet'
+          : 'CasinoWin';
       await qr.query(
         `INSERT INTO user_cash_logs (user_id, user_data, amount, before_balance, after_balance, t_type, type)
          VALUES ($1, $2, $3, $4, $5, 'Casino', $6)`,
-        [user.id, JSON.stringify(userData), absAmount, currentBalance, newBalance, userCashLogType]
+        [
+          user.id,
+          JSON.stringify(userData),
+          absAmount,
+          currentBalance,
+          newBalance,
+          userCashLogType,
+        ],
       );
 
-      await this.handleAffiliateCommission(qr, user.id, user.username, absAmount, action, 'CASINO');
+      await this.handleAffiliateCommission(
+        qr,
+        user.id,
+        user.username,
+        absAmount,
+        action,
+        'CASINO',
+      );
 
       await qr.commitTransaction();
       await qr.release();
 
-      this.walletGateway.pushBalanceUpdate(user.id).catch((e) =>
-        this.logger.warn(`WS push failed (oroplay tx) userId=${user.id}: ${e.message}`),
+      this.walletGateway
+        .pushBalanceUpdate(user.id)
+        .catch((e) =>
+          this.logger.warn(
+            `WS push failed (oroplay tx) userId=${user.id}: ${e.message}`,
+          ),
+        );
+
+      this.logger.log(
+        `[OroPlay TX] Success - userCode=${userCode}, newBalance=${newBalance}`,
       );
-
-      this.logger.log(`[OroPlay TX] Success - userCode=${userCode}, newBalance=${newBalance}`);
       return { success: true, message: newBalance, errorCode: 0 };
-
     } catch (err: any) {
       await qr.rollbackTransaction();
       await qr.release();
@@ -817,7 +993,9 @@ export class SportsService {
     try {
       const apiProvidersEndpoint = `${this.slotInfo.apiUrl}/v4/game/providers`;
       const apiGamesEndpoint = `${this.slotInfo.apiUrl}/v4/game/games`;
-      await this.dataSource.query(`DELETE FROM casino_games WHERE type = 'slots'`);
+      await this.dataSource.query(
+        `DELETE FROM casino_games WHERE type = 'slots'`,
+      );
 
       const providersResponse = await firstValueFrom(
         this.httpService.post(
@@ -826,7 +1004,7 @@ export class SportsService {
           getSlotConfig(this.slotInfo.apiToken),
         ),
       );
-      
+
       let totalInserted = 0;
       for (const provider of providersResponse.data?.data) {
         const gamesResponse = await firstValueFrom(
@@ -859,12 +1037,17 @@ export class SportsService {
               0,
               0,
               0,
-              JSON.stringify({ rtp: 95, volatility: 'high', reels_count: 5, lines_count: 20 }),
+              JSON.stringify({
+                rtp: 95,
+                volatility: 'high',
+                reels_count: 5,
+                lines_count: 20,
+              }),
               '[]',
               '[]',
               '[]',
               false,
-            ]
+            ],
           );
           totalInserted++;
         }
@@ -892,8 +1075,10 @@ export class SportsService {
         ),
       );
       return data;
-    } catch (ex: any) {
-      this.logger.error(`[checkSlotGameUser] error: ${ex?.response?.data ? JSON.stringify(ex.response.data) : ex?.message ?? String(ex)}`);
+    } catch (ex:any) {
+      this.logger.error(
+        `[checkSlotGameUser] error: ${ex?.response?.data ? JSON.stringify(ex.response.data) : (ex?.message ?? String(ex))}`,
+      );
       return null;
     }
   }
@@ -928,7 +1113,7 @@ export class SportsService {
             const replacedUser = user_id.replace('_', '@').replace('_', '.');
             const userRows = await qr.query(
               `SELECT id, username, email, vip_level, account_status FROM users WHERE username = $1 OR email = $1 OR username = $2 OR email = $2 LIMIT 1`,
-              [user_id, replacedUser]
+              [user_id, replacedUser],
             );
             if (!userRows.length) {
               await qr.rollbackTransaction();
@@ -955,7 +1140,7 @@ export class SportsService {
             const amount = Number(data.amount);
             const walletRows = await qr.query(
               `SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`,
-              [user.id]
+              [user.id],
             );
             if (!walletRows.length || Number(walletRows[0].balance) < amount) {
               await qr.rollbackTransaction();
@@ -964,7 +1149,9 @@ export class SportsService {
                 result: checkNumber,
                 status: 'ERROR',
                 data: {
-                  balance: walletRows.length ? Number(walletRows[0].balance) : 0,
+                  balance: walletRows.length
+                    ? Number(walletRows[0].balance)
+                    : 0,
                 },
               };
             }
@@ -973,10 +1160,13 @@ export class SportsService {
           case 41: {
             transaction = await qr.query(
               `SELECT * FROM casino_game_logs WHERE transaction_id = $1 LIMIT 1`,
-              [data.trans_guid]
+              [data.trans_guid],
             );
             if (transaction.length > 0) {
-              const walletRes = await qr.query(`SELECT balance FROM wallets WHERE user_id = $1`, [user.id]);
+              const walletRes = await qr.query(
+                `SELECT balance FROM wallets WHERE user_id = $1`,
+                [user.id],
+              );
               await qr.rollbackTransaction();
               await qr.release();
               return {
@@ -992,10 +1182,13 @@ export class SportsService {
           case 42: {
             transaction = await qr.query(
               `SELECT * FROM casino_game_logs WHERE transaction_id = $1 LIMIT 1`,
-              [data.trans_guid]
+              [data.trans_guid],
             );
             if (!transaction.length) {
-              const walletRes = await qr.query(`SELECT balance FROM wallets WHERE user_id = $1`, [user.id]);
+              const walletRes = await qr.query(
+                `SELECT balance FROM wallets WHERE user_id = $1`,
+                [user.id],
+              );
               await qr.rollbackTransaction();
               await qr.release();
               return {
@@ -1015,7 +1208,10 @@ export class SportsService {
       let result: any = null;
       switch (command) {
         case 'authenticate': {
-          const walletRes = await qr.query(`SELECT balance FROM wallets WHERE user_id = $1`, [user.id]);
+          const walletRes = await qr.query(
+            `SELECT balance FROM wallets WHERE user_id = $1`,
+            [user.id],
+          );
           await qr.commitTransaction();
           await qr.release();
           return {
@@ -1028,7 +1224,10 @@ export class SportsService {
           };
         }
         case 'balance': {
-          const walletRes = await qr.query(`SELECT balance FROM wallets WHERE user_id = $1`, [user.id]);
+          const walletRes = await qr.query(
+            `SELECT balance FROM wallets WHERE user_id = $1`,
+            [user.id],
+          );
           await qr.commitTransaction();
           await qr.release();
           return {
@@ -1041,17 +1240,30 @@ export class SportsService {
         }
         case 'bet': {
           const amount = Number(data.amount);
-          const wallet = await qr.query(`SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`, [user.id]);
+          const wallet = await qr.query(
+            `SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`,
+            [user.id],
+          );
           const currentBalance = Number(wallet[0].balance);
           const newBalance = currentBalance - amount;
-          await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBalance, user.id]);
+          await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [
+            newBalance,
+            user.id,
+          ]);
 
-          const games = await qr.query(`SELECT uuid, name, provider, type FROM casino_games WHERE game_symbol = $1 LIMIT 1`, [data.game_code]);
+          const games = await qr.query(
+            `SELECT uuid, name, provider, type FROM casino_games WHERE game_symbol = $1 LIMIT 1`,
+            [data.game_code],
+          );
           const game = games[0];
-          
+
           const tx_id = `${user.username}_${game?.uuid ?? 'Unknown'}_${Date.now()}`;
-          const userData = { user_id: user.id, username: user.username, vip_level: user.vip_level };
-          
+          const userData = {
+            user_id: user.id,
+            username: user.username,
+            vip_level: user.vip_level,
+          };
+
           await qr.query(
             `INSERT INTO casino_game_logs 
                (user_id, user_name, game_uuid, game_name, game_provider, game_type, action, type, amount, tx_id, transaction_id, round_id, user_data)
@@ -1068,24 +1280,41 @@ export class SportsService {
               data.trans_guid,
               data.round_id,
               JSON.stringify(userData),
-            ]
+            ],
           );
 
           await qr.query(
             `INSERT INTO user_cash_logs 
                (user_id, user_data, amount, before_balance, after_balance, t_type, type)
              VALUES ($1, $2, $3, $4, $5, 'Casino', 'CasinoBet')`,
-            [user.id, JSON.stringify(userData), amount, currentBalance, newBalance]
+            [
+              user.id,
+              JSON.stringify(userData),
+              amount,
+              currentBalance,
+              newBalance,
+            ],
           );
 
-          await this.handleAffiliateCommission(qr, user.id, user.username, amount, 'bet', 'CASINO');
+          await this.handleAffiliateCommission(
+            qr,
+            user.id,
+            user.username,
+            amount,
+            'bet',
+            'CASINO',
+          );
 
           await qr.commitTransaction();
           await qr.release();
 
-          this.walletGateway.pushBalanceUpdate(user.id).catch((e) =>
-            this.logger.warn(`WS push failed (bet) userId=${user.id}: ${e.message}`),
-          );
+          this.walletGateway
+            .pushBalanceUpdate(user.id)
+            .catch((e) =>
+              this.logger.warn(
+                `WS push failed (bet) userId=${user.id}: ${e.message}`,
+              ),
+            );
 
           result = {
             result: 0,
@@ -1098,17 +1327,30 @@ export class SportsService {
         }
         case 'win': {
           const amount = Number(data.amount);
-          const wallet = await qr.query(`SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`, [user.id]);
+          const wallet = await qr.query(
+            `SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`,
+            [user.id],
+          );
           const currentBalance = Number(wallet[0].balance);
           const newBalance = currentBalance + amount;
-          await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBalance, user.id]);
+          await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [
+            newBalance,
+            user.id,
+          ]);
 
-          const games = await qr.query(`SELECT uuid, name, provider, type FROM casino_games WHERE game_symbol = $1 LIMIT 1`, [data.game_code]);
+          const games = await qr.query(
+            `SELECT uuid, name, provider, type FROM casino_games WHERE game_symbol = $1 LIMIT 1`,
+            [data.game_code],
+          );
           const game = games[0];
-          
+
           const tx_id = `${user.username}_${game?.uuid ?? 'Unknown'}_${Date.now()}`;
-          const userData = { user_id: user.id, username: user.username, vip_level: user.vip_level };
-          
+          const userData = {
+            user_id: user.id,
+            username: user.username,
+            vip_level: user.vip_level,
+          };
+
           await qr.query(
             `INSERT INTO casino_game_logs 
                (user_id, user_name, game_uuid, game_name, game_provider, game_type, action, type, amount, tx_id, transaction_id, round_id, user_data)
@@ -1125,24 +1367,41 @@ export class SportsService {
               data.trans_guid,
               data.round_id,
               JSON.stringify(userData),
-            ]
+            ],
           );
 
           await qr.query(
             `INSERT INTO user_cash_logs 
                (user_id, user_data, amount, before_balance, after_balance, t_type, type)
              VALUES ($1, $2, $3, $4, $5, 'Casino', 'CasinoWin')`,
-            [user.id, JSON.stringify(userData), amount, currentBalance, newBalance]
+            [
+              user.id,
+              JSON.stringify(userData),
+              amount,
+              currentBalance,
+              newBalance,
+            ],
           );
 
-          await this.handleAffiliateCommission(qr, user.id, user.username, amount, 'win', 'CASINO');
+          await this.handleAffiliateCommission(
+            qr,
+            user.id,
+            user.username,
+            amount,
+            'win',
+            'CASINO',
+          );
 
           await qr.commitTransaction();
           await qr.release();
 
-          this.walletGateway.pushBalanceUpdate(user.id).catch((e) =>
-            this.logger.warn(`WS push failed (win) userId=${user.id}: ${e.message}`),
-          );
+          this.walletGateway
+            .pushBalanceUpdate(user.id)
+            .catch((e) =>
+              this.logger.warn(
+                `WS push failed (win) userId=${user.id}: ${e.message}`,
+              ),
+            );
 
           result = {
             result: 0,
@@ -1154,26 +1413,45 @@ export class SportsService {
           break;
         }
         case 'cancel': {
-          if (transaction.type !== 'cancel' && transaction.action !== 'cancel') {
+          if (
+            transaction.type !== 'cancel' &&
+            transaction.action !== 'cancel'
+          ) {
             const amount = Number(data.amount);
-            const wallet = await qr.query(`SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`, [user.id]);
+            const wallet = await qr.query(
+              `SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`,
+              [user.id],
+            );
             const currentBalance = Number(wallet[0].balance);
-            
+
             let newBalance = currentBalance;
             if (transaction.type === 'bet' || transaction.action === 'bet') {
               newBalance = currentBalance + Number(transaction.amount);
-            } else if (transaction.type === 'win' || transaction.action === 'win') {
+            } else if (
+              transaction.type === 'win' ||
+              transaction.action === 'win'
+            ) {
               newBalance = currentBalance - Number(transaction.amount);
             }
 
-            await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBalance, user.id]);
+            await qr.query(
+              `UPDATE wallets SET balance = $1 WHERE user_id = $2`,
+              [newBalance, user.id],
+            );
 
-            const games = await qr.query(`SELECT uuid, name, provider, type FROM casino_games WHERE game_symbol = $1 LIMIT 1`, [data.game_code]);
+            const games = await qr.query(
+              `SELECT uuid, name, provider, type FROM casino_games WHERE game_symbol = $1 LIMIT 1`,
+              [data.game_code],
+            );
             const game = games[0];
-            
+
             const tx_id = `${user.username}_${game?.uuid ?? 'Unknown'}_${Date.now()}`;
-            const userData = { user_id: user.id, username: user.username, vip_level: user.vip_level };
-            
+            const userData = {
+              user_id: user.id,
+              username: user.username,
+              vip_level: user.vip_level,
+            };
+
             await qr.query(
               `INSERT INTO casino_game_logs 
                  (user_id, user_name, game_uuid, game_name, game_provider, game_type, action, type, amount, tx_id, transaction_id, round_id, rollback, user_data)
@@ -1191,24 +1469,41 @@ export class SportsService {
                 data.round_id,
                 data.trans_guid,
                 JSON.stringify(userData),
-              ]
+              ],
             );
 
             await qr.query(
               `INSERT INTO user_cash_logs 
                  (user_id, user_data, amount, before_balance, after_balance, t_type, type)
                VALUES ($1, $2, $3, $4, $5, 'Casino', 'CasinoRefund')`,
-              [user.id, JSON.stringify(userData), amount, currentBalance, newBalance]
+              [
+                user.id,
+                JSON.stringify(userData),
+                amount,
+                currentBalance,
+                newBalance,
+              ],
             );
 
-            await this.handleAffiliateCommission(qr, user.id, user.username, amount, 'refund', 'CASINO');
+            await this.handleAffiliateCommission(
+              qr,
+              user.id,
+              user.username,
+              amount,
+              'refund',
+              'CASINO',
+            );
 
             await qr.commitTransaction();
             await qr.release();
 
-            this.walletGateway.pushBalanceUpdate(user.id).catch((e) =>
-              this.logger.warn(`WS push failed (cancel) userId=${user.id}: ${e.message}`),
-            );
+            this.walletGateway
+              .pushBalanceUpdate(user.id)
+              .catch((e) =>
+                this.logger.warn(
+                  `WS push failed (cancel) userId=${user.id}: ${e.message}`,
+                ),
+              );
 
             result = {
               result: 0,
@@ -1218,7 +1513,10 @@ export class SportsService {
               },
             };
           } else {
-            const walletRes = await qr.query(`SELECT balance FROM wallets WHERE user_id = $1`, [user.id]);
+            const walletRes = await qr.query(
+              `SELECT balance FROM wallets WHERE user_id = $1`,
+              [user.id],
+            );
             await qr.commitTransaction();
             await qr.release();
             result = {
@@ -1250,7 +1548,9 @@ export class SportsService {
     } catch (ex: any) {
       await qr.rollbackTransaction();
       await qr.release();
-      this.logger.error(`[consumeSlotGameCallback] error: ${ex?.message ?? String(ex)}`);
+      this.logger.error(
+        `[consumeSlotGameCallback] error: ${ex?.message ?? String(ex)}`,
+      );
       return {
         result: 99,
         status: 'ERROR',
@@ -1265,10 +1565,14 @@ export class SportsService {
     callbackToken: string,
   ) {
     this.logger.log(`[SportsCallback] ========== START ==========`);
-    this.logger.log(`[SportsCallback] command=${command}, userName=${data.userName}, amount=${data.amount}, type=${data.type}, trans_id=${data.trans_id}`);
-    
+    this.logger.log(
+      `[SportsCallback] command=${command}, userName=${data.userName}, amount=${data.amount}, type=${data.type}, trans_id=${data.trans_id}`,
+    );
+
     if (this.spotsInfo.callbackToken !== callbackToken) {
-      this.logger.warn(`[SportsCallback] Invalid callback token. Expected=${this.spotsInfo.callbackToken}, Got=${callbackToken}`);
+      this.logger.warn(
+        `[SportsCallback] Invalid callback token. Expected=${this.spotsInfo.callbackToken}, Got=${callbackToken}`,
+      );
       return {
         result: 100,
         status: 'error',
@@ -1282,7 +1586,7 @@ export class SportsService {
     try {
       const userRows = await qr.query(
         `SELECT id, username, account_status FROM users WHERE username = $1 LIMIT 1`,
-        [data.userName]
+        [data.userName],
       );
       if (!userRows.length) {
         await qr.rollbackTransaction();
@@ -1307,12 +1611,14 @@ export class SportsService {
 
       const walletRows = await qr.query(
         `SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`,
-        [user.id]
+        [user.id],
       );
       const currentBalance = Number(walletRows[0]?.balance ?? 0);
 
       if (command === 'bet' && currentBalance < Number(data.amount)) {
-        this.logger.warn(`[SportsCallback] Insufficient balance: user=${user.username}, balance=${currentBalance}, required=${data.amount}`);
+        this.logger.warn(
+          `[SportsCallback] Insufficient balance: user=${user.username}, balance=${currentBalance}, required=${data.amount}`,
+        );
         await qr.rollbackTransaction();
         await qr.release();
         return {
@@ -1336,7 +1642,10 @@ export class SportsService {
           const totalStake = Number(data.amount);
           const newBalance = currentBalance - totalStake;
 
-          await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBalance, user.id]);
+          await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [
+            newBalance,
+            user.id,
+          ]);
 
           for (const betData of data.betList) {
             await qr.query(
@@ -1350,7 +1659,7 @@ export class SportsService {
                 betData.totalStake,
                 data.type,
                 data.dateTime,
-              ]
+              ],
             );
           }
 
@@ -1358,10 +1667,23 @@ export class SportsService {
           await qr.query(
             `INSERT INTO user_cash_logs (user_id, user_data, amount, before_balance, after_balance, t_type, type)
              VALUES ($1, $2, $3, $4, $5, 'Sports', 'SportsBet')`,
-            [user.id, JSON.stringify(userData), totalStake, currentBalance, newBalance]
+            [
+              user.id,
+              JSON.stringify(userData),
+              totalStake,
+              currentBalance,
+              newBalance,
+            ],
           );
 
-          await this.handleAffiliateCommission(qr, user.id, user.username, totalStake, 'bet', 'SPORTS');
+          await this.handleAffiliateCommission(
+            qr,
+            user.id,
+            user.username,
+            totalStake,
+            'bet',
+            'SPORTS',
+          );
 
           result = {
             code: 0,
@@ -1375,11 +1697,14 @@ export class SportsService {
           const winAmount = Number(data.amount);
           const newBalance = currentBalance + winAmount;
 
-          await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [newBalance, user.id]);
+          await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [
+            newBalance,
+            user.id,
+          ]);
 
           const betLogs = await qr.query(
             `SELECT * FROM sports_bet_logs WHERE trans_id = $1 LIMIT 1`,
-            [data.trans_id]
+            [data.trans_id],
           );
           if (betLogs.length > 0) {
             const betLog = betLogs[0];
@@ -1389,20 +1714,35 @@ export class SportsService {
             }
             await qr.query(
               `UPDATE sports_bet_logs SET bet_list = $1, type = $2 WHERE id = $3`,
-              [JSON.stringify(updatedBetList), data.type, betLog.id]
+              [JSON.stringify(updatedBetList), data.type, betLog.id],
             );
           } else {
-            this.logger.warn(`[SportsCallback] WIN: BetLog NOT FOUND for trans_id=${data.trans_id}`);
+            this.logger.warn(
+              `[SportsCallback] WIN: BetLog NOT FOUND for trans_id=${data.trans_id}`,
+            );
           }
 
           const userData = { user_id: user.id, username: user.username };
           await qr.query(
             `INSERT INTO user_cash_logs (user_id, user_data, amount, before_balance, after_balance, t_type, type)
              VALUES ($1, $2, $3, $4, $5, 'Sports', 'SportsWin')`,
-            [user.id, JSON.stringify(userData), winAmount, currentBalance, newBalance]
+            [
+              user.id,
+              JSON.stringify(userData),
+              winAmount,
+              currentBalance,
+              newBalance,
+            ],
           );
 
-          await this.handleAffiliateCommission(qr, user.id, user.username, winAmount, 'win', 'SPORTS');
+          await this.handleAffiliateCommission(
+            qr,
+            user.id,
+            user.username,
+            winAmount,
+            'win',
+            'SPORTS',
+          );
 
           result = {
             code: 0,
@@ -1417,18 +1757,26 @@ export class SportsService {
       await qr.release();
 
       if (['bet', 'win'].includes(command)) {
-        this.walletGateway.pushBalanceUpdate(user.id).catch((e) =>
-          this.logger.warn(`WS push failed for user ${user.id}: ${e.message}`),
-        );
+        this.walletGateway
+          .pushBalanceUpdate(user.id)
+          .catch((e) =>
+            this.logger.warn(
+              `WS push failed for user ${user.id}: ${e.message}`,
+            ),
+          );
       }
 
-      this.logger.log(`[SportsCallback] ========== END: command=${command}, result code=${result?.code} ==========`);
+      this.logger.log(
+        `[SportsCallback] ========== END: command=${command}, result code=${result?.code} ==========`,
+      );
       return result;
-
     } catch (ex: any) {
       await qr.rollbackTransaction();
       await qr.release();
-      this.logger.error(`[SportsCallback] CRITICAL ERROR: ${ex?.message}`, ex?.stack);
+      this.logger.error(
+        `[SportsCallback] CRITICAL ERROR: ${ex?.message}`,
+        ex?.stack,
+      );
       return {
         code: 99,
         message: 'ERROR',
@@ -1441,7 +1789,7 @@ export class SportsService {
     console.log('GetBalance');
     const wallet = await this.dataSource.query(
       `SELECT balance FROM wallets WHERE user_id = $1`,
-      [Number(reqData.userId)]
+      [Number(reqData.userId)],
     );
     return {
       status: 'ok',
@@ -1462,7 +1810,7 @@ export class SportsService {
     try {
       const userRows = await qr.query(
         `SELECT id, username, vip_level FROM users WHERE id = $1 LIMIT 1`,
-        [userId]
+        [userId],
       );
       if (!userRows.length) {
         await qr.rollbackTransaction();
@@ -1473,24 +1821,32 @@ export class SportsService {
 
       const walletRows = await qr.query(
         `SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`,
-        [userId]
+        [userId],
       );
       const beforeBalance = Number(walletRows[0].balance);
-      const afterBalance = beforeBalance - reqData.betAmount + reqData.winAmount;
+      const afterBalance =
+        beforeBalance - reqData.betAmount + reqData.winAmount;
 
-      await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [afterBalance, userId]);
+      await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [
+        afterBalance,
+        userId,
+      ]);
 
       const games = await qr.query(
         `SELECT uuid, name, provider, type FROM casino_games WHERE game_symbol = $1 LIMIT 1`,
-        [reqData.gameCode]
+        [reqData.gameCode],
       );
       const game = games[0];
 
       const tx_id = `${user.username}_${game?.uuid ?? 'Unknown'}_${Date.now()}`;
       const transaction_id = `${reqData.transactionId}_${Date.now()}`;
       const transaction_id_win = `${reqData.transactionId}1_${Date.now()}`;
-      
-      const userData = { user_id: user.id, username: user.username, vip_level: user.vip_level };
+
+      const userData = {
+        user_id: user.id,
+        username: user.username,
+        vip_level: user.vip_level,
+      };
 
       await qr.query(
         `INSERT INTO casino_game_logs 
@@ -1508,7 +1864,7 @@ export class SportsService {
           transaction_id,
           transaction_id,
           JSON.stringify(userData),
-        ]
+        ],
       );
 
       await qr.query(
@@ -1527,30 +1883,60 @@ export class SportsService {
           transaction_id_win,
           transaction_id,
           JSON.stringify(userData),
-        ]
+        ],
       );
 
       await qr.query(
         `INSERT INTO user_cash_logs (user_id, user_data, amount, before_balance, after_balance, t_type, type)
          VALUES ($1, $2, $3, $4, $5, 'Casino', 'CasinoBet')`,
-        [user.id, JSON.stringify(userData), reqData.betAmount, beforeBalance, beforeBalance - reqData.betAmount]
+        [
+          user.id,
+          JSON.stringify(userData),
+          reqData.betAmount,
+          beforeBalance,
+          beforeBalance - reqData.betAmount,
+        ],
       );
 
       await qr.query(
         `INSERT INTO user_cash_logs (user_id, user_data, amount, before_balance, after_balance, t_type, type)
          VALUES ($1, $2, $3, $4, $5, 'Casino', 'CasinoWin')`,
-        [user.id, JSON.stringify(userData), reqData.winAmount, beforeBalance - reqData.betAmount, afterBalance]
+        [
+          user.id,
+          JSON.stringify(userData),
+          reqData.winAmount,
+          beforeBalance - reqData.betAmount,
+          afterBalance,
+        ],
       );
 
-      await this.handleAffiliateCommission(qr, user.id, user.username, reqData.betAmount, 'bet', 'MINI_GAME');
-      await this.handleAffiliateCommission(qr, user.id, user.username, reqData.winAmount, 'win', 'MINI_GAME');
+      await this.handleAffiliateCommission(
+        qr,
+        user.id,
+        user.username,
+        reqData.betAmount,
+        'bet',
+        'MINI_GAME',
+      );
+      await this.handleAffiliateCommission(
+        qr,
+        user.id,
+        user.username,
+        reqData.winAmount,
+        'win',
+        'MINI_GAME',
+      );
 
       await qr.commitTransaction();
       await qr.release();
 
-      this.walletGateway.pushBalanceUpdate(user.id).catch((e) =>
-        this.logger.warn(`WS push failed (mini betwin) userId=${user.id}: ${e.message}`),
-      );
+      this.walletGateway
+        .pushBalanceUpdate(user.id)
+        .catch((e) =>
+          this.logger.warn(
+            `WS push failed (mini betwin) userId=${user.id}: ${e.message}`,
+          ),
+        );
 
       return {
         status: 'ok',
@@ -1559,7 +1945,9 @@ export class SportsService {
     } catch (err: any) {
       await qr.rollbackTransaction();
       await qr.release();
-      this.logger.error(`Mini betwin transaction save error: ${err?.message ?? String(err)}`);
+      this.logger.error(
+        `Mini betwin transaction save error: ${err?.message ?? String(err)}`,
+      );
       return { success: false, msg: 'Transaction save error' };
     }
   }
@@ -1575,7 +1963,7 @@ export class SportsService {
     try {
       const userRows = await qr.query(
         `SELECT id, username, vip_level FROM users WHERE id = $1 LIMIT 1`,
-        [userId]
+        [userId],
       );
       if (!userRows.length) {
         await qr.rollbackTransaction();
@@ -1586,22 +1974,29 @@ export class SportsService {
 
       const walletRows = await qr.query(
         `SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`,
-        [userId]
+        [userId],
       );
       const beforeBalance = Number(walletRows[0].balance);
       const afterBalance = beforeBalance - reqData.amount;
 
-      await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [afterBalance, userId]);
+      await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [
+        afterBalance,
+        userId,
+      ]);
 
       const games = await qr.query(
         `SELECT uuid, name, provider, type FROM casino_games WHERE game_symbol = $1 LIMIT 1`,
-        [reqData.gameCode]
+        [reqData.gameCode],
       );
       const game = games[0];
 
       const tx_id = `${user.username}_${game?.uuid ?? 'Unknown'}_${Date.now()}`;
       const transaction_id = `${reqData.transactionId}_${Date.now()}`;
-      const userData = { user_id: user.id, username: user.username, vip_level: user.vip_level };
+      const userData = {
+        user_id: user.id,
+        username: user.username,
+        vip_level: user.vip_level,
+      };
 
       await qr.query(
         `INSERT INTO casino_game_logs 
@@ -1619,23 +2014,40 @@ export class SportsService {
           transaction_id,
           transaction_id,
           JSON.stringify(userData),
-        ]
+        ],
       );
 
       await qr.query(
         `INSERT INTO user_cash_logs (user_id, user_data, amount, before_balance, after_balance, t_type, type)
          VALUES ($1, $2, $3, $4, $5, 'Casino', 'CasinoBet')`,
-        [user.id, JSON.stringify(userData), reqData.amount, beforeBalance, afterBalance]
+        [
+          user.id,
+          JSON.stringify(userData),
+          reqData.amount,
+          beforeBalance,
+          afterBalance,
+        ],
       );
 
-      await this.handleAffiliateCommission(qr, user.id, user.username, reqData.amount, 'bet', 'MINI_GAME');
+      await this.handleAffiliateCommission(
+        qr,
+        user.id,
+        user.username,
+        reqData.amount,
+        'bet',
+        'MINI_GAME',
+      );
 
       await qr.commitTransaction();
       await qr.release();
 
-      this.walletGateway.pushBalanceUpdate(user.id).catch((e) =>
-        this.logger.warn(`WS push failed (mini withdraw) userId=${user.id}: ${e.message}`),
-      );
+      this.walletGateway
+        .pushBalanceUpdate(user.id)
+        .catch((e) =>
+          this.logger.warn(
+            `WS push failed (mini withdraw) userId=${user.id}: ${e.message}`,
+          ),
+        );
 
       return {
         status: 'ok',
@@ -1644,7 +2056,9 @@ export class SportsService {
     } catch (err: any) {
       await qr.rollbackTransaction();
       await qr.release();
-      this.logger.error(`Mini withdraw transaction save error: ${err?.message ?? String(err)}`);
+      this.logger.error(
+        `Mini withdraw transaction save error: ${err?.message ?? String(err)}`,
+      );
       return { success: false, msg: 'Transaction save error' };
     }
   }
@@ -1660,7 +2074,7 @@ export class SportsService {
     try {
       const userRows = await qr.query(
         `SELECT id, username, vip_level FROM users WHERE id = $1 LIMIT 1`,
-        [userId]
+        [userId],
       );
       if (!userRows.length) {
         await qr.rollbackTransaction();
@@ -1671,22 +2085,29 @@ export class SportsService {
 
       const walletRows = await qr.query(
         `SELECT balance FROM wallets WHERE user_id = $1 FOR UPDATE`,
-        [userId]
+        [userId],
       );
       const beforeBalance = Number(walletRows[0].balance);
       const afterBalance = beforeBalance + reqData.amount;
 
-      await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [afterBalance, userId]);
+      await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [
+        afterBalance,
+        userId,
+      ]);
 
       const games = await qr.query(
         `SELECT uuid, name, provider, type FROM casino_games WHERE game_symbol = $1 LIMIT 1`,
-        [reqData.gameCode]
+        [reqData.gameCode],
       );
       const game = games[0];
 
       const tx_id = `${user.username}_${game?.uuid ?? 'Unknown'}_${Date.now()}`;
       const transaction_id = `${reqData.transactionId}_${Date.now()}`;
-      const userData = { user_id: user.id, username: user.username, vip_level: user.vip_level };
+      const userData = {
+        user_id: user.id,
+        username: user.username,
+        vip_level: user.vip_level,
+      };
 
       await qr.query(
         `INSERT INTO casino_game_logs 
@@ -1704,23 +2125,40 @@ export class SportsService {
           transaction_id,
           transaction_id,
           JSON.stringify(userData),
-        ]
+        ],
       );
 
       await qr.query(
         `INSERT INTO user_cash_logs (user_id, user_data, amount, before_balance, after_balance, t_type, type)
          VALUES ($1, $2, $3, $4, $5, 'Casino', 'CasinoWin')`,
-        [user.id, JSON.stringify(userData), reqData.amount, beforeBalance, afterBalance]
+        [
+          user.id,
+          JSON.stringify(userData),
+          reqData.amount,
+          beforeBalance,
+          afterBalance,
+        ],
       );
 
-      await this.handleAffiliateCommission(qr, user.id, user.username, reqData.amount, 'win', 'MINI_GAME');
+      await this.handleAffiliateCommission(
+        qr,
+        user.id,
+        user.username,
+        reqData.amount,
+        'win',
+        'MINI_GAME',
+      );
 
       await qr.commitTransaction();
       await qr.release();
 
-      this.walletGateway.pushBalanceUpdate(user.id).catch((e) =>
-        this.logger.warn(`WS push failed (mini deposit) userId=${user.id}: ${e.message}`),
-      );
+      this.walletGateway
+        .pushBalanceUpdate(user.id)
+        .catch((e) =>
+          this.logger.warn(
+            `WS push failed (mini deposit) userId=${user.id}: ${e.message}`,
+          ),
+        );
 
       return {
         status: 'ok',
@@ -1729,7 +2167,9 @@ export class SportsService {
     } catch (err: any) {
       await qr.rollbackTransaction();
       await qr.release();
-      this.logger.error(`Mini deposit transaction save error: ${err?.message ?? String(err)}`);
+      this.logger.error(
+        `Mini deposit transaction save error: ${err?.message ?? String(err)}`,
+      );
       return { success: false, msg: 'Transaction save error' };
     }
   }
@@ -1740,19 +2180,19 @@ export class SportsService {
     _username: string,
     amount: number,
     action: string,
-    source: string
+    source: string,
   ) {
     try {
       const referral = await qr.query(
         `SELECT referrer_user_id FROM referrals WHERE referee_user_id = $1 LIMIT 1`,
-        [userId]
+        [userId],
       );
       if (!referral.length) return;
       const referrerId = Number(referral[0].referrer_user_id);
 
       const affiliate = await qr.query(
         `SELECT commission_pct, is_active FROM affiliate_users WHERE user_id = $1 LIMIT 1`,
-        [referrerId]
+        [referrerId],
       );
       if (!affiliate.length || !affiliate[0].is_active) return;
       const commissionPct = Number(affiliate[0].commission_pct);
@@ -1768,27 +2208,42 @@ export class SportsService {
         await qr.query(
           `INSERT INTO referral_bonus (referrer_user_id, referee_user_id, amount, source, status, created_at, approved_at)
            VALUES ($1, $2, $3, $4, 'APPROVED', NOW(), NOW())`,
-          [referrerId, userId, profit, source]
+          [referrerId, userId, profit, source],
         );
         await qr.query(
           `UPDATE wallets SET balance = balance + $1 WHERE user_id = $2`,
-          [profit, referrerId]
+          [profit, referrerId],
         );
 
-        this.walletGateway.pushBalanceUpdate(referrerId).catch((e) =>
-          this.logger.warn(`WS push failed for referrer id=${referrerId}: ${e.message}`),
+        this.walletGateway
+          .pushBalanceUpdate(referrerId)
+          .catch((e) =>
+            this.logger.warn(
+              `WS push failed for referrer id=${referrerId}: ${e.message}`,
+            ),
+          );
+
+        const referrerUser = await qr.query(
+          `SELECT username FROM users WHERE id = $1`,
+          [referrerId],
+        );
+        const refereeUser = await qr.query(
+          `SELECT username, vip_level FROM users WHERE id = $1`,
+          [userId],
+        );
+        const referrerWallet = await qr.query(
+          `SELECT balance FROM wallets WHERE user_id = $1`,
+          [referrerId],
         );
 
-        const referrerUser = await qr.query(`SELECT username FROM users WHERE id = $1`, [referrerId]);
-        const refereeUser = await qr.query(`SELECT username, vip_level FROM users WHERE id = $1`, [userId]);
-        const referrerWallet = await qr.query(`SELECT balance FROM wallets WHERE user_id = $1`, [referrerId]);
-        
         const partner_username = referrerUser[0]?.username || '';
         const referee_username = refereeUser[0]?.username || '';
-        const referee_level = refereeUser[0]?.vip_level ? String(refereeUser[0].vip_level) : '0';
+        const referee_level = refereeUser[0]?.vip_level
+          ? String(refereeUser[0].vip_level)
+          : '0';
         const before_balance = Number(referrerWallet[0]?.balance ?? 0) - profit;
         const after_balance = Number(referrerWallet[0]?.balance ?? 0);
-        
+
         await qr.query(
           `INSERT INTO partner_profit_logs
              (partner_user_id, partner_nickname, user_id, user_nickname, user_level, amount, before_balance, after_balance, type)
@@ -1802,12 +2257,14 @@ export class SportsService {
             profit,
             before_balance,
             after_balance,
-            source + '_' + action.toUpperCase()
-          ]
+            source + '_' + action.toUpperCase(),
+          ],
         );
       }
     } catch (err: any) {
-      this.logger.error(`Failed to handle affiliate commission: ${err.message}`);
+      this.logger.error(
+        `Failed to handle affiliate commission: ${err.message}`,
+      );
     }
   }
 }
