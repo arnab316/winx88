@@ -38,9 +38,13 @@ export const FREQUENCIES = [
 ] as const;
 export type Frequency = typeof FREQUENCIES[number];
 
+// Provider verticals a promotion can target (promotions.eligible_game_categories).
+// Keep in sync with CatalogService.CATEGORIES (src/catalog/catalog.service.ts).
+// 'FISHING' is kept as a legacy alias of 'FISH' for backward compatibility.
 export const GAME_CATEGORIES = [
-  'LIVE', 'SLOT', 'SPORTS', 'FISHING', 'LOTTERY',
-  'TABLE', 'ARCADE', 'CRASH', 'OTHER',
+  'LIVE', 'SLOT', 'FISH', 'EGAMES', 'HORSE', 'COCKFIGHT',
+  'SPORTS', 'LOTTERY', 'TABLE', 'ARCADE', 'CRASH', 'OTHER',
+  'FISHING',
 ] as const;
 export type GameCategory = typeof GAME_CATEGORIES[number];
 
