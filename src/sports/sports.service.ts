@@ -892,7 +892,7 @@ export class SportsService {
         ),
       );
       return data;
-    } catch (ex) {
+    } catch (ex: any) {
       this.logger.error(`[checkSlotGameUser] error: ${ex?.response?.data ? JSON.stringify(ex.response.data) : ex?.message ?? String(ex)}`);
       return null;
     }
