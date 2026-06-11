@@ -292,14 +292,21 @@ export class SportsService {
       );
       if (!user?.username) return null;
 
+      // Provider requires name to match ^[_a-zA-Z0-9]+$ — same sanitization
+      // as the slot flow. The callback handler matches both forms.
+      const sportsUserName = user.username
+        .replaceAll('@', '_')
+        .replaceAll('.', '_');
+
       const sportsHeaders = {
         Authorization: `Bearer ${this.spotsInfo.apiToken}`,
         'Content-Type': 'application/json',
+        Accept: 'application/json',
       };
 
       const { data: createUserRes } = await axios.post<any>(
         `${this.spotsInfo.apiUrl}/v1/user/create`,
-        { name: user.username },
+        { name: sportsUserName },
         { headers: sportsHeaders },
       );
 
@@ -1564,18 +1571,20 @@ export class SportsService {
     _key: string,
     callbackToken: string,
   ) {
+    // Provider payloads use "userName" in some callbacks and "username" in others
+    const userName = data.userName ?? data.username ?? '';
+
     this.logger.log(`[SportsCallback] ========== START ==========`);
     this.logger.log(
-      `[SportsCallback] command=${command}, userName=${data.userName}, amount=${data.amount}, type=${data.type}, trans_id=${data.trans_id}`,
+      `[SportsCallback] command=${command}, userName=${userName}, amount=${data.amount}, type=${data.type}, trans_id=${data.trans_id}`,
     );
 
     if (this.spotsInfo.callbackToken !== callbackToken) {
-      this.logger.warn(
-        `[SportsCallback] Invalid callback token. Expected=${this.spotsInfo.callbackToken}, Got=${callbackToken}`,
-      );
+      this.logger.warn(`[SportsCallback] Invalid callback token`);
       return {
-        result: 100,
-        status: 'error',
+        code: 1001,
+        message: 'Failed',
+        data: { name: '', balance: 0 },
       };
     }
 
@@ -1584,9 +1593,12 @@ export class SportsService {
     await qr.startTransaction();
 
     try {
+      // Usernames are sanitized (@ and . -> _) before being sent to the
+      // provider, so match both the sanitized and original forms.
+      const desanitized = userName.replace('_', '@').replace('_', '.');
       const userRows = await qr.query(
-        `SELECT id, username, account_status FROM users WHERE username = $1 LIMIT 1`,
-        [data.userName],
+        `SELECT id, username, account_status FROM users WHERE username = $1 OR username = $2 LIMIT 1`,
+        [userName, desanitized],
       );
       if (!userRows.length) {
         await qr.rollbackTransaction();
@@ -1640,6 +1652,30 @@ export class SportsService {
 
         case 'bet': {
           const totalStake = Number(data.amount);
+
+          // Idempotency: each bet item id is unique per the provider spec.
+          // If any is already recorded, this is a retry — don't deduct again.
+          const betIds = (data.betList ?? [])
+            .map((b) => b.id)
+            .filter((id): id is string => !!id);
+          if (betIds.length > 0) {
+            const dup = await qr.query(
+              `SELECT 1 FROM sports_bet_logs WHERE trans_id = ANY($1) LIMIT 1`,
+              [betIds],
+            );
+            if (dup.length > 0) {
+              this.logger.warn(
+                `[SportsCallback] Duplicate bet callback: ids=${betIds.join(',')}`,
+              );
+              result = {
+                code: 0,
+                message: 'OK',
+                data: { name: user.username, balance: currentBalance },
+              };
+              break;
+            }
+          }
+
           const newBalance = currentBalance - totalStake;
 
           await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [
@@ -1647,18 +1683,20 @@ export class SportsService {
             user.id,
           ]);
 
-          for (const betData of data.betList) {
+          for (const betData of data.betList ?? []) {
             await qr.query(
               `INSERT INTO sports_bet_logs (user_name, bet_list, trans_id, trans_hist_id, amount, type, date_time)
                VALUES ($1, $2, $3, $4, $5, $6, $7)`,
               [
-                data.userName,
+                user.username,
                 JSON.stringify(betData),
-                data.trans_id,
-                data.trans_hist_id,
+                // The win callback's trans_id references this bet item id
+                betData.id ?? data.trans_id ?? null,
+                // trans_hist_id is only assigned at settlement (win callback)
+                null,
                 betData.totalStake,
-                data.type,
-                data.dateTime,
+                betData.status ?? 0,
+                data.dateTime ?? new Date().toISOString(),
               ],
             );
           }
@@ -1695,6 +1733,27 @@ export class SportsService {
 
         case 'win': {
           const winAmount = Number(data.amount);
+
+          // Idempotency: trans_hist_id is the provider's unique settlement id.
+          // It's only written at settlement, so a hit means this is a retry.
+          if (data.trans_hist_id) {
+            const dup = await qr.query(
+              `SELECT 1 FROM sports_bet_logs WHERE trans_hist_id = $1 LIMIT 1`,
+              [data.trans_hist_id],
+            );
+            if (dup.length > 0) {
+              this.logger.warn(
+                `[SportsCallback] Duplicate win callback: trans_hist_id=${data.trans_hist_id}`,
+              );
+              result = {
+                code: 0,
+                message: 'OK',
+                data: { name: user.username, balance: currentBalance },
+              };
+              break;
+            }
+          }
+
           const newBalance = currentBalance + winAmount;
 
           await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [
@@ -1702,23 +1761,49 @@ export class SportsService {
             user.id,
           ]);
 
+          // Outcome (win/lose/cashout/refund) arrives in betList[0].status
+          const settledStatus = data.betList?.[0]?.status ?? data.type ?? 1;
+
           const betLogs = await qr.query(
             `SELECT * FROM sports_bet_logs WHERE trans_id = $1 LIMIT 1`,
             [data.trans_id],
           );
           if (betLogs.length > 0) {
             const betLog = betLogs[0];
-            const updatedBetList = { ...betLog.bet_list, status: data.type };
+            const updatedBetList = {
+              ...betLog.bet_list,
+              status: settledStatus,
+            };
             if (data.betList && data.betList.length > 0) {
               updatedBetList.selections = data.betList[0].selections;
             }
             await qr.query(
-              `UPDATE sports_bet_logs SET bet_list = $1, type = $2 WHERE id = $3`,
-              [JSON.stringify(updatedBetList), data.type, betLog.id],
+              `UPDATE sports_bet_logs SET bet_list = $1, type = $2, trans_hist_id = $3 WHERE id = $4`,
+              [
+                JSON.stringify(updatedBetList),
+                settledStatus,
+                data.trans_hist_id ?? null,
+                betLog.id,
+              ],
             );
           } else {
+            // No matching bet log — record the settlement anyway so a
+            // provider retry is still caught by the trans_hist_id check.
             this.logger.warn(
-              `[SportsCallback] WIN: BetLog NOT FOUND for trans_id=${data.trans_id}`,
+              `[SportsCallback] WIN: BetLog NOT FOUND for trans_id=${data.trans_id}; recording settlement row`,
+            );
+            await qr.query(
+              `INSERT INTO sports_bet_logs (user_name, bet_list, trans_id, trans_hist_id, amount, type, date_time)
+               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              [
+                user.username,
+                JSON.stringify(data.betList?.[0] ?? {}),
+                data.trans_id ?? null,
+                data.trans_hist_id ?? null,
+                winAmount,
+                settledStatus,
+                data.dateTime ?? new Date().toISOString(),
+              ],
             );
           }
 
@@ -1751,6 +1836,15 @@ export class SportsService {
           };
           break;
         }
+
+        default:
+          this.logger.warn(`[SportsCallback] Unknown command: ${command}`);
+          result = {
+            code: 9999,
+            message: 'Failed',
+            data: { name: user.username, balance: currentBalance },
+          };
+          break;
       }
 
       await qr.commitTransaction();
@@ -1778,9 +1872,9 @@ export class SportsService {
         ex?.stack,
       );
       return {
-        code: 99,
+        code: 9999,
         message: 'ERROR',
-        data: { name: data.userName, balance: 0 },
+        data: { name: userName, balance: 0 },
       };
     }
   }

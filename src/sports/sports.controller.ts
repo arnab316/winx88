@@ -129,14 +129,24 @@ export class SportsController {
   @Post('sportsCallback')
   @HttpCode(200)
   @ApiOperation({ summary: 'Callback for sportsbook actions' })
-  @ApiHeader({ name: 'callback-token', required: true, example: 'sports-callback-token' })
+  @ApiHeader({ name: 'authorization', required: false, example: 'Bearer sports-callback-token' })
+  @ApiHeader({ name: 'callback-token', required: false, example: 'sports-callback-token' })
   @ApiResponse({ status: 200, description: 'Callback response', example: { code: 0, message: 'OK', data: { name: 'testuser', balance: 450.00 } } })
   async sportsCallback(@Req() request: any, @Body() params: SportsCallbackDTO) {
+    // Provider sends the callback token as "Authorization: Bearer <token>".
+    // Some docs also mention a "Callback-Token" header, so accept either.
+    const authHeader = (request.headers['authorization'] as string) ?? '';
+    const bearerToken = authHeader.startsWith('Bearer ')
+      ? authHeader.slice('Bearer '.length).trim()
+      : '';
+    const callbackToken =
+      bearerToken || ((request.headers['callback-token'] as string) ?? '');
+
     const response = await this.sportsService.consumeSportsCallback(
       params.command,
       params.data,
-      params.key,
-      request.headers['callback-token'] as string,  
+      params.key ?? '',
+      callbackToken,
     );
     return response;
   }

@@ -1,6 +1,6 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { Expose, Type } from 'class-transformer';
-import { IsArray, IsNotEmpty, ValidateNested } from 'class-validator';
+import { IsArray, IsNotEmpty, IsOptional, ValidateNested } from 'class-validator';
 
 export class BetBuilderResponseODDa {
   @ApiProperty({ example: 'Total Goals Over/Under' })
@@ -29,9 +29,10 @@ export class BetBuilderResponseODDa {
 }
 
 export class Selection {
-  @ApiProperty({ example: 'sel-9988' })
-  @IsNotEmpty()
-  id: string;
+  // Provider's documented selection payload has no "id" field — must stay optional
+  @ApiProperty({ example: 'sel-9988', required: false })
+  @IsOptional()
+  id?: string;
 
   @ApiProperty({ example: 1 })
   status: number;
@@ -102,18 +103,19 @@ export class Selection {
   @ApiProperty({ example: '75 min' })
   gameTime: string;
 
-  @ApiProperty({ type: [BetBuilderResponseODDa] })
+  @ApiProperty({ type: [BetBuilderResponseODDa], required: false })
   @Expose({ name: 'bbOdds' })
   @Type(() => BetBuilderResponseODDa)
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  bbOdds: BetBuilderResponseODDa[];
+  bbOdds?: BetBuilderResponseODDa[];
 }
 
 export class SportsbetList {
   @ApiProperty({ example: 'bet-5544' })
-  @IsNotEmpty()
-  id: string;
+  @IsOptional()
+  id?: string;
 
   @ApiProperty({ example: 1 })
   type: number;
@@ -187,40 +189,55 @@ export class SportsbetList {
   @ApiProperty({ example: 1 })
   device: number;
 
-  @ApiProperty({ type: [Selection] })
+  @ApiProperty({ type: [Selection], required: false })
   @Expose({ name: 'selections' })
   @Type(() => Selection)
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  selections: Selection[];
+  selections?: Selection[];
 }
 
 export class SportsCallbackDataDTO {
-  @ApiProperty({ example: 'testuser', description: 'The unique player username' })
-  @IsNotEmpty()
-  userName: string;
+  // Provider payloads are inconsistent: getBalance docs use "userName",
+  // bet/win examples use "username". Accept both; the service normalizes.
+  @ApiProperty({ example: 'testuser', description: 'The unique player username', required: false })
+  @IsOptional()
+  userName?: string;
 
-  @ApiProperty({ example: 10.00, description: 'Callback transaction amount' })
-  amount: number;
+  @ApiProperty({ example: 'testuser', description: 'Alternate casing some callbacks use', required: false })
+  @IsOptional()
+  username?: string;
 
-  @ApiProperty({ type: [SportsbetList], description: 'List of bets placed' })
+  @ApiProperty({ example: 10.00, description: 'Callback transaction amount', required: false })
+  @IsOptional()
+  amount?: number;
+
+  // Absent on getBalance callbacks
+  @ApiProperty({ type: [SportsbetList], description: 'List of bets placed', required: false })
   @Expose({ name: 'betList' })
   @Type(() => SportsbetList)
+  @IsOptional()
   @IsArray()
   @ValidateNested({ each: true })
-  betList: SportsbetList[];
+  betList?: SportsbetList[];
 
-  @ApiProperty({ example: 'tx-sports-5544', description: 'Unique transaction ID' })
-  trans_id: string;
+  // Only sent on win callbacks (equals the bet item id from the bet callback)
+  @ApiProperty({ example: 'tx-sports-5544', description: 'Unique transaction ID', required: false })
+  @IsOptional()
+  trans_id?: string;
 
-  @ApiProperty({ example: 'hist-sports-1122', description: 'Unique transaction history ID' })
-  trans_hist_id: string;
+  @ApiProperty({ example: 'hist-sports-1122', description: 'Unique transaction history ID', required: false })
+  @IsOptional()
+  trans_hist_id?: string;
 
-  @ApiProperty({ example: 1, description: 'Type identifier' })
-  type: number;
+  @ApiProperty({ example: 1, description: 'Type identifier', required: false })
+  @IsOptional()
+  type?: number;
 
-  @ApiProperty({ example: '2026-06-10T16:21:00Z', description: 'Callback date time' })
-  dateTime: string;
+  @ApiProperty({ example: '2026-06-10T16:21:00Z', description: 'Callback date time', required: false })
+  @IsOptional()
+  dateTime?: string;
 }
 
 export class SportsCallbackDTO {
@@ -230,9 +247,12 @@ export class SportsCallbackDTO {
 
   @ApiProperty({ type: SportsCallbackDataDTO, description: 'Sports callback data' })
   @IsNotEmpty()
+  @Type(() => SportsCallbackDataDTO)
+  @ValidateNested()
   data: SportsCallbackDataDTO;
 
-  @ApiProperty({ example: 'sports-secret-key-12345', description: 'Sports validation key/token' })
-  @IsNotEmpty()
-  key: string;
+  // Not part of the provider's documented callback body — keep optional
+  @ApiProperty({ example: 'sports-secret-key-12345', description: 'Sports validation key/token', required: false })
+  @IsOptional()
+  key?: string;
 }
