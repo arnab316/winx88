@@ -21,9 +21,11 @@ export class JwtAuthGuard {
       const decoded = this.jwtService.verify(token);
       request.user = decoded;
       return true;
-    } catch (e:any){
-     console.error('JWT verification failed:', e);
-      // throw new UnauthorizedException('Invalid or expired token');
+    } catch (e: any) {
+      // A failed verify must throw — returning undefined makes canActivate
+      // falsy, which Nest turns into a misleading 403 Forbidden instead of a
+      // 401 the frontend can act on (refresh token / re-login).
+      throw new UnauthorizedException('Invalid or expired token');
     }
   }
 }
