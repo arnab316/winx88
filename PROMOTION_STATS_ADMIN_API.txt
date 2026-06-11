@@ -1,0 +1,151 @@
+================================================================================
+ WINX-88  —  PROMOTION STATS  ADMIN API  (frontend integration reference)
+================================================================================
+
+ Read-only analytics for promotions (claims, deposits, bonus paid, net P&L).
+ All endpoints live under the `promotion` module.
+
+ AUTH (every route): Authorization: Bearer <ADMIN_JWT>   (AdminGuard)
+ BASE = {{BASE}}/promotion          (e.g. http://localhost:3000/promotion)
+
+ These are GET endpoints — the "payload" is QUERY-STRING params (no JSON body).
+
+================================================================================
+ SHARED QUERY PARAMS  (StatsQuery — used by all 3 endpoints)
+================================================================================
+ All optional:
+
+   preset    = TODAY | YESTERDAY | THIS_WEEK | LAST_WEEK | THIS_MONTH | LAST_MONTH | CUSTOM
+   from      = ISO date string   (used when preset = CUSTOM)
+   to        = ISO date string   (used when preset = CUSTOM)
+   currency  = string (e.g. BDT)     // overview ignores this; summary/detail use it
+   status    = ACTIVE | INACTIVE | ALL   // summary only
+
+ DATE RANGE RULES (server-resolved):
+   • from = inclusive, to = exclusive.
+   • preset shortcuts are computed server-side (TODAY, THIS_MONTH, …).
+   • preset = CUSTOM  -> you MUST pass from + to (to must be >= from, else 400).
+   • NO preset and NO from/to -> defaults to the LAST 30 DAYS.
+
+ Every response echoes the resolved range as:
+   "dateRange": { "from": "...ISO...", "to": "...ISO...", "preset": "THIS_MONTH" | null }
+
+================================================================================
+ 1) GET  {{BASE}}/promotion/admin/stats/overview
+    Company-wide single-row totals (dashboard header cards)
+================================================================================
+ Query: preset / from / to   (currency & status are ignored here)
+
+ Example:
+   GET {{BASE}}/promotion/admin/stats/overview?preset=THIS_MONTH
+
+ Response:
+ {
+   "dateRange": { "from": "...", "to": "...", "preset": "THIS_MONTH" },
+   "active_promotions": 4,            // distinct promos claimed in range
+   "unique_claimers": 1230,           // distinct users who claimed
+   "total_claims": 1875,              // total claim count
+   "total_bonus_paid": 152300.00,     // sum of bonus_amount
+   "total_deposit_via_promos": 980000.00  // approved deposits tied to claims
+ }
+
+================================================================================
+ 2) GET  {{BASE}}/promotion/admin/stats/summary
+    One row PER promotion, aggregated over the date range (the stats table)
+================================================================================
+ Query: preset / from / to / currency / status
+
+ Example:
+   GET {{BASE}}/promotion/admin/stats/summary?preset=LAST_MONTH&currency=BDT&status=ACTIVE
+
+ Response:
+ {
+   "dateRange": { "from": "...", "to": "...", "preset": "LAST_MONTH" },
+   "filters": { "currency": "BDT", "status": "ACTIVE" },
+   "count": 2,
+   "data": [
+     {
+       "id": 3,
+       "code": "WINX600",
+       "title": "Newly Deposit",
+       "kind": "DEPOSIT",
+       "currency": "BDT",
+       "is_active": true,
+       "promotion_max_total": 50000.00,   // max_bonus_pool (null if unlimited)
+       "uses_count": 120,
+       "max_uses_global": 1000,           // null if unlimited
+       "unique_players": 95,
+       "total_claims": 120,
+       "total_deposit": 360000.00,        // approved deposits via this promo
+       "total_bonus": 36000.00,           // bonus paid out
+       "total_win_payouts": 210000.00,    // wins to users who used this promo
+       "net_pl": 114000.00,               // deposit - bonus - win
+       "bonus_paid_total": 36000.00       // lifetime (all-time) bonus paid
+     }
+   ]
+ }
+
+ NOTES:
+   • status filter: ACTIVE -> is_active=true, INACTIVE -> is_active=false, ALL/omit -> both.
+   • currency filter matches the promotion's currency.
+   • net_pl >= 0 means the promo is profitable for the house in that range.
+
+================================================================================
+ 3) GET  {{BASE}}/promotion/admin/:id/stats
+    Deep stats for ONE promotion
+================================================================================
+ Path:  :id = promotion id
+ Query: preset / from / to   (currency/status not used; promo is fixed by :id)
+
+ Example:
+   GET {{BASE}}/promotion/admin/3/stats?preset=THIS_MONTH
+
+ Response:
+ {
+   "promotion": {
+     "id": "3", "code": "WINX600", "title": "Newly Deposit", "kind": "DEPOSIT",
+     "currency": "BDT", "max_bonus_pool": null, "bonus_paid_total": "0.00",
+     "uses_count": 0, "max_uses_global": null, "max_uses_per_user": 1,
+     "is_active": true, "starts_at": "...", "ends_at": "...", "created_at": "..."
+   },
+   "dateRange": { "from": "...", "to": "...", "preset": "THIS_MONTH" },
+   "claims": {
+     "unique_players": 95,
+     "total_claims": 120,
+     "active": 40,
+     "completed": 70,
+     "cancelled": 10
+   },
+   "financials": {
+     "total_deposit": 360000.00,
+     "total_bonus": 36000.00,
+     "total_win_payouts": 210000.00,
+     "net_pl": 114000.00,
+     "is_profitable": true
+   },
+   "pool": {
+     "max_bonus_pool": null,        // null = unlimited pool
+     "bonus_paid_total": 36000.00,
+     "pool_remaining": null,        // null when pool is unlimited
+     "pool_used_pct": null          // null when pool is unlimited
+   },
+   "uses": {
+     "uses_count": 120,
+     "max_uses_global": null,
+     "max_uses_per_user": 1
+   }
+ }
+
+ 404 if the promotion id does not exist.
+
+================================================================================
+ QUICK REFERENCE
+================================================================================
+ GET /promotion/admin/stats/overview     -> dashboard totals
+ GET /promotion/admin/stats/summary       -> per-promotion table (filterable)
+ GET /promotion/admin/:id/stats           -> one promotion deep dive
+
+ preset values : TODAY, YESTERDAY, THIS_WEEK, LAST_WEEK, THIS_MONTH, LAST_MONTH, CUSTOM
+ status values : ACTIVE, INACTIVE, ALL   (summary only)
+ custom range  : ?preset=CUSTOM&from=2026-06-01&to=2026-06-30
+================================================================================
