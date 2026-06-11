@@ -18,7 +18,7 @@ import {
 } from '@nestjs/common';
 import { VipService } from './vip.service';
 import { AdminGuard } from '../common/guards/admin.guard';
-import { UpdateTierLimitsDto, SetTierBanksDto } from './dto/vip.dto';
+import { UpdateTierLimitsDto, CreateMemberGroupDto, UpdateMemberGroupDto, SetTierBanksDto } from './dto/vip.dto';
 
 @Controller('tiers')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
@@ -31,11 +31,36 @@ export class TierController {
     return this.vipService.getPublicLadder();
   }
 
-  // GET /tiers/admin — list tiers with banking-side fields
+  // GET /tiers/admin — list tiers with banking-side fields (raw)
   @UseGuards(AdminGuard)
   @Get('admin')
   listAdmin() {
     return this.vipService.getTiersAdmin();
+  }
+
+  // GET /tiers/admin/member-groups — withdrawal-limits table, grouped by currency
+  @UseGuards(AdminGuard)
+  @Get('admin/member-groups')
+  memberGroupList() {
+    return this.vipService.getMemberGroupList();
+  }
+
+  // POST /tiers/admin — create a member group / tier (with banking limits)
+  @UseGuards(AdminGuard)
+  @Post('admin')
+  createMemberGroup(@Body() dto: CreateMemberGroupDto) {
+    return this.vipService.createMemberGroup(dto);
+  }
+
+  // PATCH /tiers/admin/:level — edit a member group in one call
+  //   (name + withdrawal limits + status + currency + default flag)
+  @UseGuards(AdminGuard)
+  @Patch('admin/:level')
+  updateMemberGroup(
+    @Param('level', ParseIntPipe) level: number,
+    @Body() dto: UpdateMemberGroupDto,
+  ) {
+    return this.vipService.updateMemberGroup(level, dto);
   }
 
   // PATCH /tiers/admin/:level/limits — deposit/withdrawal limits, turnover, etc.

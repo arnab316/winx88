@@ -1,0 +1,120 @@
+================================================================================
+ WINX-88  —  PROMOTIONS  USER (PLAYER) API  (frontend integration reference)
+================================================================================
+
+ Player-facing promotion endpoints across two modules:
+   • promotion       → claim bonuses, see what's available, my claims
+   • promotion-cms   → the banners/cards shown on the Promotions page
+
+ AUTH:
+   • "public" routes  -> NO token (guest).
+   • "me" routes      -> require a player JWT:  Authorization: Bearer <USER_JWT>
+                          (cookie auth also works if you use cookies)
+
+ BASE = {{BASE}}   (e.g. http://localhost:3000)
+
+================================================================================
+ 1) MODULE: promotion        (the bonus engine)
+================================================================================
+
+--------------------------------------------------------------------------------
+ GET  {{BASE}}/promotion/me/available
+ What can THIS user claim right now (eligibility already evaluated)
+--------------------------------------------------------------------------------
+ Auth: required (player JWT)
+ Query (optional):
+   kind = DEPOSIT | REGISTRATION | PROMOCODE | MANUAL | FREE_REWARD | RELOAD | CASHBACK
+          (filter to one type; omit for all)
+
+ Example:
+   GET {{BASE}}/promotion/me/available?kind=DEPOSIT
+
+--------------------------------------------------------------------------------
+ GET  {{BASE}}/promotion/me/claims
+ The user's own claim history (paginated)
+--------------------------------------------------------------------------------
+ Auth: required (player JWT)
+ Query (optional):
+   page  = number (default 1)
+   limit = number (default 30)
+
+ Example:
+   GET {{BASE}}/promotion/me/claims?page=1&limit=30
+
+--------------------------------------------------------------------------------
+ POST {{BASE}}/promotion/me/claim-code
+ Claim a promotion by its promo code
+--------------------------------------------------------------------------------
+ Auth: required (player JWT)
+ Headers (optional, recommended for anti-fraud):
+   x-device-fingerprint: <fingerprint-hash>
+   (the user's IP is read automatically server-side)
+ Body (JSON):
+   { "code": "WINX100" }      // 2–40 chars
+
+ Notes:
+   • Returns the created claim / bonus result on success.
+   • Fails if: code invalid, not eligible, already used, expired, pool exhausted,
+     or anti-fraud uniqueness checks trip (same IP/device/email/phone).
+
+================================================================================
+ 2) MODULE: promotion-cms     (the banners / promo cards)
+================================================================================
+
+--------------------------------------------------------------------------------
+ GET  {{BASE}}/promotion-cms/public
+ Promo banners for GUESTS (not logged in)
+--------------------------------------------------------------------------------
+ Auth: none
+ Query (optional):
+   currency = string (default BDT)
+   tag      = LIVE | SLOT | SPORTS | FISHING | LOTTERY | TABLE | ARCADE | CRASH | OTHER
+   locale   = string (e.g. en, bn)
+
+ Shows only cards with:  is_active = true AND display_before_login = true
+ AND within the start/end date window AND matching currency.
+
+ Example:
+   GET {{BASE}}/promotion-cms/public?currency=BDT
+
+--------------------------------------------------------------------------------
+ GET  {{BASE}}/promotion-cms/public/:id
+ A single banner (guest)
+--------------------------------------------------------------------------------
+ Auth: none
+
+--------------------------------------------------------------------------------
+ GET  {{BASE}}/promotion-cms/me
+ Promo banners for the LOGGED-IN user (with eligibility per card)
+--------------------------------------------------------------------------------
+ Auth: required (player JWT)
+ Query (optional): currency, tag, locale  (same as /public)
+
+ Shows only cards with:  is_active = true AND display_after_login = true
+ AND within the date window AND matching currency.
+ Each card includes an eligibility evaluation against the linked promotion.
+
+ Example:
+   GET {{BASE}}/promotion-cms/me?currency=BDT
+
+--------------------------------------------------------------------------------
+ GET  {{BASE}}/promotion-cms/me/:id
+ A single banner for the logged-in user (with eligibility)
+--------------------------------------------------------------------------------
+ Auth: required (player JWT)
+
+================================================================================
+ ENUM REFERENCE
+================================================================================
+ promotion kind : DEPOSIT, REGISTRATION, PROMOCODE, MANUAL, FREE_REWARD, RELOAD, CASHBACK
+ cms tag        : LIVE, SLOT, SPORTS, FISHING, LOTTERY, TABLE, ARCADE, CRASH, OTHER
+
+================================================================================
+ TYPICAL PLAYER FLOW
+================================================================================
+ Guest browsing      : GET /promotion-cms/public        (banners)
+ Logged-in browsing  : GET /promotion-cms/me             (banners + eligibility)
+ See claimable promos: GET /promotion/me/available
+ Claim a code        : POST /promotion/me/claim-code  { "code": "WINX100" }
+ View my claims      : GET /promotion/me/claims
+================================================================================

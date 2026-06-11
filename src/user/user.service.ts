@@ -197,6 +197,8 @@ export class UserService {
        u.username,
        u.email,
        u.vip_level,
+       vc.level_name          AS vip_level_name,
+       vc.group_name          AS vip_group_name,
        u.account_status,
        u.is_email_verified,
        u.is_kyc_verified,
@@ -221,6 +223,8 @@ export class UserService {
      FROM users u
      LEFT JOIN wallets w
        ON w.user_id = u.id
+     LEFT JOIN vip_level_config vc
+       ON vc.level = u.vip_level
      LEFT JOIN LATERAL (
        SELECT phone_number
        FROM user_phone_numbers
@@ -248,10 +252,14 @@ export class UserService {
     return this.dataSource.query(
       `SELECT
          u.id, u.user_code, u.full_name, u.username, u.email,
-         u.vip_level, u.account_status, u.created_at,
+         u.vip_level,
+         vc.level_name AS vip_level_name,
+         vc.group_name AS vip_group_name,
+         u.account_status, u.created_at,
          (SELECT phone_number FROM user_phone_numbers
           WHERE user_id = u.id AND is_primary = true LIMIT 1) AS primary_phone
        FROM users u
+       LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
        WHERE u.full_name ILIKE $1
           OR u.username   ILIKE $1
           OR u.email      ILIKE $1
@@ -297,6 +305,121 @@ export class UserService {
       wallet:  wallet[0]  ?? null,
       phones,
       coins:   coins[0]   ?? null,
+    };
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: COMPLIANCE / LINKED-ACCOUNTS CHECK
+  //   Surfaces the user's device fingerprints + IPs and any OTHER
+  //   accounts that share a fingerprint or IP (fraud / duplicate
+  //   accounts). Sources: user_login_events (register/login) and
+  //   user_promotion_claims (existing fraud-check data).
+  //   GET /user/admin/:userId/compliance?keyword=
+  // ═════════════════════════════════════════════════════════════
+  async getComplianceCheck(userId: number, keyword?: string) {
+    const u = await this.dataSource.query(
+      `SELECT id, user_code, username, full_name, email, password,
+              account_status, created_at
+         FROM users WHERE id = $1`,
+      [userId],
+    );
+    if (!u.length) throw new NotFoundException('User not found');
+    const user = u[0];
+
+    // Distinct fingerprints + IPs for this user (login events + promo claims).
+    const fpRows = await this.dataSource.query(
+      `SELECT DISTINCT v FROM (
+          SELECT device_fingerprint AS v FROM user_login_events     WHERE user_id = $1
+          UNION SELECT device_fingerprint   FROM user_promotion_claims WHERE user_id = $1
+       ) t WHERE v IS NOT NULL`,
+      [userId],
+    );
+    const ipRows = await this.dataSource.query(
+      `SELECT DISTINCT v FROM (
+          SELECT ip_address AS v FROM user_login_events     WHERE user_id = $1
+          UNION SELECT ip_address   FROM user_promotion_claims WHERE user_id = $1
+       ) t WHERE v IS NOT NULL`,
+      [userId],
+    );
+    const fingerprints = fpRows.map((r: any) => r.v);
+    const registerIps = ipRows.map((r: any) => r.v);
+
+    const phoneRows = await this.dataSource.query(
+      `SELECT phone_number FROM user_phone_numbers
+        WHERE user_id = $1 ORDER BY is_primary DESC, id ASC LIMIT 1`,
+      [userId],
+    );
+    const contactNumber = phoneRows[0]?.phone_number ?? null;
+
+    // Linked accounts: other users sharing any fingerprint or IP.
+    const params: any[] = [userId];
+    let i = 2;
+    let keywordSql = '';
+    if (keyword?.trim()) {
+      keywordSql = `AND (u.username ILIKE $${i} OR u.user_code ILIKE $${i} OR u.full_name ILIKE $${i})`;
+      params.push(`%${keyword.trim()}%`);
+      i++;
+    }
+
+    const linked = await this.dataSource.query(
+      `WITH tfp AS (
+          SELECT device_fingerprint AS v FROM user_login_events     WHERE user_id = $1 AND device_fingerprint IS NOT NULL
+          UNION SELECT device_fingerprint   FROM user_promotion_claims WHERE user_id = $1 AND device_fingerprint IS NOT NULL
+       ),
+       tip AS (
+          SELECT ip_address AS v FROM user_login_events     WHERE user_id = $1 AND ip_address IS NOT NULL
+          UNION SELECT ip_address   FROM user_promotion_claims WHERE user_id = $1 AND ip_address IS NOT NULL
+       ),
+       matches AS (
+          SELECT e.user_id, 'FINGERPRINT' AS reason FROM user_login_events e
+            WHERE e.user_id <> $1 AND e.device_fingerprint IN (SELECT v FROM tfp)
+          UNION
+          SELECT c.user_id, 'FINGERPRINT' FROM user_promotion_claims c
+            WHERE c.user_id <> $1 AND c.device_fingerprint IN (SELECT v FROM tfp)
+          UNION
+          SELECT e.user_id, 'IP' FROM user_login_events e
+            WHERE e.user_id <> $1 AND e.ip_address IN (SELECT v FROM tip)
+          UNION
+          SELECT c.user_id, 'IP' FROM user_promotion_claims c
+            WHERE c.user_id <> $1 AND c.ip_address IN (SELECT v FROM tip)
+       )
+       SELECT u.id, u.user_code, u.username, u.full_name, u.email,
+              u.account_status, u.created_at,
+              ARRAY_AGG(DISTINCT m.reason ORDER BY m.reason) AS matched_on
+         FROM matches m
+         JOIN users u ON u.id = m.user_id
+        WHERE 1 = 1 ${keywordSql}
+        GROUP BY u.id, u.user_code, u.username, u.full_name, u.email,
+                 u.account_status, u.created_at
+        ORDER BY u.id ASC`,
+      params,
+    );
+
+    return {
+      user: {
+        userId:         Number(user.id),
+        memberId:       user.user_code,
+        username:       user.username,
+        name:           user.full_name,
+        email:          user.email ?? null,
+        contactNumber,
+        passwordHash:   user.password,        // bcrypt hash (display only)
+        fingerprints,
+        registerIps,
+        status:         user.account_status,
+        registeredDate: user.created_at,
+      },
+      linked: linked.map((r: any) => ({
+        userId:         Number(r.id),
+        memberId:       r.user_code,
+        username:       r.username,
+        name:           r.full_name,
+        email:          r.email ?? null,
+        status:         r.account_status,
+        registeredDate: r.created_at,
+        matchedOn:      r.matched_on,          // e.g. ["FINGERPRINT","IP"]
+      })),
+      total: linked.length,
     };
   }
 

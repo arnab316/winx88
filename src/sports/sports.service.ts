@@ -64,7 +64,7 @@ export class SportsService {
 
   // OroPlay token cache
   private oroplayToken = '';
-  private oroplayTokenExpiration = 0;
+  private oroplayTokenExpiration = 0; 
 
   constructor(
     private readonly configService: ConfigService,
@@ -231,19 +231,23 @@ export class SportsService {
           }
         );
 
-        // code 0 = created, code 1 = already exists — both are fine to proceed
-        console.log(`[getSportsLink] userCreate response: code=${userCreateRes.data.code} message=${userCreateRes.data.message}`);
+        // code 0 = created, code 1 = already exists — both return user_code in data
+        console.log(`[getSportsLink] userCreate response: code=${userCreateRes.data.code} message=${userCreateRes.data.message} user_code=${userCreateRes.data.data?.user_code}`);
         if (userCreateRes.data.code !== 0 && userCreateRes.data.code !== 1) {
           console.error(`[getSportsLink] User creation failed: code=${userCreateRes.data.code} message=${userCreateRes.data.message}`);
           return null;
         }
 
-        await new Promise((res) => setTimeout(res, 4000));
+        const sportsUserCode = userCreateRes.data.data?.user_code;
+        if (!sportsUserCode) {
+          console.error(`[getSportsLink] user_code missing from userCreate response: ${JSON.stringify(userCreateRes.data)}`);
+          return null;
+        }
 
         const gameUrlRes = await axios.post<any>(
           `${this.spotsInfo.apiUrl}/v1/game/game-url`,
           {
-            userCode,
+            userCode: sportsUserCode,
             language: sportsLang,
             returnUrl: this.configService.get<string>('APP_BASE_URL') ?? '',
           },

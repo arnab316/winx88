@@ -1,16 +1,31 @@
 import {
   Controller, Post, Get, Patch, Delete,
-  Param, Body, ParseIntPipe,
+  Param, Body, ParseIntPipe, BadRequestException,
   UploadedFiles, UseInterceptors, UseGuards,
 } from '@nestjs/common';
 import { FileFieldsInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { HeroBannerService } from './hero-banner.service';
 import { AdminGuard } from 'src/common/guards/admin.guard';
 
-const uploadInterceptor = FileFieldsInterceptor([
-  { name: 'desktop_image', maxCount: 1 },
-  { name: 'mobile_image',  maxCount: 1 },
-]);
+const uploadInterceptor = FileFieldsInterceptor(
+  [
+    { name: 'desktop_image', maxCount: 1 },
+    { name: 'mobile_image',  maxCount: 1 },
+  ],
+  {
+    storage: memoryStorage(),
+    limits: { fileSize: 8 * 1024 * 1024 }, // 8MB per image
+    fileFilter: (_req, file, cb) => {
+      const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+      if (allowed.includes(file.mimetype)) {
+        cb(null, true);
+      } else {
+        cb(new BadRequestException('Only JPG, PNG, WEBP allowed'), false);
+      }
+    },
+  },
+);
 
 type BannerFiles = {
   desktop_image?: Express.Multer.File[];

@@ -1,4 +1,4 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { HeroBannerS3Service } from '../common/services/hero-banner-s3.service';
 
@@ -13,6 +13,15 @@ export class HeroBannerService {
     desktopFile?: Express.Multer.File,   // ✅ optional, no more undefined error
     mobileFile?: Express.Multer.File,
   ) {
+    // Guard: a request with neither file (e.g. wrong multipart field name, or
+    // missing multipart/form-data) would otherwise silently insert a row with
+    // null images and return 200 — looking like a failed upload. Fail loudly.
+    if (!desktopFile && !mobileFile) {
+      throw new BadRequestException(
+        'At least one image is required. Send "desktop_image" and/or "mobile_image" as multipart/form-data.',
+      );
+    }
+
     let desktopImage: string | undefined;  // ✅ string | undefined, not null
     let mobileImage: string | undefined;
 

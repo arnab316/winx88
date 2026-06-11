@@ -38,9 +38,13 @@ export const FREQUENCIES = [
 ] as const;
 export type Frequency = typeof FREQUENCIES[number];
 
+// Provider verticals a promotion can target (promotions.eligible_game_categories).
+// Keep in sync with CatalogService.CATEGORIES (src/catalog/catalog.service.ts).
+// 'FISHING' is kept as a legacy alias of 'FISH' for backward compatibility.
 export const GAME_CATEGORIES = [
-  'LIVE', 'SLOT', 'SPORTS', 'FISHING', 'LOTTERY',
-  'TABLE', 'ARCADE', 'CRASH', 'OTHER',
+  'LIVE', 'SLOT', 'FISH', 'EGAMES', 'HORSE', 'COCKFIGHT',
+  'SPORTS', 'LOTTERY', 'TABLE', 'ARCADE', 'CRASH', 'OTHER',
+  'FISHING',
 ] as const;
 export type GameCategory = typeof GAME_CATEGORIES[number];
 
@@ -64,6 +68,11 @@ const toBool = ({ value }: { value: any }) => {
   if (value === 'false' || value === '0') return false;
   return value;
 };
+
+// Empty form fields arrive as '' (or null). Treat them as "not provided" so an
+// empty optional date doesn't fail @IsDateString — the field is simply skipped.
+const emptyToUndefined = ({ value }: { value: any }) =>
+  value === '' || value === null ? undefined : value;
 
 // ─── ADMIN: CREATE PROMOTION ────────────────────────────────────
 export class CreatePromotionDto {
@@ -101,8 +110,8 @@ export class CreatePromotionDto {
 
   @IsOptional() @IsBoolean() isActive?: boolean;
 
-  @IsOptional() @IsDateString() startsAt?: string;
-  @IsOptional() @IsDateString() endsAt?: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsDateString() startsAt?: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsDateString() endsAt?: string;
 
   @IsOptional() @IsArray() @ArrayUnique()
   @IsIn(DEVICE_TYPES, { each: true })
@@ -172,8 +181,8 @@ export class UpdatePromotionDto {
   @IsOptional() @IsInt() @Min(1) maxUsesGlobal?: number;
   @IsOptional() @IsNumber() @Min(1) maxBonusPool?: number;
   @IsOptional() @IsBoolean() isActive?: boolean;
-  @IsOptional() @IsDateString() startsAt?: string;
-  @IsOptional() @IsDateString() endsAt?: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsDateString() startsAt?: string;
+  @IsOptional() @Transform(emptyToUndefined) @IsDateString() endsAt?: string;
 
   @IsOptional() @IsArray() @ArrayUnique() @IsIn(DEVICE_TYPES, { each: true })
   deviceTypes?: DeviceType[];

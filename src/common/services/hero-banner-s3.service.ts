@@ -21,6 +21,12 @@ export class HeroBannerS3Service {
 
     this.s3 = new S3Client({
       region: process.env.AWS_REGION!,
+      // Fail fast instead of hanging the upload request when S3 is
+      // slow/misconfigured (a hang surfaces to the admin as a failed upload).
+      requestHandler: {
+        connectionTimeout: 3000,
+        requestTimeout: 8000,
+      },
       credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID!,
         secretAccessKey:
@@ -36,6 +42,10 @@ export class HeroBannerS3Service {
     try {
       if (!file || !file.buffer) {
         throw new Error('Invalid file');
+      }
+
+      if (!this.bucket) {
+        throw new Error('AWS_BUCKET_NAME is not set in environment variables');
       }
 
       const ext =

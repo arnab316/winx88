@@ -289,6 +289,44 @@ export class TurnoverService {
   // ═════════════════════════════════════════════════════════════
   // QUERIES (USER-FACING)
   // ═════════════════════════════════════════════════════════════
+  // Aggregated headline numbers for the user's wagering page:
+  //   requiredTurnover = Σ target_amount   (the bar's max)
+  //   validTurnover    = Σ current_amount  (how far they've wagered)
+  //   progressPercent  = valid / required
+  // Aggregates ACTIVE requirements only (in-progress wagering). When there is
+  // no active requirement, the user is free to withdraw → progress is 100%.
+  async getMyTurnoverSummary(userId: number) {
+    const rows = await this.dataSource.query(
+      `SELECT
+         COALESCE(SUM(target_amount), 0)                        AS required,
+         COALESCE(SUM(current_amount), 0)                       AS valid,
+         COALESCE(SUM(target_amount - current_amount), 0)       AS remaining,
+         COUNT(*)::int                                          AS active_count
+       FROM turnover_requirements
+       WHERE user_id = $1 AND status = 'ACTIVE'`,
+      [userId],
+    );
+
+    const required  = parseFloat(rows[0].required);
+    const valid     = parseFloat(rows[0].valid);
+    const remaining = parseFloat(rows[0].remaining);
+    const progressPercent =
+      required > 0
+        ? Number(Math.min((valid / required) * 100, 100).toFixed(2))
+        : 100;
+
+    const requirements = await this.getMyActiveRequirements(userId);
+
+    return {
+      requiredTurnover:    required,
+      validTurnover:       valid,
+      remainingTurnover:   remaining,
+      progressPercent,
+      activeRequirements:  rows[0].active_count,
+      requirements,
+    };
+  }
+
   async getMyActiveRequirements(userId: number) {
     return this.dataSource.query(
       `SELECT id, source_type, source_id, base_amount, multiplier,

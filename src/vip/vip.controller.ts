@@ -47,6 +47,13 @@ export class VipController {
 
   // ─── ADMIN ───────────────────────────────────────────────────
 
+  // GET /vip/admin/stats — dashboard summary cards
+  @UseGuards(AdminGuard)
+  @Get('admin/stats')
+  getDashboardStats() {
+    return this.vipService.getDashboardStats();
+  }
+
   // GET /vip/admin/config
   @UseGuards(AdminGuard)
   @Get('admin/config')
@@ -86,7 +93,8 @@ export class VipController {
     return this.vipService.adminSetLevel(dto, req.user.sub);
   }
 
-  // GET /vip/admin/users — ALL users across every tier (optional ?level= & ?search=)
+  // GET /vip/admin/users — users across ALL tiers (optional ?level=, ?search=,
+  //   ?dateFrom=, ?dateTo=). Same rich fields as the per-level list.
   @UseGuards(AdminGuard)
   @Get('admin/users')
   allUsersByLevel(
@@ -94,22 +102,35 @@ export class VipController {
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
     @Query('level') level?: string,
     @Query('search') search?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
   ) {
     const lvl =
       level !== undefined && level !== '' && !isNaN(Number(level))
         ? Number(level)
         : undefined;
-    return this.vipService.getAllUsersByLevel(page, limit, lvl, search);
+    return this.vipService.getAllUsersByLevel(page, limit, lvl, search, dateFrom, dateTo);
   }
 
-  // GET /vip/admin/users/:level — players currently in a tier
+  // GET /vip/admin/levels/summary — every tier with its player count (grouped)
+  @UseGuards(AdminGuard)
+  @Get('admin/levels/summary')
+  levelsSummary() {
+    return this.vipService.getLevelsUserCounts();
+  }
+
+  // GET /vip/admin/users/:level — players currently in a tier (modal list)
+  //   Optional ?search= (username / member ID / email)
   @UseGuards(AdminGuard)
   @Get('admin/users/:level')
   usersInTier(
     @Param('level', ParseIntPipe) level: number,
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+    @Query('search') search?: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
   ) {
-    return this.vipService.getUsersInTier(level, page, limit);
+    return this.vipService.getUsersInTier(level, page, limit, search, dateFrom, dateTo);
   }
 }

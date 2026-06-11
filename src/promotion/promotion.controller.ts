@@ -121,11 +121,18 @@ export class PromotionController {
     return this.engine.updatePromotion(id, dto);
   }
  
-  // DELETE /promotions/admin/:id   → soft delete (deactivate; never hard-delete because of FK)
+  // DELETE /promotions/admin/:id            → soft delete (deactivate)
+  // DELETE /promotions/admin/:id?hard=true  → permanent delete (only if unused)
   @UseGuards(AdminGuard)
   @Delete('admin/:id')
-  deactivate(@Param('id', ParseIntPipe) id: number) {
-    return this.engine.deactivate(id);
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('hard') hard?: string,
+  ) {
+    const hardDelete = ['true', '1', 'yes'].includes(
+      String(hard ?? '').trim().toLowerCase(),
+    );
+    return this.engine.deletePromotion(id, hardDelete);
   }
  
   // GET /promotions/admin/:id/claims?page=1

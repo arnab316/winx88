@@ -21,8 +21,29 @@ export class AuthService {
     private jwtService: JwtService,
     private twilioService: TwilioService,
     private promotionEngine: PromotionEngineService,
-    private laafficService: LaafficService,  
+    private laafficService: LaafficService,
   ) {}
+
+  // ─── Fraud tracking: log REGISTER/LOGIN with IP + device fingerprint ──
+  //   Best-effort — must NEVER throw / block auth. The admin Compliance
+  //   panel reads these to group accounts sharing an IP or fingerprint.
+  async recordLoginEvent(
+    userId: number,
+    eventType: 'REGISTER' | 'LOGIN',
+    ip?: string,
+    fingerprint?: string,
+  ): Promise<void> {
+    try {
+      await this.dataSource.query(
+        `INSERT INTO user_login_events
+           (user_id, event_type, ip_address, device_fingerprint)
+         VALUES ($1, $2, $3, $4)`,
+        [userId, eventType, ip ?? null, fingerprint ?? null],
+      );
+    } catch (e: any) {
+      this.logger.warn(`recordLoginEvent failed: ${e?.message}`);
+    }
+  }
 
   // ═════════════════════════════════════════════════════════════
   // REGISTER — No OTP required

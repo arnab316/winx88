@@ -12,6 +12,8 @@ import {
   UpdateVipLevelConfigDto,
   AdminSetVipLevelDto,
   UpdateTierLimitsDto,
+  CreateMemberGroupDto,
+  UpdateMemberGroupDto,
   SetTierBanksDto,
 } from './dto/vip.dto';
 
@@ -334,6 +336,31 @@ export class VipService {
     );
   }
 
+  // GET /vip/admin/stats — dashboard summary cards
+  //   totalPlayers     : all users
+  //   vipLevels        : configured tiers
+  //   automaticLevels  : tiers reachable by points (invitation_only = FALSE)
+  //   invitationOnly   : invite-only tiers (invitation_only = TRUE)
+  async getDashboardStats() {
+    const [players] = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS n FROM users`,
+    );
+    const [levels] = await this.dataSource.query(
+      `SELECT
+         COUNT(*)::int                                          AS total,
+         COUNT(*) FILTER (WHERE invitation_only = FALSE)::int   AS automatic,
+         COUNT(*) FILTER (WHERE invitation_only = TRUE)::int    AS invitation
+       FROM vip_level_config`,
+    );
+
+    return {
+      totalPlayers:    players.n,
+      vipLevels:       levels.total,
+      automaticLevels: levels.automatic,
+      invitationOnly:  levels.invitation,
+    };
+  }
+
   // POST /vip/admin/config — create a new VIP level / tier
   async createLevel(dto: CreateVipLevelConfigDto) {
     const dupe = await this.dataSource.query(
@@ -393,6 +420,102 @@ export class VipService {
         throw new BadRequestException(`Level ${dto.level} already exists`);
       }
       throw e;
+    }
+  }
+
+  // POST /tiers/admin — create a member group / tier WITH banking limits
+  //   (name, level, currency, withdrawal limits, status, default). Same
+  //   coins_required rules as createLevel: invitation-only tiers use the
+  //   unreachable sentinel; automatic tiers require coinsRequired.
+  async createMemberGroup(dto: CreateMemberGroupDto) {
+    const dupe = await this.dataSource.query(
+      `SELECT level FROM vip_level_config WHERE level = $1`,
+      [dto.level],
+    );
+    if (dupe.length) {
+      throw new BadRequestException(`Level ${dto.level} already exists`);
+    }
+
+    const invitationOnly = dto.invitationOnly ?? false;
+    let coinsRequired: number;
+    if (invitationOnly) {
+      coinsRequired = INVITE_ONLY_SENTINEL;
+    } else {
+      if (dto.coinsRequired === undefined) {
+        throw new BadRequestException(
+          'coinsRequired is required for automatic (non invitation-only) tiers',
+        );
+      }
+      if (dto.coinsRequired > COINS_REQUIRED_MAX) {
+        throw new BadRequestException(
+          `coinsRequired must be at most ${COINS_REQUIRED_MAX}`,
+        );
+      }
+      coinsRequired = dto.coinsRequired;
+    }
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      const res = await qr.query(
+        `INSERT INTO vip_level_config
+           (level, level_name, group_name, coins_required, invitation_only,
+            sequence, status, currency, ui_color, badge_icon_url, benefits,
+            deposit_min, deposit_max, balance_below,
+            withdrawal_min, withdrawal_max, withdrawal_daily_count, withdrawal_daily_max,
+            withdrawal_turnover, allow_clear_balance, auto_clear_turnover, internal_remark)
+         VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7,'ACTIVE'),COALESCE($8,'BDT'),$9,$10,$11,
+                 $12,$13,$14,$15,$16,$17,$18,$19,
+                 COALESCE($20,FALSE),COALESCE($21,FALSE),$22)
+         RETURNING *`,
+        [
+          dto.level,
+          dto.name,
+          dto.groupName ?? dto.name,
+          coinsRequired,
+          invitationOnly,
+          dto.sequence ?? dto.level,
+          dto.status ?? null,
+          dto.currency ?? null,
+          dto.uiColor ?? null,
+          dto.badgeIconUrl ?? null,
+          dto.benefits ? JSON.stringify(dto.benefits) : null,
+          dto.depositMin ?? null,
+          dto.depositMax ?? null,
+          dto.balanceBelow ?? null,
+          dto.withdrawalMin ?? null,
+          dto.withdrawalMax ?? null,
+          dto.withdrawalDailyCount ?? null,
+          dto.withdrawalDailyMax ?? null,
+          dto.withdrawalTurnover ?? null,
+          dto.allowClearBalance ?? null,
+          dto.autoClearTurnover ?? null,
+          dto.internalRemark ?? null,
+        ],
+      );
+      let row = res[0];
+
+      if (dto.isDefault === true) {
+        await qr.query(`UPDATE vip_level_config SET is_default = FALSE WHERE is_default = TRUE`);
+        const upd = await qr.query(
+          `UPDATE vip_level_config SET is_default = TRUE, updated_at = NOW()
+           WHERE level = $1 RETURNING *`,
+          [dto.level],
+        );
+        row = upd[0];
+      }
+
+      await qr.commitTransaction();
+      return { message: 'Member group created', tier: row };
+    } catch (e: any) {
+      await qr.rollbackTransaction();
+      if (e?.code === '23505') {
+        throw new BadRequestException(`Level ${dto.level} already exists`);
+      }
+      throw e;
+    } finally {
+      await qr.release();
     }
   }
 
@@ -510,6 +633,55 @@ export class VipService {
     );
   }
 
+  // GET /tiers/admin/member-groups — the Member Group withdrawal-limits table,
+  //   grouped by currency. Columns mirror the admin screen: name, withdrawal
+  //   min/max, daily count, daily max, default setting, status.
+  async getMemberGroupList() {
+    const rows = await this.dataSource.query(
+      `SELECT level, level_name, group_name, coins_required, invitation_only,
+              sequence, ui_color, badge_icon_url, benefits, is_default, status,
+              COALESCE(currency, 'BDT') AS currency,
+              deposit_min, deposit_max, balance_below,
+              withdrawal_min, withdrawal_max,
+              withdrawal_daily_count, withdrawal_daily_max, withdrawal_turnover,
+              allow_clear_balance, auto_clear_turnover, internal_remark
+         FROM vip_level_config
+        ORDER BY COALESCE(currency, 'BDT') ASC, sequence ASC, level ASC`,
+    );
+
+    const num = (v: any) => (v === null || v === undefined ? null : Number(v));
+    const groups: Record<string, any> = {};
+    for (const r of rows) {
+      const cur = r.currency;
+      if (!groups[cur]) groups[cur] = { currency: cur, tiers: [] };
+      groups[cur].tiers.push({
+        level:                Number(r.level),
+        name:                 r.level_name,
+        groupName:            r.group_name,
+        coinsRequired:        num(r.coins_required),
+        invitationOnly:       r.invitation_only === true,
+        sequence:             num(r.sequence),
+        uiColor:              r.ui_color,
+        badgeIconUrl:         r.badge_icon_url,
+        benefits:             r.benefits,
+        depositMin:           num(r.deposit_min),
+        depositMax:           num(r.deposit_max),
+        balanceBelow:         num(r.balance_below),
+        withdrawalMin:        num(r.withdrawal_min),
+        withdrawalMax:        num(r.withdrawal_max),
+        withdrawalDailyCount: num(r.withdrawal_daily_count),
+        withdrawalDailyMax:   num(r.withdrawal_daily_max),
+        withdrawalTurnover:   num(r.withdrawal_turnover),
+        allowClearBalance:    r.allow_clear_balance === true,
+        autoClearTurnover:    r.auto_clear_turnover === true,
+        internalRemark:       r.internal_remark,
+        isDefault:            r.is_default === true,
+        status:               r.status,
+      });
+    }
+    return Object.values(groups);
+  }
+
   // PATCH /tiers/admin/:level/limits — banking limits (Member Group screen)
   async updateTierLimits(level: number, dto: UpdateTierLimitsDto) {
     const existing = await this.dataSource.query(
@@ -555,6 +727,91 @@ export class VipService {
       values,
     );
     return result[0];
+  }
+
+  // PATCH /tiers/admin/:level — edit a member group (one call for the whole
+  //   "Action" edit row): name, withdrawal limits, status, currency, and the
+  //   default flag. Setting isDefault=true atomically moves the default here.
+  async updateMemberGroup(level: number, dto: UpdateMemberGroupDto) {
+    const existing = await this.dataSource.query(
+      `SELECT level FROM vip_level_config WHERE level = $1`,
+      [level],
+    );
+    if (!existing.length) throw new NotFoundException(`Tier ${level} not configured`);
+
+    const map: Record<string, any> = {
+      level_name:             dto.name,
+      group_name:             dto.groupName,
+      coins_required:         dto.coinsRequired,
+      invitation_only:        dto.invitationOnly,
+      sequence:               dto.sequence,
+      ui_color:               dto.uiColor,
+      badge_icon_url:         dto.badgeIconUrl,
+      benefits:               dto.benefits ? JSON.stringify(dto.benefits) : undefined,
+      status:                 dto.status,
+      currency:               dto.currency,
+      deposit_min:            dto.depositMin,
+      deposit_max:            dto.depositMax,
+      balance_below:          dto.balanceBelow,
+      withdrawal_min:         dto.withdrawalMin,
+      withdrawal_max:         dto.withdrawalMax,
+      withdrawal_daily_count: dto.withdrawalDailyCount,
+      withdrawal_daily_max:   dto.withdrawalDailyMax,
+      withdrawal_turnover:    dto.withdrawalTurnover,
+      allow_clear_balance:    dto.allowClearBalance,
+      auto_clear_turnover:    dto.autoClearTurnover,
+      internal_remark:        dto.internalRemark,
+    };
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      const fields: string[] = [];
+      const values: any[] = [];
+      let i = 1;
+      for (const [col, val] of Object.entries(map)) {
+        if (val !== undefined) {
+          fields.push(`${col} = $${i++}`);
+          values.push(val);
+        }
+      }
+
+      let row: any;
+      if (fields.length) {
+        fields.push(`updated_at = NOW()`);
+        values.push(level);
+        const res = await qr.query(
+          `UPDATE vip_level_config SET ${fields.join(', ')} WHERE level = $${i} RETURNING *`,
+          values,
+        );
+        row = res[0];
+      }
+
+      // Default flag: only act on an explicit true (moving the default here).
+      if (dto.isDefault === true) {
+        await qr.query(`UPDATE vip_level_config SET is_default = FALSE WHERE is_default = TRUE`);
+        const res = await qr.query(
+          `UPDATE vip_level_config SET is_default = TRUE, updated_at = NOW()
+           WHERE level = $1 RETURNING *`,
+          [level],
+        );
+        row = res[0];
+      }
+
+      if (!row) {
+        await qr.rollbackTransaction();
+        throw new BadRequestException('No fields to update');
+      }
+
+      await qr.commitTransaction();
+      return { message: 'Member group updated', tier: row };
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
   }
 
   // GET /tiers/admin/:level/banks — allowed payment channels
@@ -618,37 +875,19 @@ export class VipService {
     return { message: `Tier ${level} is now the default`, level };
   }
 
-  // GET /vip/admin/users/:level — players currently in a tier
-  async getUsersInTier(level: number, page = 1, limit = 50) {
-    const safeLimit = Math.min(Math.max(limit, 1), 200);
-    const offset = (Math.max(page, 1) - 1) * safeLimit;
-    const data = await this.dataSource.query(
-      `SELECT u.id, u.user_code, u.username, u.full_name, u.vip_level,
-              COALESCE(uc.lifetime_coins, 0) AS lifetime_coins
-         FROM users u
-         LEFT JOIN user_coins uc ON uc.user_id = u.id
-        WHERE u.vip_level = $1
-        ORDER BY uc.lifetime_coins DESC NULLS LAST
-        LIMIT $2 OFFSET $3`,
-      [level, safeLimit, offset],
-    );
-    const count = await this.dataSource.query(
-      `SELECT COUNT(*)::int AS total FROM users WHERE vip_level = $1`,
-      [level],
-    );
-    return { data, page, limit: safeLimit, total: count[0].total };
-  }
-
-  // ═════════════════════════════════════════════════════════════
-  // ADMIN: ALL USERS BY VIP LEVEL (every tier in one list)
-  //   Sorted by vip_level then lifetime coins. Optional ?level= filter
-  //   and ?search= (username / full_name / user_code).
-  // ═════════════════════════════════════════════════════════════
-  async getAllUsersByLevel(
+  // GET /vip/admin/users/:level — players in a tier (or ALL tiers if level is
+  //   undefined). Full member-group list: currency, member group, member ID,
+  //   user ID, name, primary mobile, email, referrer, affiliate, status, level.
+  //   Filters: ?search= (username / member ID / name / email / mobile /
+  //   referrer) and a registered date range ?dateFrom=&dateTo= (YYYY-MM-DD,
+  //   inclusive).
+  async getUsersInTier(
+    level: number | undefined,
     page = 1,
     limit = 50,
-    level?: number,
     search?: string,
+    dateFrom?: string,
+    dateTo?: string,
   ) {
     const safeLimit = Math.min(Math.max(limit, 1), 200);
     const safePage = Math.max(page, 1);
@@ -658,47 +897,154 @@ export class VipService {
     const params: any[] = [];
     let i = 1;
 
+    // Omit the level filter to search across ALL levels.
     if (level !== undefined) {
       where.push(`u.vip_level = $${i++}`);
       params.push(level);
     }
+
     if (search?.trim()) {
+      // Combination search: one term matched across username, member ID, name,
+      // email, primary/any mobile, and the referrer (their code/username/name).
       where.push(
-        `(u.username ILIKE $${i} OR u.full_name ILIKE $${i} OR u.user_code ILIKE $${i})`,
+        `(u.username ILIKE $${i}
+          OR u.user_code ILIKE $${i}
+          OR u.full_name ILIKE $${i}
+          OR u.email ILIKE $${i}
+          OR EXISTS (SELECT 1 FROM user_phone_numbers p
+                      WHERE p.user_id = u.id AND p.phone_number ILIKE $${i})
+          OR EXISTS (SELECT 1 FROM users r
+                      WHERE r.id = u.referred_by_user_id
+                        AND (r.user_code ILIKE $${i}
+                             OR r.username ILIKE $${i}
+                             OR r.full_name ILIKE $${i})))`,
       );
       params.push(`%${search.trim()}%`);
       i++;
     }
+    if (dateFrom?.trim()) {
+      where.push(`u.created_at >= $${i}::date`);
+      params.push(dateFrom.trim());
+      i++;
+    }
+    if (dateTo?.trim()) {
+      // inclusive of the whole end day
+      where.push(`u.created_at < ($${i}::date + 1)`);
+      params.push(dateTo.trim());
+      i++;
+    }
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const data = await this.dataSource.query(
-      `SELECT u.id, u.user_code, u.username, u.full_name,
-              u.vip_level,
-              vc.level_name,
-              vc.group_name,
-              COALESCE(uc.lifetime_coins, 0) AS lifetime_coins,
-              COALESCE(uc.total_coins, 0)    AS total_coins
-         FROM users u
-         LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
-         LEFT JOIN user_coins uc        ON uc.user_id = u.id
-         ${whereSql}
-         ORDER BY u.vip_level DESC, lifetime_coins DESC, u.id ASC
-         LIMIT $${i} OFFSET $${i + 1}`,
+    const rows = await this.dataSource.query(
+      `SELECT
+          u.id, u.user_code, u.username, u.full_name, u.email,
+          u.account_status, u.created_at, u.vip_level,
+          COALESCE(uc.lifetime_coins, 0)   AS lifetime_coins,
+          COALESCE(vc.currency, 'BDT')     AS currency,
+          vc.level_name                    AS level_name,
+          vc.group_name                    AS member_group,
+          ph.phone_number                  AS mobile,
+          ref.id                           AS referrer_id,
+          ref.user_code                    AS referrer_code,
+          ref.username                     AS referrer_username,
+          ref.full_name                    AS referrer_name,
+          (au.id IS NOT NULL)              AS referrer_is_affiliate
+        FROM users u
+        LEFT JOIN user_coins uc       ON uc.user_id = u.id
+        LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
+        LEFT JOIN users ref           ON ref.id = u.referred_by_user_id
+        LEFT JOIN affiliate_users au  ON au.user_id = u.referred_by_user_id AND au.is_active = true
+        LEFT JOIN LATERAL (
+          SELECT phone_number FROM user_phone_numbers
+           WHERE user_id = u.id
+           ORDER BY is_primary DESC, is_verified DESC, id ASC
+           LIMIT 1
+        ) ph ON true
+        ${whereSql}
+        ORDER BY u.vip_level DESC, uc.lifetime_coins DESC NULLS LAST, u.id ASC
+        LIMIT $${i} OFFSET $${i + 1}`,
       [...params, safeLimit, offset],
     );
-
     const count = await this.dataSource.query(
       `SELECT COUNT(*)::int AS total FROM users u ${whereSql}`,
       params,
     );
 
+    const data = rows.map((u: any) => {
+      const referrer = u.referrer_id
+        ? {
+            userId:   Number(u.referrer_id),
+            memberId: u.referrer_code,
+            name:     u.referrer_name ?? u.referrer_username,
+          }
+        : null;
+      return {
+        currency:       u.currency ?? 'BDT',
+        memberGroup:    u.member_group,
+        memberId:       u.user_code,
+        userId:         Number(u.id),
+        username:       u.username,
+        name:           u.full_name,
+        mobile:         u.mobile ?? null,
+        email:          u.email,
+        referrer,
+        // Affiliate = the referring affiliate (the referrer, only when that
+        // referrer is an active affiliate). Null otherwise.
+        affiliate:      u.referrer_is_affiliate ? referrer : null,
+        registeredDate: u.created_at,
+        status:         u.account_status,
+        vipLevel:       Number(u.vip_level),
+        levelName:      u.level_name,
+        lifetimeCoins:  Number(u.lifetime_coins),
+      };
+    });
+
+    const total = count[0].total;
     return {
       data,
       page: safePage,
       limit: safeLimit,
-      total: count[0].total,
-      totalPages: Math.ceil(count[0].total / safeLimit) || 0,
+      total,
+      totalPages: Math.ceil(total / safeLimit) || 0,
     };
+  }
+
+  // GET /vip/admin/levels/summary — every tier with its player count
+  //   The "grouped by level" overview: level, level_name, group_name + count.
+  async getLevelsUserCounts() {
+    const rows = await this.dataSource.query(
+      `SELECT vc.level, vc.level_name, vc.group_name, vc.invitation_only,
+              COUNT(u.id)::int AS user_count
+         FROM vip_level_config vc
+         LEFT JOIN users u ON u.vip_level = vc.level
+        GROUP BY vc.level, vc.level_name, vc.group_name, vc.invitation_only
+        ORDER BY vc.level ASC`,
+    );
+    return rows.map((r: any) => ({
+      level:          Number(r.level),
+      levelName:      r.level_name,
+      groupName:      r.group_name,
+      invitationOnly: r.invitation_only,
+      userCount:      r.user_count,
+    }));
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: ALL USERS BY VIP LEVEL (every tier in one list)
+  //   Sorted by vip_level then lifetime coins. Optional ?level= filter
+  //   and ?search= (username / full_name / user_code).
+  // ═════════════════════════════════════════════════════════════
+  //   Delegates to getUsersInTier (level optional) so the all-levels list has
+  //   the same rich fields, combined search, and date-range filter.
+  async getAllUsersByLevel(
+    page = 1,
+    limit = 50,
+    level?: number,
+    search?: string,
+    dateFrom?: string,
+    dateTo?: string,
+  ) {
+    return this.getUsersInTier(level, page, limit, search, dateFrom, dateTo);
   }
 
   // ═════════════════════════════════════════════════════════════

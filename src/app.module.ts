@@ -36,6 +36,7 @@ import { PromotionStatsModule } from './promotion-stats/promotion-stats.module';
 import { ReportsModule } from './reports/reports.module';
 import { AnnouncementModule } from './announcement/announcement.module';
 import { SportsModule } from './sports/sports.module';
+import { CatalogModule } from './catalog/catalog.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -88,6 +89,7 @@ import { SportsModule } from './sports/sports.module';
   ReportsModule,
   AnnouncementModule,
   SportsModule,
+  CatalogModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
