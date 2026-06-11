@@ -53,8 +53,8 @@ function getCasinoConfig(
 }
 
 @Injectable()
-export class CasinoService {
-  private readonly logger = new Logger(CasinoService.name);
+export class SportsService {
+  private readonly logger = new Logger(SportsService.name);
   private readonly casinoInfo: { apiUrl: string; merchantID: string; merchantKey: string; callbackToken: string };
   private readonly slotInfo: { apiUrl: string; apiToken: string; callbackToken: string };
   private readonly spotsInfo: { apiUrl: string; apiToken: string; callbackToken: string };
@@ -84,7 +84,7 @@ export class CasinoService {
       callbackToken: this.configService.get<string>('SLOT_CALLBACK_TOKEN') ?? '',
     };
     this.spotsInfo = {
-      apiUrl: this.configService.get<string>('SPORTS_API_URL') ?? 'https://sportsbook.needforspeedau.com',
+      apiUrl: this.configService.get<string>('SPORTS_API_URL') ?? 'https://sportsapi.needforspeedau.com/sportsAPI',
       apiToken: this.configService.get<string>('SPORTS_API_TOKEN') ?? '',
       callbackToken: this.configService.get<string>('SPORTS_CALLBACK_TOKEN') ?? '',
     };
@@ -129,7 +129,7 @@ export class CasinoService {
     }
   }
 
-  async getCasinoGames(query: any, userPayload: any, isMobile: string) {
+  async getCasinoGames(query: any, _userPayload: any, isMobile: string) {
     const page = query?.pageable?.page ? Number(query.pageable.page) : 1;
     const size = query?.pageable?.size ? Number(query.pageable.size) : 1000;
     const offset = (page - 1) * size;
@@ -207,12 +207,12 @@ export class CasinoService {
     return rows.map((r: any) => r.provider);
   }
 
-  async getSportsLink(query: any, userPayload: any, isMobile: string, language?: string): Promise<string | null> {
+  async getSportsLink(_query: any, userPayload: any, _isMobile: string, language?: string): Promise<string | null> {
     try {
       const SPORTS_SUPPORTED_LANGS = ['en', 'fr', 'fa', 'ar', 'tr'];
       const sportsLang = SPORTS_SUPPORTED_LANGS.includes(language ?? '') ? language : 'en';
       let userCode = '';
-      let resUrl = 'https://sportsbook.needforspeedau.com';
+      let resUrl;
 
       if (userPayload !== undefined) {
         const userId = userPayload.sub;
@@ -231,14 +231,22 @@ export class CasinoService {
           }
         );
 
-        if (userCreateRes.data.code !== 0) {
-          this.logger.error(`User creation failed: ${userCreateRes.data.message}`);
+        // code 0 = created, code 1 = already exists — both are fine to proceed
+        console.log(`[getSportsLink] userCreate response: code=${userCreateRes.data.code} message=${userCreateRes.data.message}`);
+        if (userCreateRes.data.code !== 0 && userCreateRes.data.code !== 1) {
+          console.error(`[getSportsLink] User creation failed: code=${userCreateRes.data.code} message=${userCreateRes.data.message}`);
           return null;
         }
 
+        await new Promise((res) => setTimeout(res, 4000));
+
         const gameUrlRes = await axios.post<any>(
           `${this.spotsInfo.apiUrl}/v1/game/game-url`,
-          { userCode, language: sportsLang },
+          {
+            userCode,
+            language: sportsLang,
+            returnUrl: this.configService.get<string>('APP_BASE_URL') ?? '',
+          },
           {
             headers: {
               Authorization: `Bearer ${this.spotsInfo.apiToken}`,
@@ -247,16 +255,18 @@ export class CasinoService {
           }
         );
 
+        console.log(`[getSportsLink] gameUrl response: code=${gameUrlRes.data.code} message=${gameUrlRes.data.message} data=${JSON.stringify(gameUrlRes.data.data)}`);
+
         if (gameUrlRes.data.code !== 0) {
-          this.logger.error(`Failed to get game URL: ${gameUrlRes.data.message}`);
+          console.error(`[getSportsLink] Failed to get game URL: code=${gameUrlRes.data.code} message=${gameUrlRes.data.message}`);
           return null;
         }
 
         resUrl = gameUrlRes.data.data.gameUrl;
       }
       return resUrl;
-    } catch (error) {
-      this.logger.error('Error in getSportsLink:', error);
+    } catch (error: any) {
+      this.logger.error(`Error in getSportsLink: ${error?.response?.data ? JSON.stringify(error.response.data) : error?.message}`);
       return null;
     }
   }
@@ -385,27 +395,29 @@ export class CasinoService {
           return null;
         }
       }
-      else if (game.type === 'instant' && game.provider !== 'Spribe') {
-        this.logger.log(`[getGameUrl] INSTANT path - gameCode: ${game.game_symbol}, userId: ${userId}`);
-        const response = await axios.post(
-          `${this.miniInfo.endpoint}/gameurl`,
-          {
-            gameCode: game.game_symbol,
-            userId: String(userId),
-            userName: user.username,
-            lang: 'en',
-            lobbyurl: process.env.LOBBY_URL || 'https://lobby.slotcity.com',
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${this.miniInfo.apiToken}`,
-            },
-            proxy: false,
-          },
-        );
-        this.logger.log(`[getGameUrl] INSTANT response url: ${response.data?.data?.url}`);
-        return { url: response.data?.data?.url };
-      }
+      // ── MINI GAME launch disabled ────────────────────────────────────────
+      // else if (game.type === 'instant' && game.provider !== 'Spribe') {
+      //   this.logger.log(`[getGameUrl] INSTANT path - gameCode: ${game.game_symbol}, userId: ${userId}`);
+      //   const response = await axios.post(
+      //     `${this.miniInfo.endpoint}/gameurl`,
+      //     {
+      //       gameCode: game.game_symbol,
+      //       userId: String(userId),
+      //       userName: user.username,
+      //       lang: 'en',
+      //       lobbyurl: process.env.LOBBY_URL || 'https://lobby.slotcity.com',
+      //     },
+      //     {
+      //       headers: {
+      //         Authorization: `Bearer ${this.miniInfo.apiToken}`,
+      //       },
+      //       proxy: false,
+      //     },
+      //   );
+      //   this.logger.log(`[getGameUrl] INSTANT response url: ${response.data?.data?.url}`);
+      //   return { url: response.data?.data?.url };
+      // }
+      // ── end MINI GAME ────────────────────────────────────────────────────
       else {
         // OroPlay Live Casino
         try {
@@ -579,6 +591,11 @@ export class CasinoService {
     return clientId === this.oroplayInfo.clientId && clientSecret === this.oroplayInfo.clientSecret;
   }
 
+  validateMiniCallbackSign(sign: string): boolean {
+    if (!this.miniInfo.callbackToken) return true;
+    return sign === this.miniInfo.callbackToken;
+  }
+
   async getOroPlayLiveVendors(): Promise<any[]> {
     const token = await this.getOroPlayToken();
     const response = await axios.get(
@@ -640,15 +657,15 @@ export class CasinoService {
     userCode: string,
     vendorCode: string,
     gameCode: string,
-    historyId: number,
+    _historyId: number,
     roundId: string,
-    gameType: number,
+    _gameType: number,
     transactionCode: string,
-    isFinished: boolean,
+    _isFinished: boolean,
     isCanceled: boolean,
     amount: number,
-    detail: string,
-    createdAt: string,
+    _detail: string,
+    _createdAt: string,
   ) {
     this.logger.log(`[OroPlay TX] userCode=${userCode}, vendorCode=${vendorCode}, gameCode=${gameCode}, amount=${amount}, txCode=${transactionCode}, isCanceled=${isCanceled}`);
 
@@ -872,7 +889,7 @@ export class CasinoService {
       );
       return data;
     } catch (ex) {
-      this.logger.error('[checkSlotGameUser]: ', ex);
+      this.logger.error(`[checkSlotGameUser] error: ${ex?.response?.data ? JSON.stringify(ex.response.data) : ex?.message ?? String(ex)}`);
       return null;
     }
   }
@@ -880,7 +897,7 @@ export class CasinoService {
   async consumeSlotGameCallback(
     command: string,
     data: SlotGameCallbackDataDTO,
-    timestamp: string,
+    _timestamp: string,
     check: string,
     callbackToken: string,
   ) {
@@ -1226,10 +1243,10 @@ export class CasinoService {
         }
       }
       return result;
-    } catch (ex) {
+    } catch (ex: any) {
       await qr.rollbackTransaction();
       await qr.release();
-      this.logger.error('[consumeSlotGameCallback] error: ', ex);
+      this.logger.error(`[consumeSlotGameCallback] error: ${ex?.message ?? String(ex)}`);
       return {
         result: 99,
         status: 'ERROR',
@@ -1240,7 +1257,7 @@ export class CasinoService {
   async consumeSportsCallback(
     command: string,
     data: SportsCallbackDataDTO,
-    key: string,
+    _key: string,
     callbackToken: string,
   ) {
     this.logger.log(`[SportsCallback] ========== START ==========`);
@@ -1538,7 +1555,7 @@ export class CasinoService {
     } catch (err: any) {
       await qr.rollbackTransaction();
       await qr.release();
-      this.logger.error('Mini betwin transaction save error', err);
+      this.logger.error(`Mini betwin transaction save error: ${err?.message ?? String(err)}`);
       return { success: false, msg: 'Transaction save error' };
     }
   }
@@ -1623,7 +1640,7 @@ export class CasinoService {
     } catch (err: any) {
       await qr.rollbackTransaction();
       await qr.release();
-      this.logger.error('Mini withdraw transaction save error', err);
+      this.logger.error(`Mini withdraw transaction save error: ${err?.message ?? String(err)}`);
       return { success: false, msg: 'Transaction save error' };
     }
   }
@@ -1708,7 +1725,7 @@ export class CasinoService {
     } catch (err: any) {
       await qr.rollbackTransaction();
       await qr.release();
-      this.logger.error('Mini deposit transaction save error', err);
+      this.logger.error(`Mini deposit transaction save error: ${err?.message ?? String(err)}`);
       return { success: false, msg: 'Transaction save error' };
     }
   }
@@ -1716,7 +1733,7 @@ export class CasinoService {
   private async handleAffiliateCommission(
     qr: QueryRunner,
     userId: number,
-    username: string,
+    _username: string,
     amount: number,
     action: string,
     source: string

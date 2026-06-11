@@ -3,6 +3,7 @@ import { AppModule } from './app.module';
 import { ValidationPipe } from '@nestjs/common';
 import { WinstonModule } from 'nest-winston';
 import { winstonConfig } from './logger/logger.module';
+import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const cookieParser = require('cookie-parser');
@@ -14,6 +15,15 @@ async function bootstrap() {
 
   app.use(cookieParser());
 
+  const swaggerConfig = new DocumentBuilder()
+    .setTitle('WinX88 API Documentation')
+    .setDescription('The complete API documentation for WinX88 platform, including Sportsbook, Casino, and Mini-Games with dummy data/examples.')
+    .setVersion('1.0')
+    .addBearerAuth()
+    .build();
+  const document = SwaggerModule.createDocument(app, swaggerConfig);
+  SwaggerModule.setup('api-docs', app, document);
+
   app.useGlobalPipes(
     new ValidationPipe({
       whitelist: true,                          // strip unknown props
@@ -24,20 +34,19 @@ async function bootstrap() {
       },
     }),
   );
+  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
+    .split(',')
+    .map(o => o.trim());
+  console.log("origins", allowedOrigins);
   app.enableCors({
-    origin: [
-      'http://localhost:5173',
-      'http://localhost:5174',
-      'http://localhost:4173',
-      'http://15.207.97.72:5173',
-      'http://15.207.97.72:4173',
-      'https://winx-88.com',
-      'https://www.winx-88.com',
-      'https://test.safurion.online',
-      'https://winx-88.pages.dev',
-      'https://zjj3kjsz-5173.inc1.devtunnels.ms',
-      'http://zjj3kjsz-5173.inc1.devtunnels.ms',
-    ],
+    // origin: true, // allow all origins temporarily
+    origin: (origin, callback) => {
+      if (!origin || allowedOrigins.includes(origin)) {
+        callback(null, true);
+      } else {
+        callback(new Error(`CORS blocked: ${origin}`), false);
+      }
+    },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     credentials: true,
     allowedHeaders: [
