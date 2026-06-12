@@ -51,6 +51,7 @@ async function bootstrap() {
   console.log('BLOCKED ORIGIN =>', origin);
   return callback(new Error(`CORS blocked: ${origin}`), false);
 },
+
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     credentials: true,
     allowedHeaders: [
@@ -59,6 +60,7 @@ async function bootstrap() {
       'Accept',
       'Origin',
       'X-Requested-With',
+      'x-device-fingerprint'
     ],
   });
 
