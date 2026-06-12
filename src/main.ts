@@ -7,7 +7,7 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const cookieParser = require('cookie-parser');
-
+ 
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, {
     logger: WinstonModule.createLogger(winstonConfig),
