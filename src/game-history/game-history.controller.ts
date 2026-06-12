@@ -74,6 +74,75 @@ export class GameHistoryController {
   }
 
   /**
+   * Settled rounds only: wagers with a final outcome (WON / LOST / CANCELLED).
+   *
+   *   GET /me/game-history/settled?category=LOTTERY&from=2026-06-04&to=2026-06-11&page=1&limit=50
+   */
+  @Get('settled')
+  async getSettled(
+    @Req() req: any,
+    @Query('category') category?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit = 20,
+  ) {
+    return this.settledFeed(req, true, 'Settled game history', {
+      category, from, to, page, limit,
+    });
+  }
+
+  /**
+   * Unsettled rounds only: wagers still awaiting a result (PLACED).
+   *
+   *   GET /me/game-history/unsettled?category=LOTTERY&from=2026-06-04&to=2026-06-11&page=1&limit=50
+   */
+  @Get('unsettled')
+  async getUnsettled(
+    @Req() req: any,
+    @Query('category') category?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit = 20,
+  ) {
+    return this.settledFeed(req, false, 'Unsettled game history', {
+      category, from, to, page, limit,
+    });
+  }
+
+  private async settledFeed(
+    req: any,
+    settled: boolean,
+    message: string,
+    q: { category?: string; from?: string; to?: string; page: number; limit: number },
+  ) {
+    try {
+      const validCategories: GameCategory[] = ['LOTTERY', 'JACKPOT', 'SLOT'];
+      const data = await this.history.getHistory(req.user.sub, {
+        settled,
+        category: q.category && validCategories.includes(q.category.toUpperCase() as GameCategory)
+          ? (q.category.toUpperCase() as GameCategory)
+          : undefined,
+        from: q.from,
+        to: q.to,
+        page: q.page,
+        limit: q.limit,
+      });
+
+      return { statusCode: HttpStatus.OK, message, ...data };
+    } catch (error: any) {
+      throw new HttpException(
+        {
+          statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          message: error?.message || 'Failed to fetch game history',
+        },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
    * Combined feed: every product (LOTTERY + JACKPOT + SLOT) and every status
    * (WON / LOST / PLACED / CANCELLED) merged into one timeline, filtered only by
    * date range. No category/status filter is applied — it's the full picture.

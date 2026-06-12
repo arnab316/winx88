@@ -1103,15 +1103,22 @@ export class JackpotService {
 
     return rows.map((r: any) => {
       const { min_bet, max_bet, game_code, ...rest } = r;
+      const meta = r.eligibility_rules ?? {};
       return {
         ...rest,
-        // Game code from the linked game row (e.g. "6D_JACKPOT").
-        gameCode: game_code ?? null,
-        // Per-bet stake limits come from the linked game row.
-        minBet: min_bet === null ? null : parseFloat(min_bet),
-        maxBet: max_bet === null ? null : parseFloat(max_bet),
-        digitLength: r.eligibility_rules?.digitLength,
-        periodType:  r.eligibility_rules?.periodType,
+        // Game code from the linked game row (e.g. "6D_JACKPOT"); if the game
+        // row is missing (deleted/re-seeded), derive it from the pool meta.
+        gameCode:
+          game_code ??
+          (meta.digitLength
+            ? this.gameCodeFor(meta.digitLength, meta.gameCode)
+            : null),
+        // Per-bet stake limits come from the linked game row, falling back to
+        // the limits stashed on the pool meta at creation.
+        minBet: min_bet !== null ? parseFloat(min_bet) : meta.minBet ?? null,
+        maxBet: max_bet !== null ? parseFloat(max_bet) : meta.maxBet ?? null,
+        digitLength: meta.digitLength,
+        periodType:  meta.periodType,
       };
     });
   }
