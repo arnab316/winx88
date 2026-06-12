@@ -34,7 +34,7 @@ async function bootstrap() {
       },
     }),
   );
-  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'http://localhost:5173')
+  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'https://winx-88.com,https://www.winx-88.com,https://test.safurion.online')
     .split(',')
     .map(o => o.trim());
   console.log("origins", allowedOrigins);
