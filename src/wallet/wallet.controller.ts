@@ -241,14 +241,27 @@ export class WalletController {
     });
   }
  
-  // GET /wallet/admin/withdrawals?page=1&limit=20
+  // GET /wallet/admin/withdrawals?page=1&limit=20&status=PENDING|APPROVED|REJECTED|ALL
+  // status defaults to PENDING (the approval queue).
   @UseGuards(AdminGuard)
   @Get('admin/withdrawals')
   getPendingWithdrawals(
     @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('status') status?: string,
   ) {
-    return this.walletService.getPendingWithdrawals(page, limit);
+    const valid = ['PENDING', 'APPROVED', 'REJECTED', 'ALL'] as const;
+    const normalized = (status ?? 'PENDING').toUpperCase();
+    if (!valid.includes(normalized as any)) {
+      throw new BadRequestException(
+        `status must be one of: ${valid.join(', ')}`,
+      );
+    }
+    return this.walletService.getPendingWithdrawals(
+      page,
+      limit,
+      normalized as (typeof valid)[number],
+    );
   }
  
   // POST /wallet/admin/withdrawals/:id/decide

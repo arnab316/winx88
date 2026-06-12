@@ -861,26 +861,43 @@ async getPendingDeposits(q: DepositListQuery = {}) {
   }
 
   // ═════════════════════════════════════════════════════════════
-  // ADMIN: LIST PENDING WITHDRAWALS
+  // ADMIN: LIST WITHDRAWALS (status = PENDING | APPROVED | REJECTED | ALL)
   // ═════════════════════════════════════════════════════════════
-  async getPendingWithdrawals(page = 1, limit = 20) {
+  async getPendingWithdrawals(
+    page = 1,
+    limit = 20,
+    status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL' = 'PENDING',
+  ) {
     const offset = (page - 1) * limit;
+
+    const statusWhere = status === 'ALL' ? '' : `WHERE w.status = $3`;
+    const params: any[] =
+      status === 'ALL' ? [limit, offset] : [limit, offset, status];
+
+    // Pending queue reads oldest-first (approval order); decided/mixed
+    // listings read newest-first.
+    const order = status === 'PENDING' ? 'ASC' : 'DESC';
+
     const rows = await this.dataSource.query(
       `SELECT w.id, w.withdrawal_code, w.user_id, u.full_name,
               w.amount, w.receive_number,
-              g.name AS gateway_name, w.requested_at
+              g.name AS gateway_name, w.requested_at,
+              w.status, w.decided_at, w.rejection_reason
        FROM withdrawals w
        JOIN users u ON u.id = w.user_id
        JOIN payment_gateways g ON g.id = w.gateway_id
-       WHERE w.status = 'PENDING'
-       ORDER BY w.requested_at ASC
+       ${statusWhere}
+       ORDER BY w.requested_at ${order}
        LIMIT $1 OFFSET $2`,
-      [limit, offset],
+      params,
     );
     const count = await this.dataSource.query(
-      `SELECT COUNT(*)::int AS total FROM withdrawals WHERE status = 'PENDING'`,
+      status === 'ALL'
+        ? `SELECT COUNT(*)::int AS total FROM withdrawals`
+        : `SELECT COUNT(*)::int AS total FROM withdrawals WHERE status = $1`,
+      status === 'ALL' ? [] : [status],
     );
-    return { data: rows, total: count[0].total, page, limit };
+    return { data: rows, total: count[0].total, page, limit, status };
   }
 
   // ═════════════════════════════════════════════════════════════
