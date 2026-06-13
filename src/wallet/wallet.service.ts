@@ -1027,31 +1027,47 @@ async getLedgerHistory(
   const dataParams  = [...params, safeLimit, offset];
   const countParams = [...params];
 
+  // A deposit/withdrawal writes MULTIPLE ledger rows over its lifecycle
+  // (e.g. DEPOSIT_PENDING then DEPOSIT_APPROVED). For this money-movement
+  // statement we want ONE row per deposit/withdrawal showing its CURRENT
+  // state, so we collapse to the latest ledger entry per reference via
+  // DISTINCT ON. Rows without a reference (manual adjustments) fall back to
+  // their own ledger id, so each stays distinct.
+  const groupKey =
+    `COALESCE(fl.reference_type, ''), COALESCE(fl.reference_id::text, fl.id::text)`;
+
   // Join through the deposit → agent chain so deposit rows carry the
   // agent's wallet type (bKash / Nagad / Upay) the user paid into.
   // Withdrawal rows have no agent, so these come back null.
   const rows = await this.dataSource.query(
-    `SELECT
-        fl.id, fl.ledger_code, fl.entry_type, fl.flow, fl.amount,
-        fl.balance_before, fl.balance_after,
-        fl.reference_type, fl.reference_id,
-        fl.status, fl.description, fl.created_by_type, fl.created_at,
-        a.wallet_type   AS agent_wallet_type,
-        a.agent_number  AS agent_number,
-        g.name          AS gateway_name
-     FROM financial_ledger fl
-     LEFT JOIN deposits d
-            ON fl.reference_type = 'DEPOSIT' AND fl.reference_id = d.id
-     LEFT JOIN agents a            ON a.id = d.agent_id
-     LEFT JOIN payment_gateways g  ON g.id = d.gateway_id
-     ${whereClause}
-     ORDER BY fl.created_at DESC, fl.id DESC
+    `SELECT * FROM (
+       SELECT DISTINCT ON (${groupKey})
+          fl.id, fl.ledger_code, fl.entry_type, fl.flow, fl.amount,
+          fl.balance_before, fl.balance_after,
+          fl.reference_type, fl.reference_id,
+          fl.status, fl.description, fl.created_by_type, fl.created_at,
+          a.wallet_type   AS agent_wallet_type,
+          a.agent_number  AS agent_number,
+          g.name          AS gateway_name
+       FROM financial_ledger fl
+       LEFT JOIN deposits d
+              ON fl.reference_type = 'DEPOSIT' AND fl.reference_id = d.id
+       LEFT JOIN agents a            ON a.id = d.agent_id
+       LEFT JOIN payment_gateways g  ON g.id = d.gateway_id
+       ${whereClause}
+       ORDER BY ${groupKey}, fl.created_at DESC, fl.id DESC
+     ) sub
+     ORDER BY sub.created_at DESC, sub.id DESC
      LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
     dataParams,
   );
 
   const count = await this.dataSource.query(
-    `SELECT COUNT(*)::int AS total FROM financial_ledger fl ${whereClause}`,
+    `SELECT COUNT(*)::int AS total FROM (
+       SELECT DISTINCT ${groupKey}
+       FROM financial_ledger fl
+       ${whereClause}
+     ) sub`,
     countParams,
   );
 
