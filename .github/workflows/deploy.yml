@@ -48,5 +48,5 @@ jobs:
               -p 3000:3000 \
               --env-file /home/${{ secrets.SERVER_USER }}/winx88.env \
               ${{ secrets.DOCKER_USERNAME }}/winx88:latest
-              
-              docker image prune -af --filter "until=24h"
+
+            docker image prune -af --filter "until=24h"
