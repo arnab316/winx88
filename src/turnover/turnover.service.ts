@@ -37,6 +37,11 @@ export class TurnoverService {
   //   Called from wallet.decideDeposit() on APPROVE.
   //   Skips entirely if no promotion attached.
   // ═════════════════════════════════════════════════════════════
+  // Default turnover multiplier applied to a plain deposit (no promotion).
+  // Client rule: a deposit with no promo still carries a 1× turnover
+  // requirement, e.g. deposit 1000 → 1000 turnover to clear.
+  static readonly DEFAULT_DEPOSIT_MULTIPLIER = 1;
+
   async createFromDeposit(
   qr: any /* QueryRunner */,
   userId: number,
@@ -44,8 +49,23 @@ export class TurnoverService {
   depositAmount: number,
   promotionId: number | null,
 ): Promise<{ requirementId: number; targetAmount: number } | null> {
-  if (!promotionId) return null;
- 
+  // ── Plain deposit (no promotion) → default 1× turnover ──────────────
+  // A multiplier of 0 would mean "no requirement"; the default is 1, so a
+  // plain deposit always creates a requirement of (amount × 1).
+  if (!promotionId) {
+    const multiplier = TurnoverService.DEFAULT_DEPOSIT_MULTIPLIER;
+    if (!multiplier || multiplier <= 0 || depositAmount <= 0) return null;
+    return this.insertRequirement(qr, {
+      userId,
+      sourceType: 'DEPOSIT',
+      sourceId: depositId,
+      baseAmount: depositAmount,
+      multiplier,
+      targetAmount: depositAmount * multiplier,
+      label: 'Deposit turnover',
+    });
+  }
+
   const promo = await qr.query(
     `SELECT id, rollover_multiplier, bonus_type, bonus_value,
             min_amount, max_bonus, is_active
@@ -54,31 +74,31 @@ export class TurnoverService {
     [promotionId],
   );
   if (!promo.length) return null;
- 
+
   const p = promo[0];
   if (!p.is_active) return null;
- 
+
   const multiplier = parseFloat(p.rollover_multiplier ?? '0');
   if (!multiplier || multiplier <= 0) return null;
- 
+
   // Recompute the bonus that was issued, matching engine logic
   let bonus = 0;
   const bonusValue = parseFloat(p.bonus_value ?? '0');
- 
+
   if (p.bonus_type === 'FLAT') {
     bonus = bonusValue;
   } else if (p.bonus_type === 'PERCENT') {
     bonus = depositAmount * (bonusValue / 100);
   }
- 
+
   // Cap by max_bonus
   if (p.max_bonus && bonus > parseFloat(p.max_bonus)) {
     bonus = parseFloat(p.max_bonus);
   }
- 
+
   const baseAmount = depositAmount + bonus;
   const targetAmount = baseAmount * multiplier;
- 
+
   return this.insertRequirement(qr, {
     userId,
     sourceType: 'DEPOSIT',
@@ -86,6 +106,7 @@ export class TurnoverService {
     baseAmount,
     multiplier,
     targetAmount,
+    label: 'Deposit bonus turnover',
   });
 }
 
@@ -261,13 +282,25 @@ export class TurnoverService {
       multiplier: number;
       targetAmount: number;
       adminId?: number;
+      label?: string | null;
     },
   ): Promise<{ requirementId: number; targetAmount: number }> {
+    // A new requirement supersedes finished ones on the wagering page: archive
+    // the user's COMPLETED requirements so only the live one (plus any still
+    // in-progress) remains visible. (Completed reqs also auto-hide after 7
+    // days via the read queries.)
+    await qr.query(
+      `UPDATE turnover_requirements
+       SET status = 'ARCHIVED', archived_at = NOW(), updated_at = NOW()
+       WHERE user_id = $1 AND status = 'COMPLETED'`,
+      [data.userId],
+    );
+
     const result = await qr.query(
       `INSERT INTO turnover_requirements
         (user_id, source_type, source_id, base_amount, multiplier,
-         target_amount, current_amount, status, created_by_admin_id)
-       VALUES ($1,$2,$3,$4,$5,$6,0,'ACTIVE',$7)
+         target_amount, current_amount, status, created_by_admin_id, label)
+       VALUES ($1,$2,$3,$4,$5,$6,0,'ACTIVE',$7,$8)
        RETURNING id, target_amount`,
       [
         data.userId,
@@ -277,6 +310,7 @@ export class TurnoverService {
         data.multiplier,
         data.targetAmount,
         data.adminId ?? null,
+        data.label ?? null,
       ],
     );
 
@@ -327,17 +361,62 @@ export class TurnoverService {
     };
   }
 
+  // Requirements shown on the wagering page: everything still ACTIVE (until
+  // finished), plus COMPLETED ones for 7 days after completion (then they
+  // drop off — also archived early when a new requirement is created).
+  // `label` is the header (e.g. "Weekly Loss Bonus"); each row carries its
+  // own progress so the UI can render an individual progress bar.
   async getMyActiveRequirements(userId: number) {
-    return this.dataSource.query(
-      `SELECT id, source_type, source_id, base_amount, multiplier,
+    const rows = await this.dataSource.query(
+      `SELECT id, source_type, source_id, label, base_amount, multiplier,
               target_amount, current_amount, status, completed_at,
               created_at,
               (target_amount - current_amount) AS remaining
        FROM turnover_requirements
-       WHERE user_id = $1 AND status IN ('ACTIVE', 'COMPLETED')
+       WHERE user_id = $1
+         AND (
+           status = 'ACTIVE'
+           OR (status = 'COMPLETED' AND completed_at > NOW() - INTERVAL '7 days')
+         )
        ORDER BY created_at DESC`,
       [userId],
     );
+
+    return rows.map((r: any) => {
+      const target  = parseFloat(r.target_amount);
+      const current = parseFloat(r.current_amount);
+      const remaining = parseFloat(r.remaining);
+      return {
+        id:            Number(r.id),
+        label:         r.label ?? this.defaultLabelFor(r.source_type),
+        sourceType:    r.source_type,
+        sourceId:      r.source_id === null ? null : Number(r.source_id),
+        baseAmount:    parseFloat(r.base_amount),
+        multiplier:    parseFloat(r.multiplier),
+        targetAmount:  target,
+        currentAmount: current,
+        remaining,
+        progressPercent:
+          target > 0
+            ? Number(Math.min((current / target) * 100, 100).toFixed(2))
+            : 100,
+        status:        r.status,
+        completedAt:   r.completed_at,
+        createdAt:     r.created_at,
+      };
+    });
+  }
+
+  // Fallback header when a requirement has no explicit label (e.g. older
+  // promotion/deposit rows created before labels existed).
+  private defaultLabelFor(sourceType: string): string {
+    switch (sourceType) {
+      case 'DEPOSIT':   return 'Deposit turnover';
+      case 'PROMOTION': return 'Promotion turnover';
+      case 'BONUS':     return 'Bonus turnover';
+      case 'MANUAL':    return 'Bonus turnover';
+      default:          return 'Turnover requirement';
+    }
   }
 
   async getMyTurnoverHistory(userId: number, page = 1, limit = 50) {

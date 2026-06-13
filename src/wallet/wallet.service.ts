@@ -277,6 +277,18 @@ export class WalletService {
             );
             promoResult = { skipped: true, reason: e.message };
           }
+        } else {
+          // ─── DEFAULT DEPOSIT TURNOVER ──────────────────────────
+          // No promo attached → still create a default 1× turnover
+          // requirement (deposit 1000 → 1000 to wager off before withdrawal).
+          // The promo branch above creates its own turnover via the engine.
+          await this.turnoverService.createFromDeposit(
+            qr,
+            dep.user_id,
+            Number(dto.depositId),
+            amt,
+            null,
+          );
         }
 
         await qr.commitTransaction();
@@ -638,6 +650,11 @@ export class WalletService {
   if (!['MANUAL_ADJUSTMENT', 'MANUAL_DEPOSIT'].includes(dto.adjustmentType))
     throw new BadRequestException('Invalid adjustment type');
 
+  // Turnover multiplier is credit-only and must be a non-negative number.
+  const turnoverMultiplier = dto.turnoverMultiplier ?? 0;
+  if (!Number.isFinite(turnoverMultiplier) || turnoverMultiplier < 0)
+    throw new BadRequestException('turnoverMultiplier must be 0 or greater');
+
   const qr = this.dataSource.createQueryRunner();
   await qr.connect();
   await qr.startTransaction();
@@ -699,9 +716,34 @@ export class WalletService {
       createdById:   dto.adminId,
     });
 
+    // ─── TURNOVER ON CREDIT ──────────────────────────────────────
+    // A credit adjustment (e.g. "Weekly Loss Bonus") can carry a wagering
+    // requirement: amount × multiplier. multiplier 0 → no requirement (the
+    // user is free to withdraw). Debits never create turnover — they just
+    // appear in the transaction history. The description becomes the
+    // requirement's header on the user's wagering page.
+    let turnover: { requirementId: number; targetAmount: number } | null = null;
+    if (dto.amount > 0 && turnoverMultiplier > 0) {
+      turnover = await this.turnoverService.insertRequirement(qr, {
+        userId:     dto.userId,
+        sourceType: 'MANUAL',
+        sourceId:   Number(adj[0].id),
+        baseAmount: dto.amount,
+        multiplier: turnoverMultiplier,
+        targetAmount: dto.amount * turnoverMultiplier,
+        adminId:    dto.adminId,
+        label:      dto.description,
+      });
+    }
+
     await qr.commitTransaction();
     await this.walletGateway.pushBalanceUpdate(dto.userId);
-    return { message: 'Wallet adjusted.', balanceBefore: bal, balanceAfter: newBal };
+    return {
+      message: 'Wallet adjusted.',
+      balanceBefore: bal,
+      balanceAfter: newBal,
+      turnover, // null when none created (debit, or multiplier 0)
+    };
   } catch (e) {
     await qr.rollbackTransaction();
     throw e;
@@ -996,26 +1038,31 @@ async getLedgerHistory(
   const labelMap = role === 'ADMIN' ? ADMIN_LABELS : USER_LABELS;
 
   // ─── Transaction-only feed ───────────────────────────────
-  // This endpoint is the money-movement statement: DEPOSITS and
-  // WITHDRAWALS only. Bets/wins/bonuses/adjustments are intentionally
-  // excluded (those live in game-history / other views).
+  // This endpoint is the money-movement statement: DEPOSITS, WITHDRAWALS and
+  // manual ADJUSTMENTS (admin credit/debit). Bets/wins/bonuses live in
+  // game-history / other views and are excluded here.
   const DEPOSIT_TYPES = [
     'DEPOSIT_PENDING', 'DEPOSIT_APPROVED', 'DEPOSIT_REJECTED', 'MANUAL_DEPOSIT',
   ];
   const WITHDRAWAL_TYPES = [
     'WITHDRAWAL_REQUESTED', 'WITHDRAWAL_APPROVED', 'WITHDRAWAL_REJECTED',
   ];
+  // Manual admin adjustments (credit "Weekly Loss Bonus", debit claw-back).
+  // These must appear in the statement with their description + amount.
+  const ADJUSTMENT_TYPES = ['MANUAL_ADJUSTMENT'];
 
-  // Optional ?type=DEPOSIT | WITHDRAWAL narrows the feed; anything else
-  // (or no filter) returns both. Bet/win/bonus filters return nothing.
+  // Optional ?type=DEPOSIT | WITHDRAWAL | ADJUSTMENT narrows the feed; anything
+  // else (or no filter) returns all three. Bet/win/bonus filters return nothing.
   const filter = typeFilter?.trim().toUpperCase();
   let effectiveTypes: string[];
   if (filter === 'DEPOSIT') {
     effectiveTypes = DEPOSIT_TYPES;
   } else if (filter === 'WITHDRAWAL') {
     effectiveTypes = WITHDRAWAL_TYPES;
+  } else if (filter === 'ADJUSTMENT') {
+    effectiveTypes = ADJUSTMENT_TYPES;
   } else {
-    effectiveTypes = [...DEPOSIT_TYPES, ...WITHDRAWAL_TYPES];
+    effectiveTypes = [...DEPOSIT_TYPES, ...WITHDRAWAL_TYPES, ...ADJUSTMENT_TYPES];
   }
 
   const params: any[] = [userId, ...effectiveTypes];

@@ -85,6 +85,11 @@ export interface AdminAdjustmentDto {
   description: string;
   adjustmentType: 'MANUAL_ADJUSTMENT' | 'MANUAL_DEPOSIT'; // ← NEW
   meta?: Record<string, any>;
+  // Turnover multiplier applied to a CREDIT adjustment (ignored for debits):
+  //   amount × turnoverMultiplier = turnover the user must wager off.
+  //   0 (or omitted) = no turnover requirement (instantly free to withdraw).
+  // The `description` becomes the requirement's header on the wagering page.
+  turnoverMultiplier?: number;
 }
 
 

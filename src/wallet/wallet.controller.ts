@@ -289,7 +289,10 @@ export class WalletController {
   }
  
   // POST /wallet/admin/adjust
-  // body: { userId, amount (signed: + credit, - debit), adjustmentType, description, meta? }
+  // body: { userId, amount (signed: + credit, - debit), adjustmentType,
+  //         description, meta?, turnoverMultiplier? }
+  //   turnoverMultiplier (credit only): amount × multiplier = turnover to clear.
+  //   0/omitted = no turnover requirement. description = requirement header.
   @UseGuards(AdminGuard)
   @Post('admin/adjust')
   adminAdjust(@Body() body: any, @Req() req: any) {
@@ -301,6 +304,10 @@ export class WalletController {
       adjustmentType: body.adjustmentType,
       description:    body.description,
       meta:           body.meta,
+      turnoverMultiplier:
+        body.turnoverMultiplier !== undefined && body.turnoverMultiplier !== null
+          ? Number(body.turnoverMultiplier)
+          : undefined,
       adminId:        req.user.sub,   // admin identity from the JWT, never the body
     });
   }
