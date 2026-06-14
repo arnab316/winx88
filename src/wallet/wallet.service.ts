@@ -91,11 +91,12 @@ export class WalletService {
           limits.deposit_min != null ? parseFloat(limits.deposit_min) : null;
         const max =
           limits.deposit_max != null ? parseFloat(limits.deposit_max) : null;
-        if (min != null && dto.amount < min)
+        // A limit of 0 (or null) means "no limit" — only enforce when > 0.
+        if (min != null && min > 0 && dto.amount < min)
           throw new BadRequestException(
             `Minimum deposit for your tier is ${min}`,
           );
-        if (max != null && dto.amount > max)
+        if (max != null && max > 0 && dto.amount > max)
           throw new BadRequestException(
             `Maximum deposit for your tier is ${max}`,
           );
@@ -384,11 +385,12 @@ export class WalletService {
           limits.withdrawal_max != null
             ? parseFloat(limits.withdrawal_max)
             : null;
-        if (wmin != null && dto.amount < wmin)
+        // A limit of 0 (or null) means "no limit" — only enforce when > 0.
+        if (wmin != null && wmin > 0 && dto.amount < wmin)
           throw new BadRequestException(
             `Minimum withdrawal for your tier is ${wmin}`,
           );
-        if (wmax != null && dto.amount > wmax)
+        if (wmax != null && wmax > 0 && dto.amount > wmax)
           throw new BadRequestException(
             `Maximum withdrawal for your tier is ${wmax}`,
           );
