@@ -212,7 +212,15 @@ export class UserService {
        w.total_withdrawn,
  
        p.phone_number AS primary_phone,
- 
+
+       COALESCE((
+         SELECT json_agg(json_build_object(
+                  'id', upn.id, 'phone_number', upn.phone_number,
+                  'is_primary', upn.is_primary, 'is_verified', upn.is_verified)
+                  ORDER BY upn.is_primary DESC, upn.id ASC)
+         FROM user_phone_numbers upn WHERE upn.user_id = u.id
+       ), '[]'::json) AS phone_numbers,
+
        uv.status              AS kyc_status,
        uv.document_type       AS kyc_document_type,
        uv.rejection_reason    AS kyc_rejection_reason,
@@ -257,13 +265,24 @@ export class UserService {
          vc.group_name AS vip_group_name,
          u.account_status, u.created_at,
          (SELECT phone_number FROM user_phone_numbers
-          WHERE user_id = u.id AND is_primary = true LIMIT 1) AS primary_phone
+          WHERE user_id = u.id AND is_primary = true LIMIT 1) AS primary_phone,
+         COALESCE((
+           SELECT json_agg(json_build_object(
+                    'id', upn.id, 'phone_number', upn.phone_number,
+                    'is_primary', upn.is_primary, 'is_verified', upn.is_verified)
+                    ORDER BY upn.is_primary DESC, upn.id ASC)
+           FROM user_phone_numbers upn WHERE upn.user_id = u.id
+         ), '[]'::json) AS phone_numbers
        FROM users u
        LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
        WHERE u.full_name ILIKE $1
           OR u.username   ILIKE $1
           OR u.email      ILIKE $1
           OR u.user_code  ILIKE $1
+          OR EXISTS (
+               SELECT 1 FROM user_phone_numbers upn2
+               WHERE upn2.user_id = u.id AND upn2.phone_number ILIKE $1
+             )
        LIMIT 50`,
       [`%${search}%`],
     );
