@@ -1,0 +1,1784 @@
+import { useState, useEffect } from 'react';
+import { ChevronLeft, ChevronRight, X, Info, ChevronRight as ChevronRightIcon, ChevronDown, Search, Pencil, Trash2, AlertCircle } from 'lucide-react';
+
+import { promotionApi } from '../../api/promotionApi';
+import type { Promotion as ApiPromotion } from '../../api/promotionApi';
+
+export default function PromotionSettings() {
+  const [filteredPromotions, setFilteredPromotions] = useState<ApiPromotion[]>([]);
+  const [selectedPromotion, setSelectedPromotion] = useState<ApiPromotion | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [, setIsLoading] = useState(false);
+  const [totalRecords, setTotalRecords] = useState(0);
+
+  const [deleteModalOpen, setDeleteModalOpen] = useState(false);
+  const [promotionToDelete, setPromotionToDelete] = useState<ApiPromotion | null>(null);
+  const [hardDelete, setHardDelete] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  const [filters, setFilters] = useState({
+    currency: 'BDT',
+    status: '',
+    bonusType: '',
+    promoCode: ''
+  });
+
+  const [page, setPage] = useState(1);
+  const itemsPerPage = 5;
+
+  const fetchPromotions = async () => {
+    setIsLoading(true);
+    try {
+      const res = await promotionApi.listPromotions({
+        currency: filters.currency || undefined,
+        isActive: filters.status ? filters.status === 'active' : undefined,
+        kind: filters.bonusType || undefined,
+        code: filters.promoCode || undefined,
+        page,
+        limit: itemsPerPage
+      });
+      setFilteredPromotions(res.data);
+      setTotalRecords(res.total || 0);
+    } catch (error) {
+      console.error('Failed to fetch promotions:', error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleDeleteClick = (promo: ApiPromotion) => {
+    setPromotionToDelete(promo);
+    setHardDelete(false);
+    setDeleteError(null);
+    setDeleteModalOpen(true);
+  };
+
+  const confirmDelete = async () => {
+    if (!promotionToDelete) return;
+    setIsLoading(true);
+    setDeleteError(null);
+    try {
+      await promotionApi.deletePromotion(promotionToDelete.id, hardDelete);
+      setDeleteModalOpen(false);
+      fetchPromotions();
+    } catch (err: any) {
+      setDeleteError(err.response?.data?.message || err.message || 'Failed to delete promotion');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleClearFilters = () => {
+    setFilters({
+      currency: 'BDT',
+      status: '',
+      bonusType: '',
+      promoCode: ''
+    });
+  };
+
+  const handleSearch = () => {
+    setPage(1);
+    fetchPromotions();
+  };
+
+  useEffect(() => {
+    fetchPromotions();
+  }, [page]);
+
+  const handleCreate = () => {
+    setSelectedPromotion({
+      id: 0,
+      title: '',
+      kind: 'DEPOSIT',
+      bonusType: 'FLAT',
+      bonusValue: 0,
+      isActive: true,
+      currency: 'BDT',
+    } as ApiPromotion);
+    setIsEditModalOpen(true);
+  };
+
+  const handleEdit = (promotion: ApiPromotion) => {
+    setSelectedPromotion(promotion);
+    setIsEditModalOpen(true);
+  };
+
+  const handleSave = async (updatedPromo: ApiPromotion) => {
+    try {
+      if (updatedPromo.id === 0) {
+        const { id, ...createPayload } = updatedPromo;
+        if (!createPayload.code) {
+          delete createPayload.code;
+        }
+        await promotionApi.createPromotion(createPayload);
+      } else {
+        const { id, code, currency, bonusTo, ...updatePayload } = updatedPromo as any;
+        await promotionApi.updatePromotion(id, updatePayload);
+      }
+      await fetchPromotions();
+      setIsEditModalOpen(false);
+    } catch (err) {
+      console.error('Failed to update/create promotion:', err);
+    }
+  };
+
+  const totalPages = Math.ceil(totalRecords / itemsPerPage) || 1;
+  const paginatedPromotions = filteredPromotions; // already paginated from backend
+
+  return (
+    <div className="flex flex-col gap-6 text-foreground bg-background/95 min-h-screen">
+      {/* Header */}
+      <div className="flex flex-col gap-1.5 border-b border-border pb-4">
+        <h1 className="text-2xl font-bold tracking-tight">Promotion</h1>
+        <p className="text-xs text-muted-foreground">Promotion Settings</p>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-card text-card-foreground rounded-xl border border-border p-6 shadow-sm">
+        <h2 className="text-sm font-semibold mb-4 text-foreground">Promotion Settings</h2>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-5">
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-muted-foreground">Currency</label>
+            <select
+              value={filters.currency}
+              onChange={(e) => setFilters({ ...filters, currency: e.target.value })}
+              className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+            >
+              <option value="BDT">BDT</option>
+              <option value="USD">USD</option>
+              <option value="EUR">EUR</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-muted-foreground">Status</label>
+            <select
+              value={filters.status}
+              onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+              className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+            >
+              <option value="">Please Select</option>
+              <option value="active">Active</option>
+              <option value="inactive">Inactive</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-muted-foreground">Bonus Type</label>
+            <select
+              value={filters.bonusType}
+              onChange={(e) => setFilters({ ...filters, bonusType: e.target.value })}
+              className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+            >
+              <option value="">Please Select</option>
+              <option value="DEPOSIT">Deposit</option>
+              <option value="REGISTRATION">Registration</option>
+              <option value="FREE_REWARD">Free Reward</option>
+              <option value="PROMOCODE">Promo Code</option>
+              <option value="MANUAL">Manual</option>
+              <option value="RELOAD">Reload</option>
+              <option value="CASHBACK">Cashback</option>
+              <option value="REBATE">Rebate</option>
+            </select>
+          </div>
+
+          <div className="flex flex-col gap-1.5">
+            <label className="text-xs font-semibold text-muted-foreground">Promo Code</label>
+            <input
+              type="text"
+              value={filters.promoCode}
+              onChange={(e) => setFilters({ ...filters, promoCode: e.target.value })}
+              placeholder="Please Enter"
+              className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+            />
+          </div>
+        </div>
+
+        <div className="flex justify-end gap-2.5">
+          <button
+            onClick={handleClearFilters}
+            className="px-4 py-1.5 text-xs font-semibold border border-border rounded-md hover:bg-muted/50 transition-all active:scale-[0.98]"
+          >
+            Clear
+          </button>
+          <button 
+            onClick={handleSearch}
+            className="px-4 py-1.5 text-xs font-semibold bg-[#00a65a] hover:bg-[#008d4c] text-white rounded-md transition-all active:scale-[0.98]"
+          >
+            Search
+          </button>
+          <button 
+            onClick={handleCreate}
+            className="px-4 py-1.5 text-xs font-semibold bg-primary hover:bg-primary/90 text-primary-foreground rounded-md transition-all active:scale-[0.98]"
+          >
+            Create Promotion
+          </button>
+        </div>
+      </div>
+
+      {/* Table */}
+      <div className="bg-card text-card-foreground rounded-xl border border-border shadow-sm overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse min-w-[1100px]">
+            <thead>
+              <tr className="border-b border-border bg-muted/10 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                <th className="py-3 px-4 w-12 text-center">ID</th>
+                <th className="py-3 px-4">Currency</th>
+                <th className="py-3 px-4">Member Group</th>
+                <th className="py-3 px-4">Bonus Type</th>
+                <th className="py-3 px-4">Calculation Type</th>
+                <th className="py-3 px-4">Promo Code</th>
+                <th className="py-3 px-4">Promo Name</th>
+                <th className="py-3 px-4">Valid From</th>
+                <th className="py-3 px-4">Valid Till</th>
+                <th className="py-3 px-4 text-center">Status</th>
+                <th className="py-3 px-4">Updated By</th>
+                <th className="py-3 px-4">Updated Time</th>
+                <th className="py-3 px-4 text-center">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border/60 text-xs text-foreground">
+              {paginatedPromotions.map((promo) => {
+                const isActive = promo.isActive ?? (promo as any).is_active ?? false;
+                const memberGroupId = promo.memberGroupId || (promo as any).member_group_id || 'All';
+                const targetType = promo.targetType || (promo as any).target_type || 'N/A';
+                const startsAt = promo.startsAt || (promo as any).starts_at;
+                const endsAt = promo.endsAt || (promo as any).ends_at;
+
+                return (
+                <tr key={promo.id} className="hover:bg-muted/10 transition-colors">
+                  <td className="py-3.5 px-4 text-center font-mono text-muted-foreground">{promo.id}</td>
+                  <td className="py-3.5 px-4">
+                    <span className="rounded bg-fuchsia-500/10 px-2.5 py-0.5 text-[10px] font-bold text-fuchsia-600 dark:text-fuchsia-400 uppercase">
+                      {promo.currency || 'ALL'}
+                    </span>
+                  </td>
+                  <td className="py-3.5 px-4 font-medium">{memberGroupId}</td>
+                  <td className="py-3.5 px-4 text-sky-600 dark:text-sky-400 font-semibold">{promo.kind || 'N/A'}</td>
+                  <td className="py-3.5 px-4 text-muted-foreground">{targetType}</td>
+                  <td className="py-3.5 px-4 font-mono font-medium">{promo.code || 'N/A'}</td>
+                  <td className="py-3.5 px-4 max-w-[200px] truncate" title={promo.title}>{promo.title}</td>
+                  <td className="py-3.5 px-4 text-muted-foreground whitespace-nowrap">{startsAt ? new Date(startsAt).toLocaleDateString() : 'N/A'}</td>
+                  <td className="py-3.5 px-4 text-muted-foreground whitespace-nowrap">{endsAt ? new Date(endsAt).toLocaleDateString() : 'N/A'}</td>
+                  <td className="py-3.5 px-4 text-center">
+                    <span className={`inline-block rounded-full px-2.5 py-0.5 text-[10px] font-bold capitalize ${
+                      isActive
+                        ? 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
+                        : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+                    }`}>
+                      {isActive ? 'active' : 'inactive'}
+                    </span>
+                  </td>
+                  <td className="py-3.5 px-4 text-muted-foreground">Admin</td>
+                  <td className="py-3.5 px-4 text-muted-foreground whitespace-nowrap">N/A</td>
+                  <td className="py-3.5 px-4 text-center">
+                    <div className="flex items-center justify-center gap-1.5">
+                      <button
+                        onClick={() => handleEdit(promo)}
+                        className="p-1.5 rounded-full bg-[#00a65a]/10 hover:bg-[#00a65a]/20 text-[#00a65a] transition-all hover:scale-105 active:scale-95"
+                      >
+                        <Pencil className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleDeleteClick(promo)}
+                        className="p-1.5 rounded-full bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 transition-all hover:scale-105 active:scale-95"
+                      >
+                        <Trash2 className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+                );
+              })}
+              {filteredPromotions.length === 0 && (
+                <tr>
+                  <td colSpan={13} className="py-8 text-center text-muted-foreground">
+                    No records found matching the search criteria.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Pagination */}
+        {filteredPromotions.length > 0 && (
+          <div className="flex items-center justify-between px-6 py-4 border-t border-border">
+            <button
+              onClick={() => setPage(p => Math.max(1, p - 1))}
+              disabled={page === 1}
+              className="p-2 rounded-full border border-border hover:bg-muted text-foreground disabled:opacity-50 transition-colors"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <div className="text-xs text-muted-foreground font-semibold">
+              Page {page} of {totalPages}
+            </div>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+              disabled={page === totalPages}
+              className="p-2 rounded-full border border-border hover:bg-muted text-foreground disabled:opacity-50 transition-colors"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        )}
+      </div>
+
+      {/* Modals */}
+      {isEditModalOpen && selectedPromotion && (
+        <EditPromotionModal
+          promotion={selectedPromotion}
+          onClose={() => setIsEditModalOpen(false)}
+          onSave={handleSave}
+        />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {deleteModalOpen && promotionToDelete && (
+        <div className="fixed inset-0 z-50 bg-background/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200">
+          <div className="bg-card w-full max-w-sm rounded-xl border border-border shadow-lg overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="flex items-center justify-between px-4 py-3 border-b border-border bg-rose-500/10">
+              <div className="flex items-center gap-2 text-rose-600 dark:text-rose-400">
+                <AlertCircle className="w-4 h-4" />
+                <h3 className="text-sm font-semibold">Delete Promotion</h3>
+              </div>
+              <button onClick={() => setDeleteModalOpen(false)} className="text-muted-foreground hover:text-foreground transition-colors p-1 hover:bg-muted rounded-md">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+            <div className="p-4 space-y-4">
+              <p className="text-sm text-muted-foreground">
+                Are you sure you want to delete the promotion <strong className="text-foreground">{promotionToDelete.code || promotionToDelete.title}</strong>?
+              </p>
+              
+              {deleteError && (
+                <div className="p-3 text-xs bg-rose-500/10 text-rose-600 border border-rose-500/20 rounded-md">
+                  {deleteError}
+                </div>
+              )}
+              
+              <label className="flex items-center gap-2 mt-4 p-2 rounded border border-border bg-muted/30 cursor-pointer hover:bg-muted/50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={hardDelete}
+                  onChange={(e) => setHardDelete(e.target.checked)}
+                  className="rounded border-border text-rose-600 size-3.5"
+                />
+                <span className="text-xs font-medium">Permanently delete (Hard Delete)</span>
+              </label>
+              <p className="text-[10px] text-muted-foreground px-1">
+                Soft delete will deactivate the promotion. Hard delete permanently removes it but will fail if the promotion is actively referenced by claims or deposits.
+              </p>
+            </div>
+            <div className="flex items-center justify-end gap-2 px-4 py-3 border-t border-border bg-muted/10">
+              <button
+                onClick={() => setDeleteModalOpen(false)}
+                className="px-3 py-1.5 text-xs font-semibold border border-border rounded-md hover:bg-muted/50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDelete}
+                className="px-3 py-1.5 text-xs font-semibold bg-rose-600 text-white rounded-md hover:bg-rose-700 transition-colors"
+              >
+                Delete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+interface EditPromotionModalProps {
+  promotion: ApiPromotion;
+  onClose: () => void;
+  onSave: (updatedPromo: ApiPromotion) => void;
+}
+
+const gameProviders = ['LIVE', 'COCKFIGHT', 'FISH', 'SLOT', 'EGAMES', 'HORSE'];
+
+export function EditPromotionModal({ promotion, onClose, onSave }: EditPromotionModalProps) {
+  const [providerSearch, setProviderSearch] = useState('');
+  const [expandedProviders, setExpandedProviders] = useState<Record<string, boolean>>({});
+  const [selectedProviders, setSelectedProviders] = useState<Record<string, boolean>>({
+    SLOT: true,
+    EGAMES: true,
+  });
+
+  const [formData, setFormData] = useState({
+    active: promotion.isActive ?? (promotion as any).is_active ?? false,
+    currency: promotion.currency || 'BDT',
+    deviceType: {
+      desktop: (promotion.deviceTypes || (promotion as any).device_types)?.includes('DESKTOP') ?? true,
+      mobile: (promotion.deviceTypes || (promotion as any).device_types)?.includes('MOBILE_WEB') ?? true,
+      app: (promotion.deviceTypes || (promotion as any).device_types)?.includes('APP') ?? false
+    },
+    bonusCategory: promotion.kind || 'DEPOSIT',
+    bonusName: {
+      'en-bd': promotion.title || '',
+      'bn-bd': ''
+    },
+    allowApply: true,
+    code: promotion.code || '',
+    linkedPromotion: promotion.linkedPromotionId ? String(promotion.linkedPromotionId) : '',
+    validFrom: promotion.startsAt || (promotion as any).starts_at || '',
+    validTill: promotion.endsAt || (promotion as any).ends_at || '',
+    registerValidClaimablePeriod: '',
+    registerValidClaimablePeriodNoMax: true,
+    displayFrequency: 'Daily',
+    rewardType: (promotion.bonusType || (promotion as any).bonus_type) === 'PERCENT' ? 'Percentage' : 'Fixed Amount',
+    maxPlayer: promotion.maxPlayer ?? (promotion as any).max_player ?? '',
+    maxPlayerNoMax: (promotion.maxPlayer ?? (promotion as any).max_player) == null,
+    maxTotal: '',
+    maxTotalNoMax: true,
+    bonusAmount: promotion.bonusValue ?? (promotion as any).bonus_value ?? 0,
+    maximumWithdrawal: promotion.maximumWithdrawal != null,
+    balanceRequire: promotion.balanceRequire ?? (promotion as any).balance_require ?? 0,
+    forfeitType: (promotion.forfeitType || (promotion as any).forfeit_type) === 'WALLET' ? 'Wallet Amount' : 'Bonus Amount',
+    applyAmountMin: promotion.minAmount ?? (promotion as any).min_amount ?? 0,
+    allowFlexibleApplyAmount: false,
+    amountCap: promotion.maxBonus ?? (promotion as any).max_bonus ?? 0,
+    amountCapNoMax: (promotion.maxBonus ?? (promotion as any).max_bonus) == null,
+    removeMaxWithdrawLock: promotion.removeMaxWithdrawLock ?? (promotion as any).remove_max_withdraw_lock ?? false,
+    lastDeposit: true,
+    // Bonus Amount Provider Settings
+    excludeGameList: 'Please Select',
+    limitAccessToProvider: promotion.limitToProvider ?? (promotion as any).limit_to_provider ?? false,
+    limitDeposit: false,
+    autoApprove: promotion.autoApprove ?? (promotion as any).auto_approve ?? true,
+    autoComplete: promotion.autoComplete ?? (promotion as any).auto_complete ?? false,
+    autoUnlock: (promotion.autoUnlockThreshold ?? (promotion as any).auto_unlock_threshold) != null,
+    autoUnlockBalance: promotion.autoUnlockThreshold ?? (promotion as any).auto_unlock_threshold ?? 1,
+    allowCancel: promotion.allowCancel ?? (promotion as any).allow_cancel ?? false,
+    allowCancelBalance: promotion.cancelThreshold ?? (promotion as any).cancel_threshold ?? '',
+    allowCancelBalanceNoMax: (promotion.cancelThreshold ?? (promotion as any).cancel_threshold) == null,
+    checkByWalletBalance: promotion.checkByWalletBalance ?? (promotion as any).check_by_wallet_balance ?? false,
+    // Target Amount
+    targetType: promotion.targetType || (promotion as any).target_type || 'TURNOVER',
+    targetMultiplier: promotion.rolloverMultiplier ?? (promotion as any).rollover_multiplier ?? 0,
+    targetOption: (promotion.targetOption || (promotion as any).target_option) === 'BONUS_ONLY' ? 'Bonus Only' : (promotion.targetOption || (promotion as any).target_option) === 'APPLY_ONLY' ? 'Apply Amount Only' : 'Bonus + Apply Amount',
+    capLimitType: (promotion.capLimitType || (promotion as any).cap_limit_type) === 'PERCENT' ? 'Percentage' : 'Amount',
+    // Eligibility
+    promotionEligibleTypes: (promotion.memberGroupId || (promotion as any).member_group_id) ? 'Member Groups' : 'All',
+    memberGroupId: promotion.memberGroupId || (promotion as any).member_group_id || 'Please Select',
+    maxPerPlayer: promotion.maxUsesPerUser ?? (promotion as any).max_uses_per_user ?? '',
+    maxPerPlayerNoMax: (promotion.maxUsesPerUser ?? (promotion as any).max_uses_per_user) == null,
+    totalClaimTimes: promotion.maxUsesGlobal ?? (promotion as any).max_uses_global ?? '',
+    totalClaimTimesNoMax: (promotion.maxUsesGlobal ?? (promotion as any).max_uses_global) == null,
+    recurring: (promotion.frequency || (promotion as any).frequency) === 'ONE_TIME' ? 'None' : 'Daily',
+    payLater: promotion.payLater ?? (promotion as any).pay_later ?? false,
+    displayIfNonEligible: promotion.displayIfNonEligible ?? (promotion as any).display_if_non_eligible ?? false,
+    hideIfEligible: promotion.hideIfEligible ?? (promotion as any).hide_if_eligible ?? false,
+    // KYC Settings
+    uniqueBankAccount: promotion.uniqueCheckBankAccount ?? (promotion as any).unique_check_bank_account ?? false,
+    uniqueContactNo: promotion.uniqueCheckPhone ?? (promotion as any).unique_check_phone ?? false,
+    uniqueEmail: promotion.uniqueCheckEmail ?? (promotion as any).unique_check_email ?? false,
+    uniqueFingerprint: promotion.uniqueCheckDeviceFp ?? (promotion as any).unique_check_device_fp ?? false,
+    uniqueIP: promotion.uniqueCheckIpAddress ?? (promotion as any).unique_check_ip_address ?? false,
+    uniqueName: false,
+    uniquePassword: false,
+    violateCount: 0,
+    verifyBank: false,
+    verifyEmail: promotion.requireEmailVerified ?? (promotion as any).require_email_verified ?? false,
+    verifyMobile: promotion.requirePhoneVerified ?? (promotion as any).require_phone_verified ?? false,
+    verifyProfile: promotion.requireProfileVerified ?? (promotion as any).require_profile_verified ?? false,
+    verifyCount: 1
+  });
+
+  const handleSave = () => {
+    const deviceTypes: string[] = [];
+    if (formData.deviceType.desktop) deviceTypes.push('DESKTOP');
+    if (formData.deviceType.mobile) deviceTypes.push('MOBILE_WEB');
+    if (formData.deviceType.app) deviceTypes.push('APP');
+
+    onSave({
+      id: promotion.id,
+      isActive: formData.active,
+      currency: formData.currency,
+      kind: formData.bonusCategory as any,
+      code: formData.code,
+      title: formData.bonusName['en-bd'],
+      startsAt: formData.validFrom ? new Date(formData.validFrom).toISOString() : undefined,
+      endsAt: formData.validTill ? new Date(formData.validTill).toISOString() : undefined,
+      targetType: formData.targetType as any,
+      deviceTypes,
+      bonusType: formData.rewardType === 'Percentage' ? 'PERCENT' : 'FLAT',
+      bonusValue: formData.bonusAmount,
+      rolloverMultiplier: formData.targetMultiplier,
+      minAmount: formData.applyAmountMin || undefined,
+      maxBonus: formData.amountCapNoMax ? undefined : formData.amountCap,
+      targetOption: formData.targetOption === 'Bonus + Apply Amount' ? 'BONUS_AND_APPLY' : formData.targetOption === 'Bonus Only' ? 'BONUS_ONLY' : 'APPLY_ONLY',
+      maxUsesPerUser: formData.maxPerPlayerNoMax ? undefined : Number(formData.maxPerPlayer) || undefined,
+      maxUsesGlobal: formData.totalClaimTimesNoMax ? undefined : Number(formData.totalClaimTimes) || undefined,
+      frequency: formData.recurring === 'None' ? 'ONE_TIME' : 'RECURRING_DAILY',
+      autoApprove: formData.autoApprove,
+      autoComplete: formData.autoComplete,
+      allowCancel: formData.allowCancel,
+      forfeitType: formData.forfeitType === 'Bonus Amount' ? 'BONUS' : 'WALLET',
+      removeMaxWithdrawLock: formData.removeMaxWithdrawLock,
+      displayIfNonEligible: formData.displayIfNonEligible,
+      hideIfEligible: formData.hideIfEligible,
+      checkByWalletBalance: formData.checkByWalletBalance,
+      memberGroupId: formData.promotionEligibleTypes === 'Member Groups' && formData.memberGroupId !== 'Please Select' ? Number(formData.memberGroupId) : undefined,
+      uniqueCheckBankAccount: formData.uniqueBankAccount,
+      uniqueCheckEmail: formData.uniqueEmail,
+      uniqueCheckPhone: formData.uniqueContactNo,
+      uniqueCheckDeviceFp: formData.uniqueFingerprint,
+      uniqueCheckIpAddress: formData.uniqueIP,
+      requireEmailVerified: formData.verifyEmail,
+      requirePhoneVerified: formData.verifyMobile,
+      requireProfileVerified: formData.verifyProfile,
+      limitToProvider: formData.limitAccessToProvider,
+      autoUnlockThreshold: formData.autoUnlock ? formData.autoUnlockBalance : undefined,
+      cancelThreshold: (formData.allowCancel && !formData.allowCancelBalanceNoMax) ? Number(formData.allowCancelBalance) : undefined,
+      balanceRequire: formData.balanceRequire || undefined,
+      capLimitType: formData.capLimitType === 'Percentage' ? 'PERCENT' : 'AMOUNT',
+      payLater: formData.payLater,
+      linkedPromotionId: formData.linkedPromotion ? Number(formData.linkedPromotion) : undefined,
+      maxPlayer: formData.maxPlayerNoMax ? undefined : Number(formData.maxPlayer) || undefined
+    });
+  };
+
+  const filteredProviders = gameProviders.filter(provider => 
+    provider.toLowerCase().includes(providerSearch.toLowerCase())
+  );
+
+  return (
+    <div className="fixed inset-0 bg-black/60 backdrop-blur-xs flex items-center justify-center z-50 p-4 overflow-y-auto">
+      <div className="bg-card text-foreground rounded-xl border border-border w-full max-w-7xl max-h-[92vh] overflow-hidden flex flex-col shadow-2xl my-4">
+        {/* Header */}
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border">
+          <h2 className="text-base font-bold text-foreground">Edit Promotion Setting</h2>
+          <button
+            onClick={onClose}
+            className="w-8 h-8 rounded-full border border-border flex items-center justify-center hover:bg-muted text-muted-foreground hover:text-foreground transition-all"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Scrollable Content */}
+        <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+          {/* Row 1: Basic Info */}
+          <div className="border border-border rounded-xl p-5 space-y-4 bg-muted/5">
+            <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Basic Info</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                <span className="text-xs font-semibold">Active</span>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, active: !formData.active })}
+                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                    formData.active ? 'bg-blue-600' : 'bg-muted'
+                  }`}
+                >
+                  <span
+                    className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                      formData.active ? 'translate-x-4' : 'translate-x-0'
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground block mb-1.5">Currency</label>
+                <select
+                  value={formData.currency}
+                  onChange={(e) => setFormData({ ...formData, currency: e.target.value })}
+                  className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+                >
+                  <option value="BDT">BDT</option>
+                  <option value="USD">USD</option>
+                </select>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                  Device Type <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                </label>
+                <div className="flex gap-4 mt-1">
+                  <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.deviceType.desktop}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        deviceType: { ...formData.deviceType, desktop: e.target.checked }
+                      })}
+                      className="rounded border-border text-emerald-600 size-4"
+                    />
+                    <span>Desktop</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.deviceType.mobile}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        deviceType: { ...formData.deviceType, mobile: e.target.checked }
+                      })}
+                      className="rounded border-border text-emerald-600 size-4"
+                    />
+                    <span>Mobile</span>
+                  </label>
+                  <label className="flex items-center gap-2 text-xs font-medium cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={formData.deviceType.app}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        deviceType: { ...formData.deviceType, app: e.target.checked }
+                      })}
+                      className="rounded border-border text-emerald-600 size-4"
+                    />
+                    <span>App</span>
+                  </label>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-semibold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                  Bonus Category <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                </label>
+                <select
+                  value={formData.bonusCategory}
+                  onChange={(e) => setFormData({ ...formData, bonusCategory: e.target.value as any })}
+                  className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+                >
+                  <option value="FREE_REWARD">Free Reward</option>
+                  <option value="DEPOSIT">Deposit</option>
+                  <option value="REGISTRATION">Registration</option>
+                  <option value="PROMOCODE">Promo Code</option>
+                  <option value="MANUAL">Manual</option>
+                  <option value="RELOAD">Reload</option>
+                  <option value="CASHBACK">Cashback</option>
+                  <option value="REBATE">Rebate</option>
+                </select>
+              </div>
+
+              <div className="col-span-1 md:col-span-2">
+                <label className="text-xs font-semibold text-muted-foreground block mb-2">Bonus Name</label>
+                <div className="space-y-2">
+                  <div className="flex items-center border border-border rounded-md bg-background px-3 py-1 text-xs">
+                    <span className="text-[10px] font-bold text-muted-foreground w-12 border-r border-border pr-2 uppercase">en-bd</span>
+                    <input
+                      type="text"
+                      value={formData.bonusName['en-bd']}
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        bonusName: { ...formData.bonusName, 'en-bd': e.target.value }
+                      })}
+                      className="w-full bg-transparent px-2.5 py-1 outline-none text-xs"
+                    />
+                  </div>
+                  <div className="flex items-center border border-border rounded-md bg-background px-3 py-1 text-xs">
+                    <span className="text-[10px] font-bold text-muted-foreground w-12 border-r border-border pr-2 uppercase">bn-bd</span>
+                    <input
+                      type="text"
+                      value={formData.bonusName['bn-bd']}
+                      placeholder="promotion example"
+                      onChange={(e) => setFormData({
+                        ...formData,
+                        bonusName: { ...formData.bonusName, 'bn-bd': e.target.value }
+                      })}
+                      className="w-full bg-transparent px-2.5 py-1 outline-none text-xs"
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 2: Code Setting and Basic Setting */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Code Setting */}
+            <div className="border border-border rounded-xl p-5 space-y-4 bg-muted/5">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Code Setting</h3>
+              <div className="space-y-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Code</label>
+                  <input
+                    type="text"
+                    value={formData.code}
+                    onChange={(e) => setFormData({ ...formData, code: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Linked Promotion <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.linkedPromotion}
+                    placeholder="Please Enter"
+                    onChange={(e) => setFormData({ ...formData, linkedPromotion: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+                  />
+                </div>
+
+                <div className="flex items-center justify-between border-t border-border/40 pt-3">
+                  <label className="text-xs font-semibold flex items-center gap-1.5">
+                    Allow Apply <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, allowApply: !formData.allowApply })}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                      formData.allowApply ? 'bg-green-600' : 'bg-muted'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                        formData.allowApply ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Basic Setting */}
+            <div className="border border-border rounded-xl p-5 space-y-4 bg-muted/5">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Basic Setting</h3>
+              <div className="space-y-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Valid From</label>
+                  <input
+                    type="text"
+                    value={formData.validFrom}
+                    onChange={(e) => setFormData({ ...formData, validFrom: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+                  />
+                  <p className="text-[10px] text-amber-600 dark:text-amber-500 font-semibold">
+                    Date setting will based on the timezone of the selected currency
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Valid Till</label>
+                  <input
+                    type="text"
+                    value={formData.validTill}
+                    onChange={(e) => setFormData({ ...formData, validTill: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+                  />
+                  <p className="text-[10px] text-amber-600 dark:text-amber-500 font-semibold">
+                    Date setting will based on the timezone of the selected currency
+                  </p>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Register Valid Claimable Period <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.registerValidClaimablePeriod}
+                    disabled={formData.registerValidClaimablePeriodNoMax}
+                    placeholder="Please Enter"
+                    onChange={(e) => setFormData({ ...formData, registerValidClaimablePeriod: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none disabled:opacity-50 disabled:bg-muted/40"
+                  />
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <input
+                      type="checkbox"
+                      id="periodNoMax"
+                      checked={formData.registerValidClaimablePeriodNoMax}
+                      onChange={(e) => setFormData({ ...formData, registerValidClaimablePeriodNoMax: e.target.checked })}
+                      className="rounded border-border text-emerald-600 size-3.5"
+                    />
+                    <label htmlFor="periodNoMax" className="text-xs text-green-600 font-bold cursor-pointer">No Max</label>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Display Frequency <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <select
+                    value={formData.displayFrequency}
+                    onChange={(e) => setFormData({ ...formData, displayFrequency: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+                  >
+                    <option value="Daily">Daily</option>
+                    <option value="Weekly">Weekly</option>
+                    <option value="Monthly">Monthly</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 3: Bonus Amount, Amount Setting, and Target Amount */}
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            {/* Bonus Amount / Provider settings */}
+            <div className="border border-border rounded-xl p-5 space-y-4 bg-muted/5">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Bonus Amount Providers</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="text-xs font-semibold text-muted-foreground mb-1.5 flex items-center gap-1.5">
+                    Provider <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <div className="border border-border rounded-md bg-background max-h-48 overflow-y-auto">
+                    {/* Search Box */}
+                    <div className="p-2 border-b border-border sticky top-0 bg-background z-10">
+                      <div className="relative">
+                        <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-3.5 h-3.5 text-muted-foreground" />
+                        <input
+                          type="text"
+                          value={providerSearch}
+                          onChange={(e) => setProviderSearch(e.target.value)}
+                          placeholder="Search..."
+                          className="w-full pl-8 pr-3 py-1 text-xs border border-border rounded bg-background outline-none focus:border-primary"
+                        />
+                      </div>
+                    </div>
+
+                    {/* Provider List */}
+                    <div className="p-2 divide-y divide-border/40">
+                      {filteredProviders.map((provider) => (
+                        <div key={provider} className="py-1">
+                          <div className="flex items-center justify-between p-1 hover:bg-muted/30 rounded">
+                            <div
+                              className="flex items-center gap-2 cursor-pointer flex-1"
+                              onClick={() => setExpandedProviders(prev => ({
+                                ...prev,
+                                [provider]: !prev[provider]
+                              }))}
+                            >
+                              {expandedProviders[provider] ? (
+                                <ChevronDown className="w-3.5 h-3.5 text-muted-foreground" />
+                              ) : (
+                                <ChevronRightIcon className="w-3.5 h-3.5 text-muted-foreground" />
+                              )}
+                              <span className="text-xs font-medium">{provider}</span>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={!!selectedProviders[provider]}
+                              onChange={(e) => setSelectedProviders(prev => ({
+                                ...prev,
+                                [provider]: e.target.checked
+                              }))}
+                              className="rounded border-border text-emerald-600 size-3.5"
+                            />
+                          </div>
+                          {expandedProviders[provider] && (
+                            <div className="pl-6 pr-2 py-1.5 space-y-1.5 border-l border-border ml-3 mt-1 text-[11px] text-muted-foreground">
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" defaultChecked className="rounded size-3 text-emerald-600" />
+                                <span>All Games</span>
+                              </label>
+                              <label className="flex items-center gap-2 cursor-pointer">
+                                <input type="checkbox" className="rounded size-3 text-emerald-600" />
+                                <span>Exclude Premium Games</span>
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                      ))}
+                      {filteredProviders.length === 0 && (
+                        <p className="p-2 text-center text-xs text-muted-foreground">No providers found</p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Exclude Game List <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <select
+                    value={formData.excludeGameList}
+                    onChange={(e) => setFormData({ ...formData, excludeGameList: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+                  >
+                    <option value="Please Select">Please Select</option>
+                  </select>
+                </div>
+
+                <div className="space-y-3 pt-2">
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold flex items-center gap-1.5">
+                      Limit Access to Provider <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, limitAccessToProvider: !formData.limitAccessToProvider })}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.limitAccessToProvider ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.limitAccessToProvider ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold flex items-center gap-1.5">
+                      Limit Deposit <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, limitDeposit: !formData.limitDeposit })}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.limitDeposit ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.limitDeposit ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold flex items-center gap-1.5">
+                      Auto Approve <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, autoApprove: !formData.autoApprove })}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.autoApprove ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.autoApprove ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between">
+                    <label className="text-xs font-semibold flex items-center gap-1.5">
+                      Auto Complete <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, autoComplete: !formData.autoComplete })}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.autoComplete ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.autoComplete ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="border-t border-border/40 pt-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold flex items-center gap-1.5">
+                      Auto Unlock <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, autoUnlock: !formData.autoUnlock })}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.autoUnlock ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.autoUnlock ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {formData.autoUnlock && (
+                    <div>
+                      <label className="text-[11px] text-muted-foreground block mb-1">Balance Below Or Equal</label>
+                      <input
+                        type="number"
+                        value={formData.autoUnlockBalance}
+                        onChange={(e) => setFormData({ ...formData, autoUnlockBalance: Number(e.target.value) })}
+                        className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                      />
+                    </div>
+                  )}
+                </div>
+
+                <div className="border-t border-border/40 pt-3">
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-semibold flex items-center gap-1.5">
+                      Allow Cancel <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, allowCancel: !formData.allowCancel })}
+                      className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.allowCancel ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.allowCancel ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                  {formData.allowCancel && (
+                    <div className="space-y-1.5">
+                      <label className="text-[11px] text-muted-foreground block mb-1">Balance Below Or Equal</label>
+                      <input
+                        type="text"
+                        value={formData.allowCancelBalance}
+                        disabled={formData.allowCancelBalanceNoMax}
+                        placeholder="Please Enter"
+                        onChange={(e) => setFormData({ ...formData, allowCancelBalance: e.target.value })}
+                        className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none disabled:opacity-50 disabled:bg-muted/40"
+                      />
+                      <div className="flex items-center gap-2 mt-0.5">
+                        <input
+                          type="checkbox"
+                          id="cancelNoMax"
+                          checked={formData.allowCancelBalanceNoMax}
+                          onChange={(e) => setFormData({ ...formData, allowCancelBalanceNoMax: e.target.checked })}
+                          className="rounded border-border text-emerald-600 size-3.5"
+                        />
+                        <label htmlFor="cancelNoMax" className="text-xs text-green-600 font-bold cursor-pointer">No Max</label>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between border-t border-border/40 pt-3">
+                  <label className="text-xs font-semibold flex items-center gap-1.5">
+                    Check By Wallet Balance <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, checkByWalletBalance: !formData.checkByWalletBalance })}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                      formData.checkByWalletBalance ? 'bg-emerald-600' : 'bg-muted'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                        formData.checkByWalletBalance ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Amount Setting */}
+            <div className="border border-border rounded-xl p-5 space-y-4 bg-muted/5">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Amount Setting</h3>
+              <div className="space-y-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Reward Type <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <select
+                    value={formData.rewardType}
+                    onChange={(e) => setFormData({ ...formData, rewardType: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary focus:ring-1 focus:ring-primary/20 outline-none"
+                  >
+                    <option value="Fixed Amount">Fixed Amount</option>
+                    <option value="Percentage">Percentage</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Max Player <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.maxPlayer}
+                    disabled={formData.maxPlayerNoMax}
+                    placeholder="Please Enter"
+                    onChange={(e) => setFormData({ ...formData, maxPlayer: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none disabled:opacity-50 disabled:bg-muted/40"
+                  />
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <input
+                      type="checkbox"
+                      id="playerNoMax"
+                      checked={formData.maxPlayerNoMax}
+                      onChange={(e) => setFormData({ ...formData, maxPlayerNoMax: e.target.checked })}
+                      className="rounded border-border text-emerald-600 size-3.5"
+                    />
+                    <label htmlFor="playerNoMax" className="text-xs text-green-600 font-bold cursor-pointer">No Max</label>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Max Total <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.maxTotal}
+                    disabled={formData.maxTotalNoMax}
+                    placeholder="Please Enter"
+                    onChange={(e) => setFormData({ ...formData, maxTotal: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none disabled:opacity-50 disabled:bg-muted/40"
+                  />
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <input
+                      type="checkbox"
+                      id="totalNoMax"
+                      checked={formData.maxTotalNoMax}
+                      onChange={(e) => setFormData({ ...formData, maxTotalNoMax: e.target.checked })}
+                      className="rounded border-border text-emerald-600 size-3.5"
+                    />
+                    <label htmlFor="totalNoMax" className="text-xs text-green-600 font-bold cursor-pointer">No Max</label>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-between border-t border-border/40 pt-3">
+                  <span className="text-xs font-semibold">Last Deposit</span>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, lastDeposit: !formData.lastDeposit })}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                      formData.lastDeposit ? 'bg-emerald-600' : 'bg-muted'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                        formData.lastDeposit ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-1.5 border-t border-border/40 pt-3">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Apply Amount Min. <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.applyAmountMin}
+                    onChange={(e) => setFormData({ ...formData, applyAmountMin: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                  />
+                  <div className="flex items-center gap-2 mt-1.5">
+                    <input
+                      type="checkbox"
+                      id="allowFlexibleApply"
+                      checked={formData.allowFlexibleApplyAmount}
+                      onChange={(e) => setFormData({ ...formData, allowFlexibleApplyAmount: e.target.checked })}
+                      className="rounded border-border text-emerald-600 size-3.5"
+                    />
+                    <label htmlFor="allowFlexibleApply" className="text-xs flex items-center gap-1 cursor-pointer font-medium text-muted-foreground">
+                      <span>Allow Flexible Apply Amount</span>
+                    </label>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    {formData.rewardType === 'Percentage' ? 'Bonus Percentage' : 'Bonus Amount'}
+                    <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min={0}
+                      max={formData.rewardType === 'Percentage' ? 100 : undefined}
+                      step={formData.rewardType === 'Percentage' ? 1 : 0.01}
+                      value={formData.bonusAmount}
+                      onChange={(e) => setFormData({ ...formData, bonusAmount: Number(e.target.value) })}
+                      className="w-full px-3 py-1.5 pr-9 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground pointer-events-none">
+                      {formData.rewardType === 'Percentage' ? '%' : formData.currency}
+                    </span>
+                  </div>
+                  {formData.rewardType === 'Percentage' && (
+                    <p className="text-[10px] text-muted-foreground">
+                      e.g. 20 = 20% of the deposit amount
+                      {!formData.amountCapNoMax && formData.amountCap
+                        ? `, capped at ${formData.amountCap} ${formData.currency}`
+                        : ''}.
+                    </p>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-between border-t border-border/40 pt-3">
+                  <label className="text-xs font-semibold flex items-center gap-1.5">
+                    Maximum Withdrawal <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, maximumWithdrawal: !formData.maximumWithdrawal })}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                      formData.maximumWithdrawal ? 'bg-emerald-600' : 'bg-muted'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                        formData.maximumWithdrawal ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Balance Require</label>
+                  <input
+                    type="number"
+                    value={formData.balanceRequire}
+                    onChange={(e) => setFormData({ ...formData, balanceRequire: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Forfeit Type <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <select
+                    value={formData.forfeitType}
+                    onChange={(e) => setFormData({ ...formData, forfeitType: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                  >
+                    <option value="Wallet Amount">Wallet Amount</option>
+                    <option value="Bonus Amount">Bonus Amount</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5 border-t border-border/40 pt-3">
+                  <label className="text-xs font-semibold text-muted-foreground">Amount Cap</label>
+                  <input
+                    type="number"
+                    value={formData.amountCap}
+                    disabled={formData.amountCapNoMax}
+                    onChange={(e) => setFormData({ ...formData, amountCap: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none disabled:opacity-50 disabled:bg-muted/40"
+                  />
+                  <div className="flex flex-col gap-2 mt-0.5">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="amountCapNoMax"
+                        checked={formData.amountCapNoMax}
+                        onChange={(e) => setFormData({ ...formData, amountCapNoMax: e.target.checked })}
+                        className="rounded border-border text-emerald-600 size-3.5"
+                      />
+                      <label htmlFor="amountCapNoMax" className="text-xs text-green-600 font-bold cursor-pointer">No Max</label>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="removeMaxWithdraw"
+                        checked={formData.removeMaxWithdrawLock}
+                        onChange={(e) => setFormData({ ...formData, removeMaxWithdrawLock: e.target.checked })}
+                        className="rounded border-border text-emerald-600 size-3.5"
+                      />
+                      <label htmlFor="removeMaxWithdraw" className="text-xs font-medium cursor-pointer text-muted-foreground">
+                        Remove Max Withdraw Lock
+                      </label>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Target Amount */}
+            <div className="border border-border rounded-xl p-5 space-y-4 bg-muted/5">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider">Target Amount</h3>
+              <div className="space-y-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Target Type <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <select
+                    value={formData.targetType}
+                    onChange={(e) => setFormData({ ...formData, targetType: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                  >
+                    <option value="Turnover">Turnover</option>
+                    <option value="Deposit">Deposit</option>
+                    <option value="Win Loss">Win Loss</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Target Multiplier <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <input
+                    type="number"
+                    value={formData.targetMultiplier}
+                    onChange={(e) => setFormData({ ...formData, targetMultiplier: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                  />
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Target Option <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <select
+                    value={formData.targetOption}
+                    onChange={(e) => setFormData({ ...formData, targetOption: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                  >
+                    <option value="Bonus + Apply Amount">Bonus + Apply Amount</option>
+                    <option value="Bonus Only">Bonus Only</option>
+                    <option value="Apply Amount Only">Apply Amount Only</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Cap Limit Type <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <select
+                    value={formData.capLimitType}
+                    onChange={(e) => setFormData({ ...formData, capLimitType: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                  >
+                    <option value="Amount">Amount</option>
+                    <option value="Percentage">Percentage</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Row 4: Eligibility and KYC Setting */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Eligibility Box */}
+            <div className="border border-rose-500/30 rounded-xl p-5 space-y-4 bg-rose-500/5 dark:bg-rose-950/10">
+              <h3 className="text-xs font-bold text-rose-500 dark:text-rose-400 uppercase tracking-wider">Eligibility To Apply For Bonus</h3>
+              <div className="space-y-4">
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Promotion Eligible Types <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <select
+                    value={formData.promotionEligibleTypes}
+                    onChange={(e) => setFormData({ ...formData, promotionEligibleTypes: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                  >
+                    <option value="Member Groups">Member Groups</option>
+                    <option value="VIP Levels">VIP Levels</option>
+                    <option value="All">All</option>
+                  </select>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground">Member Group</label>
+                  <div className="relative">
+                    <select
+                      value={formData.memberGroupId as any}
+                      onChange={(e) => setFormData({ ...formData, memberGroupId: e.target.value as any })}
+                      className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                    >
+                      <option value="Please Select">Please Select</option>
+                      <option value="Normal">Normal</option>
+                      <option value="Elite">Elite</option>
+                      <option value="Pro">Pro</option>
+                      <option value="Expert">Expert</option>
+                      <option value="Master">Master</option>
+                      <option value="Grandmaster">Grandmaster</option>
+                      <option value="Legend">Legend</option>
+                      <option value="Mythic">Mythic</option>
+                    </select>
+                  </div>
+                  {formData.memberGroupId && formData.memberGroupId !== ('Please Select' as any) && (
+                    <div className="mt-2 flex items-center gap-2 bg-muted px-3 py-1 text-xs rounded border border-border font-medium">
+                      <span>{formData.memberGroupId as any}</span>
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, memberGroupId: 'Please Select' as any })}
+                        className="ml-auto w-4 h-4 rounded-full bg-muted-foreground text-card flex items-center justify-center text-[10px] hover:bg-foreground/50 transition-colors"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Max Per Player <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.maxPerPlayer}
+                    disabled={formData.maxPerPlayerNoMax}
+                    placeholder="Please Enter"
+                    onChange={(e) => setFormData({ ...formData, maxPerPlayer: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none disabled:opacity-50 disabled:bg-muted/40"
+                  />
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <input
+                      type="checkbox"
+                      id="playerMaxNoMax"
+                      checked={formData.maxPerPlayerNoMax}
+                      onChange={(e) => setFormData({ ...formData, maxPerPlayerNoMax: e.target.checked })}
+                      className="rounded border-border text-emerald-600 size-3.5"
+                    />
+                    <label htmlFor="playerMaxNoMax" className="text-xs text-green-600 font-bold cursor-pointer">No Max</label>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Total Claim Times <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <input
+                    type="text"
+                    value={formData.totalClaimTimes}
+                    disabled={formData.totalClaimTimesNoMax}
+                    placeholder="Please Enter"
+                    onChange={(e) => setFormData({ ...formData, totalClaimTimes: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none disabled:opacity-50 disabled:bg-muted/40"
+                  />
+                  <div className="flex items-center gap-2 mt-0.5">
+                    <input
+                      type="checkbox"
+                      id="claimTimesNoMax"
+                      checked={formData.totalClaimTimesNoMax}
+                      onChange={(e) => setFormData({ ...formData, totalClaimTimesNoMax: e.target.checked })}
+                      className="rounded border-border text-emerald-600 size-3.5"
+                    />
+                    <label htmlFor="claimTimesNoMax" className="text-xs text-green-600 font-bold cursor-pointer">No Max</label>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5">
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Recurring <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <select
+                    value={formData.recurring}
+                    onChange={(e) => setFormData({ ...formData, recurring: e.target.value })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                  >
+                    <option value="None">None</option>
+                    <option value="Daily">Daily</option>
+                    <option value="Weekly">Weekly</option>
+                    <option value="Monthly">Monthly</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center justify-between border-t border-border/40 pt-3">
+                  <label className="text-xs font-semibold flex items-center gap-1.5">
+                    Pay Later <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, payLater: !formData.payLater })}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                      formData.payLater ? 'bg-emerald-600' : 'bg-muted'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                        formData.payLater ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold flex items-center gap-1.5">
+                    Display If Non-Eligible <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, displayIfNonEligible: !formData.displayIfNonEligible })}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                      formData.displayIfNonEligible ? 'bg-emerald-600' : 'bg-muted'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                        formData.displayIfNonEligible ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold flex items-center gap-1.5">
+                    Hide If Eligible <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFormData({ ...formData, hideIfEligible: !formData.hideIfEligible })}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                      formData.hideIfEligible ? 'bg-emerald-600' : 'bg-muted'
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block w-4 h-4 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                        formData.hideIfEligible ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* KYC Settings Box */}
+            <div className="border border-border rounded-xl p-5 space-y-4 bg-muted/5">
+              <h3 className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                KYC Setting <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+              </h3>
+              <div className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="text-xs font-medium">Unique Bank Account</span>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, uniqueBankAccount: !formData.uniqueBankAccount })}
+                      className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.uniqueBankAccount ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-3.5 h-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.uniqueBankAccount ? 'translate-x-3.5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="text-xs font-medium">Unique Contact No</span>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, uniqueContactNo: !formData.uniqueContactNo })}
+                      className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.uniqueContactNo ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-3.5 h-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.uniqueContactNo ? 'translate-x-3.5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="text-xs font-medium">Unique Email</span>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, uniqueEmail: !formData.uniqueEmail })}
+                      className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.uniqueEmail ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-3.5 h-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.uniqueEmail ? 'translate-x-3.5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="text-xs font-medium">Unique Fingerprint</span>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, uniqueFingerprint: !formData.uniqueFingerprint })}
+                      className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.uniqueFingerprint ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-3.5 h-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.uniqueFingerprint ? 'translate-x-3.5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="text-xs font-medium">Unique IP</span>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, uniqueIP: !formData.uniqueIP })}
+                      className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.uniqueIP ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-3.5 h-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.uniqueIP ? 'translate-x-3.5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="text-xs font-medium">Unique Name</span>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, uniqueName: !formData.uniqueName })}
+                      className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.uniqueName ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-3.5 h-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.uniqueName ? 'translate-x-3.5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2 col-span-1 sm:col-span-2">
+                    <span className="text-xs font-medium">Unique Password</span>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, uniquePassword: !formData.uniquePassword })}
+                      className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.uniquePassword ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-3.5 h-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.uniquePassword ? 'translate-x-3.5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5 pt-2">
+                  <label className="text-xs font-semibold text-muted-foreground">Violate Count</label>
+                  <input
+                    type="number"
+                    value={formData.violateCount}
+                    onChange={(e) => setFormData({ ...formData, violateCount: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                  />
+                </div>
+
+                <div className="border-t border-border/40 pt-4 space-y-4">
+                  <h4 className="text-xs font-bold text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                    Verify Setting <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </h4>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                      <span className="text-xs font-medium">Verify Bank</span>
+                      <button
+                        type="button"
+                        onClick={() => setFormData({ ...formData, verifyBank: !formData.verifyBank })}
+                        className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                          formData.verifyBank ? 'bg-emerald-600' : 'bg-muted'
+                        }`}
+                      >
+                        <span
+                          className={`pointer-events-none inline-block w-3.5 h-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                            formData.verifyBank ? 'translate-x-3.5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="text-xs font-medium">Verify Email</span>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, verifyEmail: !formData.verifyEmail })}
+                      className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.verifyEmail ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-3.5 h-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.verifyEmail ? 'translate-x-3.5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="text-xs font-medium">Verify Mobile</span>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, verifyMobile: !formData.verifyMobile })}
+                      className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.verifyMobile ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-3.5 h-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.verifyMobile ? 'translate-x-3.5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center justify-between border-b border-border/40 pb-2">
+                    <span className="text-xs font-medium">Verify Profile</span>
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, verifyProfile: !formData.verifyProfile })}
+                      className={`relative inline-flex h-4.5 w-8 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
+                        formData.verifyProfile ? 'bg-emerald-600' : 'bg-muted'
+                      }`}
+                    >
+                      <span
+                        className={`pointer-events-none inline-block w-3.5 h-3.5 transform rounded-full bg-white shadow-md transition duration-200 ease-in-out ${
+                          formData.verifyProfile ? 'translate-x-3.5' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="flex flex-col gap-1.5 pt-1">
+                  <label className="text-xs font-semibold text-muted-foreground">Verify Count</label>
+                  <input
+                    type="number"
+                    value={formData.verifyCount}
+                    onChange={(e) => setFormData({ ...formData, verifyCount: Number(e.target.value) })}
+                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+        {/* Footer */}
+        <div className="px-6 py-4 border-t border-border flex justify-end gap-3 bg-muted/20">
+          <button
+            type="button"
+            onClick={onClose}
+            className="px-5 py-2 text-xs font-semibold border border-border rounded-md hover:bg-muted/50 transition-all active:scale-[0.98]"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            className="px-5 py-2 text-xs font-semibold bg-[#00a65a] hover:bg-[#008d4c] text-white rounded-md transition-all active:scale-[0.98] shadow-sm"
+          >
+            Save
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
