@@ -1,15 +1,16 @@
 import { Module, forwardRef } from '@nestjs/common';
 import { TurnoverService } from './turnover.service';
-import { TurnoverController } from './turnover.controller';
+import { TurnoverController, TurnoverAdminController } from './turnover.controller';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { AdminGuard } from '../common/guards/admin.guard';
 import { AuthModule } from '../auth/auth.module';
 
 @Module({
-  // JwtAuthGuard needs JwtService (exported by AuthModule). forwardRef breaks the
-  // cycle: AuthModule → PromotionModule → TurnoverModule → AuthModule.
+  // JwtAuthGuard / AdminGuard need JwtService (exported by AuthModule). forwardRef
+  // breaks the cycle: AuthModule → PromotionModule → TurnoverModule → AuthModule.
   imports: [forwardRef(() => AuthModule)],
-  providers: [TurnoverService, JwtAuthGuard],
-  controllers: [TurnoverController],
+  providers: [TurnoverService, JwtAuthGuard, AdminGuard],
+  controllers: [TurnoverController, TurnoverAdminController],
   exports: [TurnoverService]
 })
 export class TurnoverModule {}

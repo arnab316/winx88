@@ -1,6 +1,8 @@
 import {
   Controller,
   Get,
+  Post,
+  Param,
   Query,
   Req,
   UseGuards,
@@ -8,6 +10,7 @@ import {
   ParseIntPipe,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { AdminGuard } from '../common/guards/admin.guard';
 import { TurnoverService } from './turnover.service';
 
 /**
@@ -40,5 +43,41 @@ export class TurnoverController {
     @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
   ) {
     return this.turnover.getMyTurnoverHistory(req.user.sub, page, limit);
+  }
+}
+
+/**
+ * Admin turnover management.
+ *
+ *   GET  /turnover/admin/requirements?status=ACTIVE&search=&userId=&page=&limit=
+ *        → the management table: promotion name/code, completed/remaining/target,
+ *          created/completed_at, approved_by, status.
+ *   POST /turnover/admin/:id/complete   → the "Turnover Complete" action.
+ */
+@Controller('turnover/admin')
+@UseGuards(AdminGuard)
+export class TurnoverAdminController {
+  constructor(private readonly turnover: TurnoverService) {}
+
+  @Get('requirements')
+  list(
+    @Query('status') status?: string,
+    @Query('search') search?: string,
+    @Query('userId') userId?: string,
+    @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page = 1,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit = 20,
+  ) {
+    return this.turnover.adminListRequirements({
+      status,
+      search: search?.trim() || undefined,
+      userId: userId && !isNaN(Number(userId)) ? Number(userId) : undefined,
+      page,
+      limit,
+    });
+  }
+
+  @Post(':id/complete')
+  complete(@Req() req: any, @Param('id', ParseIntPipe) id: number) {
+    return this.turnover.adminCompleteTurnover(id, req.user.sub);
   }
 }

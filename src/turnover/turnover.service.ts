@@ -641,4 +641,174 @@ export class TurnoverService {
       await qr.release();
     }
   }
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: LIST ALL TURNOVER REQUIREMENTS (management table)
+  //   Promotion name + code, completed / remaining / target, created /
+  //   completed_at, who created it (approved_by), and per-row progress.
+  // ═════════════════════════════════════════════════════════════
+  async adminListRequirements(q: {
+    status?: string;
+    search?: string;
+    userId?: number;
+    page?: number;
+    limit?: number;
+  }) {
+    const page = Math.max(q.page ?? 1, 1);
+    const limit = Math.min(Math.max(q.limit ?? 20, 1), 100);
+    const offset = (page - 1) * limit;
+
+    const where: string[] = [];
+    const params: any[] = [];
+    let i = 1;
+
+    if (q.status && q.status.toUpperCase() !== 'ALL') {
+      where.push(`tr.status = $${i++}`);
+      params.push(q.status.toUpperCase());
+    }
+    if (q.userId !== undefined) {
+      where.push(`tr.user_id = $${i++}`);
+      params.push(q.userId);
+    }
+    if (q.search) {
+      where.push(
+        `(p.code ILIKE $${i} OR p.title ILIKE $${i} OR tr.label ILIKE $${i} OR u.username ILIKE $${i})`,
+      );
+      params.push(`%${q.search}%`);
+      i++;
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const rows = await this.dataSource.query(
+      `SELECT
+         tr.id,
+         tr.user_id,
+         u.username,
+         u.full_name,
+         tr.source_type,
+         tr.source_id,
+         COALESCE(tr.label, p.title)                     AS promotion_name,
+         p.code                                          AS promo_code,
+         tr.base_amount,
+         tr.multiplier,
+         tr.target_amount,
+         tr.current_amount                               AS completed,
+         (tr.target_amount - tr.current_amount)          AS remaining,
+         CASE WHEN tr.target_amount > 0
+              THEN LEAST(ROUND((tr.current_amount / tr.target_amount) * 100, 2), 100)
+              ELSE 100 END                               AS progress_percent,
+         tr.status,
+         tr.created_at,
+         tr.completed_at,
+         tr.created_by_admin_id,
+         au.name                                         AS approved_by
+       FROM turnover_requirements tr
+       JOIN users u            ON u.id = tr.user_id
+       LEFT JOIN promotions p  ON p.id = tr.source_id
+                               AND tr.source_type IN ('PROMOTION','BONUS')
+       LEFT JOIN admin_users au ON au.id = tr.created_by_admin_id
+       ${whereSql}
+       ORDER BY tr.created_at DESC, tr.id DESC
+       LIMIT $${i++} OFFSET $${i++}`,
+      [...params, limit, offset],
+    );
+
+    const [cnt] = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total
+       FROM turnover_requirements tr
+       JOIN users u           ON u.id = tr.user_id
+       LEFT JOIN promotions p ON p.id = tr.source_id
+                              AND tr.source_type IN ('PROMOTION','BONUS')
+       ${whereSql}`,
+      params,
+    );
+
+    return {
+      data: rows.map((r: any) => ({
+        id: Number(r.id),
+        userId: Number(r.user_id),
+        username: r.username,
+        fullName: r.full_name,
+        sourceType: r.source_type,
+        sourceId: r.source_id === null ? null : Number(r.source_id),
+        promotionName: r.promotion_name,
+        promoCode: r.promo_code,
+        target: Number(r.target_amount),
+        completed: Number(r.completed),
+        remaining: Number(r.remaining),
+        progressPercent: Number(r.progress_percent),
+        status: r.status,
+        createdAt: r.created_at,
+        completedAt: r.completed_at,
+        approvedBy: r.approved_by,
+      })),
+      page,
+      limit,
+      total: cnt?.total ?? 0,
+      totalPages: Math.ceil((cnt?.total ?? 0) / limit) || 0,
+    };
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: FORCE-COMPLETE A TURNOVER REQUIREMENT ("Turnover Complete")
+  //   Sets current = target and marks COMPLETED. Idempotent-safe: only
+  //   ACTIVE requirements can be completed.
+  // ═════════════════════════════════════════════════════════════
+  async adminCompleteTurnover(requirementId: number, adminId: number) {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+
+    try {
+      const reqs = await qr.query(
+        `SELECT * FROM turnover_requirements WHERE id = $1 FOR UPDATE`,
+        [requirementId],
+      );
+      if (!reqs.length) throw new NotFoundException('Requirement not found');
+
+      const req = reqs[0];
+      if (req.status !== 'ACTIVE') {
+        throw new BadRequestException(
+          `Only ACTIVE requirements can be completed (this is ${req.status})`,
+        );
+      }
+
+      const current = parseFloat(req.current_amount);
+      const target = parseFloat(req.target_amount);
+
+      await qr.query(
+        `UPDATE turnover_requirements
+         SET current_amount = $1, status = 'COMPLETED',
+             completed_at = NOW(), updated_at = NOW()
+         WHERE id = $2`,
+        [target, requirementId],
+      );
+
+      await this.turnoverLedger.write({
+        qr,
+        userId:        req.user_id,
+        requirementId: req.id,
+        eventType:     'COMPLETED',
+        amount:        Math.max(0, target - current),
+        balanceBefore: current,
+        balanceAfter:  target,
+        referenceType: 'ADMIN',
+        referenceId:   adminId,
+        description:   'Turnover marked complete by admin',
+      });
+
+      await qr.commitTransaction();
+      return {
+        message: 'Turnover marked complete',
+        requirementId: req.id,
+        completed: target,
+        status: 'COMPLETED',
+      };
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+  }
 }
