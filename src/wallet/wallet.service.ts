@@ -102,12 +102,17 @@ export class WalletService {
           );
       }
 
-      // Pre-flight promo validation (cheap; throws on bad promo)
+      // Pre-flight promo eligibility (throws on bad promo). Runs the FULL gate
+      // — including phone/email/profile verification — so the user is told at
+      // deposit time (e.g. "Phone verification required for this promotion")
+      // instead of the bonus silently vanishing at approval.
       if (dto.promotionId) {
-        await this.promotionEngine.validateForUser(qr, dto.userId, dto.promotionId, {
-          kind: 'DEPOSIT',
-          depositAmount: dto.amount,
-        });
+        await this.promotionEngine.assertDepositEligible(
+          qr,
+          dto.userId,
+          dto.promotionId,
+          dto.amount,
+        );
       }
 
       const deposit = await qr.query(

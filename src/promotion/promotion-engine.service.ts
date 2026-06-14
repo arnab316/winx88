@@ -186,7 +186,34 @@ export class PromotionEngineService  {
  
     return { promotion: p, estimatedBonus: computation };
   }
- 
+
+  // ═════════════════════════════════════════════════════════════
+  // PUBLIC API: full pre-flight for a deposit (request-time gate)
+  //   Runs validateForUser PLUS the assertEligible gates (verification,
+  //   device, frequency, anti-fraud) so the user gets an immediate error
+  //   at deposit submission — e.g. "Phone verification required" — instead
+  //   of the bonus silently being skipped at approval time.
+  // ═════════════════════════════════════════════════════════════
+  async assertDepositEligible(
+    qr: QueryRunner,
+    userId: number,
+    promotionId: number,
+    depositAmount: number,
+    ctx: { device?: 'DESKTOP' | 'MOBILE_WEB' | 'APP'; ipAddress?: string; deviceFingerprint?: string } = {},
+  ): Promise<void> {
+    const { promotion } = await this.validateForUser(qr, userId, promotionId, {
+      kind: 'DEPOSIT',
+      depositAmount,
+    });
+    await Eligibility.assertEligible(qr, userId, promotion, {
+      kind: 'DEPOSIT',
+      depositAmount,
+      device: ctx.device,
+      ipAddress: ctx.ipAddress,
+      deviceFingerprint: ctx.deviceFingerprint,
+    });
+  }
+
   // ═════════════════════════════════════════════════════════════
   // PUBLIC API: apply (mutates state)
   //   This is THE method called from wallet.decideDeposit's APPROVE
@@ -370,6 +397,9 @@ export class PromotionEngineService  {
         multiplier: rolloverMult,
         targetAmount: target,
         adminId: args.adminId,
+        // Show the promotion's name as the turnover header (e.g. "1K DoubleDown")
+        // instead of the generic "Promotion turnover".
+        label: promotion.title,
       } as any);
 
       turnoverReqId = reqResult.requirementId;
