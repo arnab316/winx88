@@ -667,10 +667,14 @@ export class PromotionEngineService  {
     let bonAfter = bonBefore;
  
     if (destination === 'BONUS_BALANCE') {
+      // Bonus is added to the spendable main balance (so the user can play with
+      // deposit + bonus) AND mirrored into bonus_balance so admins can see how
+      // much of the balance came from a bonus. Withdrawal stays gated by turnover.
+      balAfter = balBefore + amount;
       bonAfter = bonBefore + amount;
       await qr.query(
-        `UPDATE wallets SET bonus_balance = $1, updated_at = NOW() WHERE id = $2`,
-        [bonAfter, w.id],
+        `UPDATE wallets SET balance = $1, bonus_balance = $2, updated_at = NOW() WHERE id = $3`,
+        [balAfter, bonAfter, w.id],
       );
     } else {
       balAfter = balBefore + amount;

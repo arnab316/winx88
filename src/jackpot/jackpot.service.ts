@@ -1003,6 +1003,8 @@ export class JackpotService {
       if (!wallet) throw new BadRequestException('Wallet not found');
 
       const balBefore = parseFloat(wallet.balance);
+      const bonBefore = parseFloat(wallet.bonus_balance);
+      // Bonus is already folded into the main balance, so bets draw from balance.
       if (balBefore < dto.betAmount) {
         throw new BadRequestException('Insufficient balance');
       }
@@ -1048,8 +1050,8 @@ export class JackpotService {
         amount:        dto.betAmount,
         balanceBefore: balBefore,
         balanceAfter:  balAfter,
-        bonusBefore:   parseFloat(wallet.bonus_balance),
-        bonusAfter:    parseFloat(wallet.bonus_balance),
+        bonusBefore:   bonBefore,
+        bonusAfter:    bonBefore,
         lockedBefore:  parseFloat(wallet.locked_balance),
         lockedAfter:   parseFloat(wallet.locked_balance),
         referenceType: 'BET',

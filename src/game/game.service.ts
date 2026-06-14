@@ -171,6 +171,7 @@ export class GameService {
       const bonBefore = parseFloat(wallet.bonus_balance);
       const lckBefore = parseFloat(wallet.locked_balance);
 
+      // Bonus is already folded into the main balance, so bets draw from balance.
       if (balBefore < amount) {
         throw new BadRequestException('Insufficient balance');
       }
