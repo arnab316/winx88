@@ -92,12 +92,29 @@ export class PromotionEngineService  {
       );
     }
  
-    // 5. Member group eligibility
-    const inGroup = await this.memberGroupService.isUserInGroup(
-      qr,
-      userId,
-      p.member_group_id,
+    // 5. Member group eligibility — a promo may target MULTIPLE groups via
+    //    promotion_member_groups. User passes if they're in ANY of them.
+    //    When no groups are linked, fall back to the legacy single
+    //    member_group_id (null there = open to all).
+    const promoGroups = await runner.query(
+      `SELECT member_group_id FROM promotion_member_groups WHERE promotion_id = $1`,
+      [p.id],
     );
+    let inGroup = false;
+    if (promoGroups.length === 0) {
+      inGroup = await this.memberGroupService.isUserInGroup(
+        qr,
+        userId,
+        p.member_group_id,
+      );
+    } else {
+      for (const g of promoGroups) {
+        if (await this.memberGroupService.isUserInGroup(qr, userId, g.member_group_id)) {
+          inGroup = true;
+          break;
+        }
+      }
+    }
     if (!inGroup) {
       throw new ForbiddenException('You are not eligible for this promotion');
     }
@@ -695,6 +712,39 @@ export class PromotionEngineService  {
   // ═════════════════════════════════════════════════════════════
   // ADMIN: CRUD
   // ═════════════════════════════════════════════════════════════
+  // Replace a promotion's member-group set with the given ids (validates each
+  // is an active group). An empty array clears all groups. Used by create and
+  // update to keep promotion_member_groups in sync.
+  private async syncMemberGroups(
+    runner: any,
+    promotionId: number,
+    groupIds: number[],
+  ): Promise<void> {
+    const unique = [...new Set(groupIds)];
+    if (unique.length) {
+      const found = await runner.query(
+        `SELECT id FROM member_groups WHERE id = ANY($1) AND is_active = TRUE`,
+        [unique],
+      );
+      if (found.length !== unique.length) {
+        throw new BadRequestException(
+          'One or more member groups not found or inactive',
+        );
+      }
+    }
+    await runner.query(
+      `DELETE FROM promotion_member_groups WHERE promotion_id = $1`,
+      [promotionId],
+    );
+    for (const gid of unique) {
+      await runner.query(
+        `INSERT INTO promotion_member_groups (promotion_id, member_group_id)
+         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [promotionId, gid],
+      );
+    }
+  }
+
   async createPromotion(dto: CreatePromotionDto, adminId: number) {
     if (dto.kind === 'PROMOCODE' && !dto.code) {
       throw new BadRequestException('PROMOCODE kind requires a code');
@@ -803,7 +853,28 @@ export class PromotionEngineService  {
           dto.checkByWalletBalance ?? false,
         ],
       );
-      return result[0];
+      let created = result[0];
+
+      // Register-valid-days isn't in the big INSERT above; set it post-insert.
+      if (dto.registerValidDays !== undefined) {
+        const upd = await this.dataSource.query(
+          `UPDATE promotions SET register_valid_days = $1, updated_at = NOW()
+           WHERE id = $2 RETURNING *`,
+          [dto.registerValidDays, created.id],
+        );
+        created = upd[0];
+      }
+
+      // Multi member-group eligibility (join table). Accept memberGroupIds, or
+      // fall back to a single memberGroupId for backward compatibility.
+      const groupIds =
+        dto.memberGroupIds ??
+        (dto.memberGroupId ? [dto.memberGroupId] : []);
+      if (groupIds.length) {
+        await this.syncMemberGroups(this.dataSource, created.id, groupIds);
+      }
+
+      return created;
     } catch (e: any) {
       if (e.code === '23505') {
         throw new BadRequestException(
@@ -828,11 +899,14 @@ export class PromotionEngineService  {
     const map: Record<string, any> = {
       title:                dto.title,
       description:          dto.description,
+      bonus_type:           dto.bonusType,
+      kind:                 dto.kind,
       bonus_value:          dto.bonusValue,
       min_amount:           dto.minAmount,
       apply_amount_min:     dto.applyAmountMin,
       max_bonus:            dto.maxBonus,
       rollover_multiplier:  dto.rolloverMultiplier,
+      register_valid_days:  dto.registerValidDays,
       member_group_id:      dto.memberGroupId,
       max_uses_per_user:    dto.maxUsesPerUser,
       max_uses_global:      dto.maxUsesGlobal,
@@ -890,16 +964,29 @@ export class PromotionEngineService  {
         values.push(JSON.stringify(val));
       }
     }
-    if (!fields.length) throw new BadRequestException('No fields to update');
- 
-    fields.push(`updated_at = NOW()`);
-    values.push(id);
- 
-    const result = await this.dataSource.query(
-      `UPDATE promotions SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`,
-      values,
-    );
-    return result[0];
+    // memberGroupIds can be the only change, so allow an update with no scalar
+    // fields when it's present (empty array = clear all groups).
+    if (!fields.length && dto.memberGroupIds === undefined) {
+      throw new BadRequestException('No fields to update');
+    }
+
+    let row = existing[0];
+    if (fields.length) {
+      fields.push(`updated_at = NOW()`);
+      values.push(id);
+      const result = await this.dataSource.query(
+        `UPDATE promotions SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`,
+        values,
+      );
+      row = result[0];
+    }
+
+    // Sync multi member-group eligibility when provided.
+    if (dto.memberGroupIds !== undefined) {
+      await this.syncMemberGroups(this.dataSource, id, dto.memberGroupIds);
+    }
+
+    return row;
   }
  
   async deactivate(id: number) {
@@ -986,7 +1073,15 @@ async listPromotions(q: ListPromotionsQueryDto) {
   const data = await this.dataSource.query(
     `SELECT p.*,
             mg.code AS member_group_code,
-            mg.name AS member_group_name
+            mg.name AS member_group_name,
+            COALESCE((
+              SELECT json_agg(json_build_object(
+                       'id', mg2.id, 'code', mg2.code, 'name', mg2.name)
+                       ORDER BY mg2.id)
+              FROM promotion_member_groups pmg
+              JOIN member_groups mg2 ON mg2.id = pmg.member_group_id
+              WHERE pmg.promotion_id = p.id
+            ), '[]'::json) AS member_groups
      FROM promotions p
      LEFT JOIN member_groups mg ON mg.id = p.member_group_id
      ${whereSql}

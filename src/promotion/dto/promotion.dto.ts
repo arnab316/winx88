@@ -19,7 +19,7 @@ import {
 // ─── ENUMS / CONSTANTS ──────────────────────────────────────────
 export const PROMOTION_KINDS = [
   'DEPOSIT', 'REGISTRATION', 'PROMOCODE', 'MANUAL',
-  'FREE_REWARD', 'RELOAD', 'CASHBACK',
+  'FREE_REWARD', 'RELOAD', 'CASHBACK', 'REBATE',
 ] as const;
 export type PromotionKind = typeof PROMOTION_KINDS[number];
 
@@ -99,8 +99,14 @@ export class CreatePromotionDto {
   @IsOptional() @IsNumber() @Min(0) applyAmountMin?: number;
   @IsOptional() @IsNumber() @Min(0) maxBonus?: number;
   @IsOptional() @IsNumber() @Min(0) rolloverMultiplier?: number;
+  // REGISTRATION bonuses: days after sign-up the user may still claim. Omit/null = no limit.
+  @IsOptional() @IsInt() @Min(0) registerValidDays?: number;
 
   @IsOptional() @IsInt() memberGroupId?: number;
+  // Multiple member groups / VIP tiers the promo applies to. Empty/omitted =
+  // open to all (subject to the legacy single memberGroupId if set).
+  @IsOptional() @IsArray() @ArrayUnique() @IsInt({ each: true })
+  memberGroupIds?: number[];
   @IsOptional() @IsInt() @Min(1) maxUsesPerUser?: number;
   @IsOptional() @IsInt() @Min(1) maxUsesGlobal?: number;
   @IsOptional() @IsNumber() @Min(1) maxBonusPool?: number;
@@ -171,12 +177,19 @@ export class UpdatePromotionDto {
   @IsOptional() @IsString() @Length(3, 150) title?: string;
   @IsOptional() @IsString() @Length(0, 2000) description?: string;
 
+  // Reward type (FIXED/PERCENTAGE) and bonus category — editable post-create.
+  @IsOptional() @IsIn(BONUS_TYPES) bonusType?: BonusType;
+  @IsOptional() @IsIn(PROMOTION_KINDS) kind?: PromotionKind;
+
   @IsOptional() @IsNumber() @Min(0) bonusValue?: number;
   @IsOptional() @IsNumber() @Min(0) minAmount?: number;
   @IsOptional() @IsNumber() @Min(0) applyAmountMin?: number;
   @IsOptional() @IsNumber() @Min(0) maxBonus?: number;
   @IsOptional() @IsNumber() @Min(0) rolloverMultiplier?: number;
+  @IsOptional() @IsInt() @Min(0) registerValidDays?: number;
   @IsOptional() @IsInt() memberGroupId?: number;
+  @IsOptional() @IsArray() @ArrayUnique() @IsInt({ each: true })
+  memberGroupIds?: number[];
   @IsOptional() @IsInt() @Min(1) maxUsesPerUser?: number;
   @IsOptional() @IsInt() @Min(1) maxUsesGlobal?: number;
   @IsOptional() @IsNumber() @Min(1) maxBonusPool?: number;

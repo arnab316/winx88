@@ -410,6 +410,39 @@ export function EditPromotionModal({ promotion, onClose, onSave }: EditPromotion
     EGAMES: true,
   });
 
+  // Real member groups loaded from the backend (id + name). Falls back to the
+  // known seed groups if the API isn't wired yet.
+  const [memberGroups, setMemberGroups] = useState<{ id: number; name: string; code: string }[]>([]);
+  useEffect(() => {
+    (async () => {
+      try {
+        // Wire this to your API client: GET /member-group/admin
+        const res = await promotionApi.listMemberGroups?.();
+        if (res?.data?.length) {
+          setMemberGroups(res.data.map((g: any) => ({ id: Number(g.id), name: g.name, code: g.code })));
+          return;
+        }
+        throw new Error('no api');
+      } catch {
+        setMemberGroups([
+          { id: 1, name: 'New Users', code: 'NEW_USERS' },
+          { id: 2, name: 'All Members', code: 'ALL' },
+          { id: 3, name: 'VIP Members', code: 'VIP' },
+          { id: 4, name: 'Cricket Fans', code: 'CRICKET_FANS' },
+        ]);
+      }
+    })();
+  }, []);
+
+  const toggleMemberGroup = (id: number) => {
+    setFormData((prev) => {
+      const ids = prev.memberGroupIds.includes(id)
+        ? prev.memberGroupIds.filter((g) => g !== id)
+        : [...prev.memberGroupIds, id];
+      return { ...prev, memberGroupIds: ids };
+    });
+  };
+
   const [formData, setFormData] = useState({
     active: promotion.isActive ?? (promotion as any).is_active ?? false,
     currency: promotion.currency || 'BDT',
@@ -428,8 +461,10 @@ export function EditPromotionModal({ promotion, onClose, onSave }: EditPromotion
     linkedPromotion: promotion.linkedPromotionId ? String(promotion.linkedPromotionId) : '',
     validFrom: promotion.startsAt || (promotion as any).starts_at || '',
     validTill: promotion.endsAt || (promotion as any).ends_at || '',
-    registerValidClaimablePeriod: '',
-    registerValidClaimablePeriodNoMax: true,
+    registerValidClaimablePeriod:
+      (promotion as any).registerValidDays ?? (promotion as any).register_valid_days ?? '',
+    registerValidClaimablePeriodNoMax:
+      ((promotion as any).registerValidDays ?? (promotion as any).register_valid_days) == null,
     displayFrequency: 'Daily',
     rewardType: (promotion.bonusType || (promotion as any).bonus_type) === 'PERCENT' ? 'Percentage' : 'Fixed Amount',
     maxPlayer: promotion.maxPlayer ?? (promotion as any).max_player ?? '',
@@ -463,9 +498,18 @@ export function EditPromotionModal({ promotion, onClose, onSave }: EditPromotion
     targetMultiplier: promotion.rolloverMultiplier ?? (promotion as any).rollover_multiplier ?? 0,
     targetOption: (promotion.targetOption || (promotion as any).target_option) === 'BONUS_ONLY' ? 'Bonus Only' : (promotion.targetOption || (promotion as any).target_option) === 'APPLY_ONLY' ? 'Apply Amount Only' : 'Bonus + Apply Amount',
     capLimitType: (promotion.capLimitType || (promotion as any).cap_limit_type) === 'PERCENT' ? 'Percentage' : 'Amount',
-    // Eligibility
-    promotionEligibleTypes: (promotion.memberGroupId || (promotion as any).member_group_id) ? 'Member Groups' : 'All',
-    memberGroupId: promotion.memberGroupId || (promotion as any).member_group_id || 'Please Select',
+    // Eligibility — multiple member groups (ids). Reads memberGroups[] from the
+    // API, falling back to the legacy single memberGroupId.
+    promotionEligibleTypes:
+      ((promotion as any).member_groups?.length || promotion.memberGroupId || (promotion as any).member_group_id)
+        ? 'Member Groups'
+        : 'All',
+    memberGroupIds: (
+      (promotion as any).member_groups?.map((g: any) => Number(g.id)) ??
+      ((promotion.memberGroupId || (promotion as any).member_group_id)
+        ? [Number(promotion.memberGroupId || (promotion as any).member_group_id)]
+        : [])
+    ) as number[],
     maxPerPlayer: promotion.maxUsesPerUser ?? (promotion as any).max_uses_per_user ?? '',
     maxPerPlayerNoMax: (promotion.maxUsesPerUser ?? (promotion as any).max_uses_per_user) == null,
     totalClaimTimes: promotion.maxUsesGlobal ?? (promotion as any).max_uses_global ?? '',
@@ -524,7 +568,10 @@ export function EditPromotionModal({ promotion, onClose, onSave }: EditPromotion
       displayIfNonEligible: formData.displayIfNonEligible,
       hideIfEligible: formData.hideIfEligible,
       checkByWalletBalance: formData.checkByWalletBalance,
-      memberGroupId: formData.promotionEligibleTypes === 'Member Groups' && formData.memberGroupId !== 'Please Select' ? Number(formData.memberGroupId) : undefined,
+      memberGroupIds: formData.promotionEligibleTypes === 'Member Groups' ? formData.memberGroupIds : [],
+      registerValidDays: formData.registerValidClaimablePeriodNoMax
+        ? undefined
+        : Number(formData.registerValidClaimablePeriod) || undefined,
       uniqueCheckBankAccount: formData.uniqueBankAccount,
       uniqueCheckEmail: formData.uniqueEmail,
       uniqueCheckPhone: formData.uniqueContactNo,
@@ -1259,14 +1306,25 @@ export function EditPromotionModal({ promotion, onClose, onSave }: EditPromotion
                 </div>
 
                 <div className="flex flex-col gap-1.5 border-t border-border/40 pt-3">
-                  <label className="text-xs font-semibold text-muted-foreground">Amount Cap</label>
-                  <input
-                    type="number"
-                    value={formData.amountCap}
-                    disabled={formData.amountCapNoMax}
-                    onChange={(e) => setFormData({ ...formData, amountCap: Number(e.target.value) })}
-                    className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none disabled:opacity-50 disabled:bg-muted/40"
-                  />
+                  <label className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                    Max Bonus (Amount Cap) <Info className="w-3.5 h-3.5 text-muted-foreground/50" />
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      min={0}
+                      value={formData.amountCap}
+                      disabled={formData.amountCapNoMax}
+                      onChange={(e) => setFormData({ ...formData, amountCap: Number(e.target.value) })}
+                      className="w-full px-3 py-1.5 pr-9 text-xs border border-border rounded-md bg-background focus:border-primary outline-none disabled:opacity-50 disabled:bg-muted/40"
+                    />
+                    <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-semibold text-muted-foreground pointer-events-none">
+                      {formData.currency}
+                    </span>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground">
+                    The most bonus a player can receive (caps the percentage). Tick No Max for uncapped.
+                  </p>
                   <div className="flex flex-col gap-2 mt-0.5">
                     <div className="flex items-center gap-2">
                       <input
@@ -1380,36 +1438,50 @@ export function EditPromotionModal({ promotion, onClose, onSave }: EditPromotion
                 </div>
 
                 <div className="flex flex-col gap-1.5">
-                  <label className="text-xs font-semibold text-muted-foreground">Member Group</label>
-                  <div className="relative">
-                    <select
-                      value={formData.memberGroupId as any}
-                      onChange={(e) => setFormData({ ...formData, memberGroupId: e.target.value as any })}
-                      className="w-full px-3 py-1.5 text-xs border border-border rounded-md bg-background focus:border-primary outline-none"
-                    >
-                      <option value="Please Select">Please Select</option>
-                      <option value="Normal">Normal</option>
-                      <option value="Elite">Elite</option>
-                      <option value="Pro">Pro</option>
-                      <option value="Expert">Expert</option>
-                      <option value="Master">Master</option>
-                      <option value="Grandmaster">Grandmaster</option>
-                      <option value="Legend">Legend</option>
-                      <option value="Mythic">Mythic</option>
-                    </select>
+                  <label className="text-xs font-semibold text-muted-foreground">Member Group(s)</label>
+                  {/* Multi-select: a promo can target multiple member groups / VIP tiers.
+                      Disabled when "All" is chosen above. */}
+                  <div className={`border border-border rounded-md bg-background divide-y divide-border/40 ${
+                    formData.promotionEligibleTypes === 'All' ? 'opacity-50 pointer-events-none' : ''
+                  }`}>
+                    {memberGroups.map((g) => (
+                      <label key={g.id} className="flex items-center gap-2 px-3 py-1.5 text-xs font-medium cursor-pointer hover:bg-muted/30">
+                        <input
+                          type="checkbox"
+                          checked={formData.memberGroupIds.includes(g.id)}
+                          onChange={() => toggleMemberGroup(g.id)}
+                          className="rounded border-border text-emerald-600 size-3.5"
+                        />
+                        <span>{g.name}</span>
+                        <span className="ml-auto text-[10px] text-muted-foreground font-mono">#{g.id}</span>
+                      </label>
+                    ))}
+                    {memberGroups.length === 0 && (
+                      <p className="px-3 py-2 text-center text-xs text-muted-foreground">Loading groups…</p>
+                    )}
                   </div>
-                  {formData.memberGroupId && formData.memberGroupId !== ('Please Select' as any) && (
-                    <div className="mt-2 flex items-center gap-2 bg-muted px-3 py-1 text-xs rounded border border-border font-medium">
-                      <span>{formData.memberGroupId as any}</span>
-                      <button
-                        type="button"
-                        onClick={() => setFormData({ ...formData, memberGroupId: 'Please Select' as any })}
-                        className="ml-auto w-4 h-4 rounded-full bg-muted-foreground text-card flex items-center justify-center text-[10px] hover:bg-foreground/50 transition-colors"
-                      >
-                        ×
-                      </button>
+                  {formData.memberGroupIds.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-1.5">
+                      {formData.memberGroupIds.map((id) => {
+                        const g = memberGroups.find((m) => m.id === id);
+                        return (
+                          <span key={id} className="flex items-center gap-1.5 bg-muted px-2.5 py-0.5 text-[11px] rounded border border-border font-medium">
+                            {g?.name ?? `#${id}`}
+                            <button
+                              type="button"
+                              onClick={() => toggleMemberGroup(id)}
+                              className="w-3.5 h-3.5 rounded-full bg-muted-foreground text-card flex items-center justify-center text-[10px] hover:bg-foreground/50 transition-colors"
+                            >
+                              ×
+                            </button>
+                          </span>
+                        );
+                      })}
                     </div>
                   )}
+                  <p className="text-[10px] text-muted-foreground">
+                    Empty = open to all. Pick one or more groups to restrict eligibility.
+                  </p>
                 </div>
 
                 <div className="flex flex-col gap-1.5">

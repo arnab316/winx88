@@ -1,0 +1,585 @@
+{
+  "info": {
+    "_postman_id": "74eb227b-99e3-462c-a046-d9afaa2edccd",
+    "name": "Luck Sports",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_exporter_id": "49811615",
+    "_collection_link": "https://go.postman.co/collection/49811615-74eb227b-99e3-462c-a046-d9afaa2edccd?source=collection_link"
+  },
+  "item": [
+    {
+      "name": "How to use sports betting API",
+      "item": [
+        {
+          "name": "Get Started",
+          "item": [],
+          "description": "- Receive an API Key from the game provider.\n    \n- One agent can only support one currency type.\n    \n- Requests the API provider to set a callback URL and callback token."
+        },
+        {
+          "name": "API Workflow",
+          "item": [],
+          "description": "API URL: [https://{{BaseUrl}}/sportsAPI](https://sportsbook.needforspeedau.com/sportsAPI)\n\n### HTTP Headers Required for API and Callback\n\nAll HTTP requests related to using the API and Callback must include the following HTTP headers.\n\n---\n\n| Name | Value | Example |\n| --- | --- | --- |\n| `Authorization` | `Bearer {API TOKEN}` | `Authorization: Bearer ed45553e-1702-4342-a70d-09bf7ff7f568` |\n| `Accept` | `application/json` | `Accept: application/json` |\n| `Content-Type` | `application/json` | `Content-Type: application/json` |\n\n### Seamless\n\n1. Create a user\n    \n2. Get a game url.\n    \n3. Get balance using callback.\n    \n4. Bet using callback\n    \n5. Win(win, loss,cashout, refund) using callback\n    \n\n##Token Info##\n\nWhen you send create user and get game url request, you have to use token(API token) issued by the provider as the request header token.  \nAnd you can check header token(CallBack token) issued by provider when you receive callback request."
+        },
+        {
+          "name": "API & Callback Response Codes",
+          "item": [],
+          "description": "This is the response code when calling the API and Callback.\n\n| Message | Code | Explanation |\n| --- | --- | --- |\n| `OK` | `0` | `Success` |\n| `Failed` | `1001` | `Authentication token not found` |\n| `Failed` | `1002` | `Username not found` |\n| `Failed` | 1003 | Usercode not found |\n| Failed | 9999 | Unknown Error |"
+        }
+      ],
+      "description": "The sports API can only be used in iframe format.\n\nFor users who are not logged in, you can display it via iframe using [https://BaseApiLink/lang](https://BaseApiLink).\n\nPlease contact the provider about BaseApiLink.",
+      "auth": {
+        "type": "noauth"
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "packages": {},
+            "exec": [
+              ""
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "packages": {},
+            "exec": [
+              ""
+            ]
+          }
+        }
+      ]
+    },
+    {
+      "name": "API",
+      "item": [
+        {
+          "name": "User Create",
+          "protocolProfileBehavior": {
+            "disabledSystemHeaders": {
+              "content-type": true
+            }
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{SPORTS_API_TOKEN}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n    \"name\": \"test\"\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{SPORTS_API_ENDPOINT}}/v1/user/create",
+              "host": [
+                "{{SPORTS_API_ENDPOINT}}"
+              ],
+              "path": [
+                "v1",
+                "user",
+                "create"
+              ]
+            },
+            "description": "Create user information and return user information. The user name must be unique, and if a user is created with the same name, the existing user information is returned.  \nThe returned `user_code` value is used to identify the user when requesting user-related APIs.**.**\n\n**\\[Required Header\\]**\n\n| **Name** | Value | Example |\n| --- | --- | --- |\n| Authorization | Bearer {SPORTS_API_TOKEN} | Authorization: Bearer 149eb004-68bc-4ddb-a5e1-42c491d9569a |\n| Content-Type | application/json | Content-Type: application/json |\n\n## **Request**\n\n| PARAMETER | DESCRIPTION | FORMAT | EXAMPLE |\n| --- | --- | --- | --- |\n| \"name\" | an user's name  <br>maxLength: 50  <br>minLength: 2  <br>pattern: ^\\[_a-zA-Z0-9\\]+$ | string | \"test\" |\n\n## **Response**\n\n| PARAMETER | DESCRIPTION | FORMAT | EXAMPLE |\n| --- | --- | --- | --- |\n| \"code\" | Result codes 0, 1001.. (See Result Codes) | integer($int32) | 0 |\n| \"message\" | Description of the result. | string | OK |\n| \"data\" | {  <br>\"userCode\": identification code,  <br>\"name\": user name,  <br>\"balance\"  <br>} | {  <br>\"user_code\": string,  <br>\"name\": string,  <br>\"balance\": integer($decimal)  <br>} | {  <br>\"user_code\": \"6835c6314e35c8643a52c29\",  <br>\"name\": \"test\",  <br>\"balance\": 100  <br>} |"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{SPORTS_API_TOKEN}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"name\": \"test\"\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{SPORTS_API_ENDPOINT}}/v1/user/create",
+                  "host": [
+                    "{{SPORTS_API_ENDPOINT}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "user",
+                    "create"
+                  ]
+                }
+              },
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json",
+                  "description": "",
+                  "type": "text"
+                }
+              ],
+              "cookie": [],
+              "body": "{\r\n    \"code\":0,\r\n    \"message\":\"success\",\r\n    \"data\": {\r\n        \"userCode\": \"6835c3d575326075fe65c0c9\",\r\n        \"name\": \"test\",\r\n        \"balance\": \"1000\"\r\n    }\r\n}"
+            }
+          ]
+        },
+        {
+          "name": "Generate Game Url",
+          "protocolProfileBehavior": {
+            "disabledSystemHeaders": {
+              "content-type": true
+            }
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{SPORTS_API_TOKEN}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n    \"userCode\": \"6835c3d575326075fe65c0c9\",\r\n    \"language\" : \"en\"\r\n}"
+            },
+            "url": {
+              "raw": "{{SPORTS_API_ENDPOINT}}/v1/game/game-url",
+              "host": [
+                "{{SPORTS_API_ENDPOINT}}"
+              ],
+              "path": [
+                "v1",
+                "game",
+                "game-url"
+              ]
+            },
+            "description": "Returns an authorized URL that can access the game.\n\nYou can use this gameUrl in iframe about logged in user.\n\nIf you don't use language parameter, automatically supports English.\n\n---\n\nLanguage Code:\n\n\\-en : english\n\n\\-fa : persian\n\n**\\[Required Header\\]**\n\n| **Name** | Value | Example |\n| --- | --- | --- |\n| Authorization | Bearer {SPORTS_API_TOKEN} | Authorization: Bearer 149eb004-68bc-4ddb-a5e1-42c491d9569a |\n| Content-Type | application/json | Content-Type: application/json |\n\n## **Request**\n\n| PARAMETER | DESCRIPTION | FORMAT | EXAMPLE |\n| --- | --- | --- | --- |\n| \"userCode\" | identification code | string | \"6835c6314e35c8643a52c29c\" |\n| \"language\" | site language | string | \"en\",\"fa\" |\n\n## **Response**\n\n| PARAMETER | DESCRIPTION | FORMAT | EXAMPLE |\n| --- | --- | --- | --- |\n| \"code\" | Result codes 0, 1, 1001 (See Result Codes) | integer($int32) | 0 |\n| \"message\" | Description of the result. | string | OK |\n| \"data\" | {  <br>\"gameUrl\": game url  <br>} | {  <br>\"gameUrl\": string  <br>} | {  <br>\"gameUrl\": \"[https://?token=149eb004-68bc-4ddb-a5e1-42c491d9569a\"](https://sportsbook.needforspeedau.com?token=149eb004-68bc-4ddb-a5e1-42c491d9569a)  <br>} |"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{SPORTS_API_TOKEN}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"userCode\": \"6835c3d575326075fe65c0c9\"\r\n}"
+                },
+                "url": {
+                  "raw": "{{SPORTS_API_ENDPOINT}}/v1/game/game-url",
+                  "host": [
+                    "{{SPORTS_API_ENDPOINT}}"
+                  ],
+                  "path": [
+                    "v1",
+                    "game",
+                    "game-url"
+                  ]
+                }
+              },
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json",
+                  "description": "",
+                  "type": "text"
+                }
+              ],
+              "cookie": [],
+              "body": "{\r\n    \"code\": 0,\r\n    \"message\": \"OK\",\r\n    \"data\": {\r\n        \"gameUrl\": \"http://game-url.com?token=asdfqwret2435345srt\"\r\n    }\r\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Callabck",
+      "item": [
+        {
+          "name": "Get Balance",
+          "protocolProfileBehavior": {
+            "disabledSystemHeaders": {
+              "content-type": true
+            }
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{SPORTS_CALLBACK_TOKEN}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n    \"command\" : \"getBalance\",\r\n    \"data\" : {\r\n        \"userName\" : \"test\"\r\n    }\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{SPORTS_CALLBACK_ENDPOINT}}",
+              "host": [
+                "{{SPORTS_CALLBACK_ENDPOINT}}"
+              ]
+            },
+            "description": "Provider send you this callback for checking user balance.\n\n**\\[Required Header\\]**\n\n| **Name** | Value | Example |\n| --- | --- | --- |\n| Authorization | Bearer {SPORTS_CallBack_TOKEN} | Authorization: Bearer 149eb004-68bc-4ddb-a5e1-42c491d9569a |\n| Content-Type | application/json | Content-Type: application/json |\n\n## **Request**\n\n| PARAMETER | DESCRIPTION | FORMAT | EXAMPLE |\n| --- | --- | --- | --- |\n| \"userName\" | user name that you sent when you create user | string | \"test\" |\n\n## **Response**\n\n| PARAMETER | DESCRIPTION | FORMAT | EXAMPLE |\n| --- | --- | --- | --- |\n| \"code\" | Result codes 0, others | integer($int32) | 0 : success, others: error |\n| \"message\" | Description of the result. | string | OK |\n| \"data\" | {  <br>\"balance\": user balance  <br>} | {  <br>\"balance\": decimal  <br>} | 100.02 |"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{SPORTS_CALLBACK_TOKEN}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"command\" : \"getBalance\",\r\n    \"data\" : {\r\n        \"username\" : \"test\"\r\n    }\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{SPORTS_CALLBACK_ENDPOINT}}",
+                  "host": [
+                    "{{SPORTS_CALLBACK_ENDPOINT}}"
+                  ]
+                }
+              },
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json",
+                  "description": "",
+                  "type": "text"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n    \"code\": 0,\n    \"message\": \"success\",\n    \"data\": {\n        \"name\": \"testUser\",\n        \"balance\": 1500\n    }\n}"
+            }
+          ]
+        },
+        {
+          "name": "Bet",
+          "protocolProfileBehavior": {
+            "disabledSystemHeaders": {
+              "content-type": true
+            }
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{SPORTS_CALLBACK_TOKEN}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n    \"command\": \"bet\",\r\n    \"data\": {\r\n        \"username\" : \"test\",\r\n        \"amount\": 5.5,\r\n        \"betList\": [\r\n            {\r\n                \"id\": \"68998334f46b071d93b95ab4\",\r\n                \"type\" : 0,\r\n                \"totalStake\": 3.0,\r\n                \"status\": 0,\r\n                \"totalOdds\" : 1.2,\r\n                \"totalWin\" : 3.6,\r\n                \"selections\":[\r\n                    {\r\n                        \"status\" : 0,  \r\n                        \"price\" : 1.2,  \r\n                        \"name\" : \"X\",  \r\n                        \"marketName\" : \"1X2\",  \r\n                        \"eventName\" : \"France vs. Italy\",  \r\n                        \"eventDate\" : \"2023-08-11T08:30:00.000Z\",  \r\n                        \"sportTypeId\" : 1,  \r\n                        \"eventScore\" : \"\"\r\n                    }\r\n                ]\r\n            },\r\n            {\r\n                \"id\": \"6899a01df46b071d93b95acb\",\r\n                \"type\" : 1,\r\n                \"totalStake\": 2.5,\r\n                \"status\": 0,\r\n                \"totalOdds\" : 3.2,\r\n                \"totalWin\" : 8.0,\r\n                \"selections\":[\r\n                    {\r\n                        \"status\" : 0,  \r\n                        \"price\" : 2,  \r\n                        \"name\" : \"2\",  \r\n                        \"marketName\" : \"1X2\",  \r\n                        \"eventName\" : \"France vs. Italy\",  \r\n                        \"eventDate\" : \"2023-08-11T08:30:00.000Z\",  \r\n                        \"sportTypeId\" : 1,  \r\n                        \"eventScore\" : \"\"\r\n                    },\r\n                    {\r\n                        \"status\" : 0,  \r\n                        \"price\" : 1.6,  \r\n                        \"name\" : \"1\",  \r\n                        \"marketName\" : \"1X2\",  \r\n                        \"eventName\" : \"France vs. Germany\",  \r\n                        \"eventDate\" : \"2023-08-13T08:30:00.000Z\",  \r\n                        \"sportTypeId\" : 1,  \r\n                        \"eventScore\" : \"\"\r\n                    }\r\n                ]\r\n            }\r\n        ]\r\n    }\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{SPORTS_CALLBACK_ENDPOINT}}",
+              "host": [
+                "{{SPORTS_CALLBACK_ENDPOINT}}"
+              ]
+            },
+            "description": "Called when the User places a bet\n\n**\\[Required Header\\]**\n\n| **Name** | Value | Example |\n| --- | --- | --- |\n| Callback-Token | {SLOT_CALLBACK_TOKEN} | Callback-Token: e5h2c84215935ebfc8371df59e679c773ea081f8edd273358c83ff9f16e024ce |\n| Content-Type | application/json | Content-Type: application/json |\n\n## Request\n\n| PARAMETER | DESCRIPTION | FORMAT | EXAMPLE |\n| --- | --- | --- | --- |\n| \"command\" | callback command | string | \"bet\" |\n| \"data\" | {  <br>\"username\" : user name,  <br>\"amount\": total bet amount,  <br>\"betList\": user bet list  <br>  <br>} | {  <br>\"username\" : string,  <br>\"amount\": number($decimal),  <br>\"betList\": \\[  <br>{  <br>\"id\": string(unique),  <br>\"type\" : int,  <br>\"status\" : int  <br>\"totalStake\": number($decimal)  <br>\"totalOdds\" : double  <br>\"selections\" :\\[  <br>{  <br>\"status\" : int,  <br>\"price\" : double,  <br>\"name\" : string,  <br>\"marketName\" : string,  <br>\"eventName\" : string,  <br>\"eventDate\" : string,  <br>\"sportTypeId\" : int,  <br>\"eventScore\" : string,  <br>}  <br>,  <br>{...  <br>}  <br>\\]  <br>}  <br>\\],  <br>\"dateTime\": string (date-time)  <br>} | {{  <br>\"username\" : \"testuser\",  <br>\"amount\": 5.5,  <br>\"betList\": \\[  <br>{  <br>\"id\": \"1f342\",  <br>\"totalStake\": 3.0  <br>},  <br>{  <br>\"id\": \"1f343\",  <br>\"totalStake\": 2.5  <br>}  <br>\\],  <br>\"dateTime\": \"2024-09-20T11:12:00\"  <br>} |\n\n---\n\n\\--sportTypeId : int\n\nenum SportTypeId  \n{  \nFootBall = 1,  \nTennis = 4,  \nBaseketBall = 12,  \nHandBall = 17,  \nVolleyBall = 19,  \nESports = 317,  \nTableTennis = 34,  \nAmericanFootBall = 20,  \nRugby = 5,  \nBadminton = 35  \n}\n\n---\n\n\\--status : int\n\nenum Status  \n{  \nBet = 0,  \nWin = 1,  \nLose = 2,  \nCashOut = 4,  \nRefund = 18  \n}\n\n---\n\ntype : int\n\nenum Type  \n{  \nSingle = 0,  \nMulti= 1,  \nSystem = 2  \n}\n\n## **Response**\n\n| PARAMETER | DESCRIPTION | FORMAT | EXAMPLE |\n| --- | --- | --- | --- |\n| \"code\" | Result codes 0, | integer | 0 : success |\n| \"message\" | Description of the result. | string | OK |\n| \"data\" | {  <br>\"name\": user name  <br>\"balance\":user balance  <br>} | {  <br>\"name\": string  <br>\"balance\":number($decimal)  <br>} | {  <br>\"name\": \"test\"  <br>\"balance\":12000  <br>} |"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{SPORTS_CALLBACK_TOKEN}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"command\": \"bet\",\r\n    \"data\": {\r\n        \"username\" : \"testuser\",\r\n        \"amount\": 5.5,\r\n        \"betList\": [\r\n            {\r\n                \"id\": \"1f342\",\r\n                \"totalStake\": 3.0\r\n            },\r\n            {\r\n                \"id\": \"1f343\",\r\n                \"totalStake\": 2.5\r\n            }\r\n        ],\r\n        \"dateTime\": \"2024-09-20T11:12:00\"\r\n    }\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": "{{SPORTS_CALLBACK_ENDPOINT}}",
+                  "host": [
+                    "{{SPORTS_CALLBACK_ENDPOINT}}"
+                  ]
+                }
+              },
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json",
+                  "description": "",
+                  "type": "text"
+                }
+              ],
+              "cookie": [],
+              "body": "{\r\n    \"code\": 0,\r\n    \"message\": \"OK\",\r\n    \"data\": {\r\n        \"name\" : \"testUser\",\r\n        \"balance\" : 10.05\r\n    }\r\n}"
+            }
+          ]
+        },
+        {
+          "name": "Win",
+          "protocolProfileBehavior": {
+            "disabledSystemHeaders": {
+              "content-type": true
+            }
+          },
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{SPORTS_CALLBACK_TOKEN}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\r\n    \"command\": \"win\",\r\n    \"data\": {\r\n        \"username\" : \"test\",\r\n        \"amount\": 3.6,\r\n        \"betList\": [\r\n            {\r\n                \"id\": \"68998334f46b071d93b95ab4\",\r\n                \"type\" : 0,\r\n                \"totalStake\": 3.0,\r\n                \"status\": 1,\r\n                \"totalOdds\" : 1.2,\r\n                \"totalWin\" : 3.6,\r\n                \"selections\":[\r\n                    {\r\n                        \"status\" : 0,  \r\n                        \"price\" : 1.2,  \r\n                        \"name\" : \"X\",  \r\n                        \"marketName\" : \"1X2\",  \r\n                        \"eventName\" : \"France vs. Italy\",  \r\n                        \"eventDate\" : \"2023-08-11T08:30:00.000Z\",  \r\n                        \"sportTypeId\" : 1,  \r\n                        \"eventScore\" : \"1:1\"\r\n                    }\r\n                ]\r\n            }\r\n        ],\r\n        \"trans_id\":\"68998334f46b071d93b95ab4\",\r\n        \"trans_hist_id\" : \"6799834f46b071d93b5a23\"\r\n    }\r\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{SPORTS_CALLBACK_ENDPOINT}}",
+              "host": [
+                "{{SPORTS_CALLBACK_ENDPOINT}}"
+              ]
+            },
+            "description": "Called when the User wins\n\n**\\[Required Header\\]**\n\n| **Name** | Value | Example |\n| --- | --- | --- |\n| Callback-Token | {SPORTS_CALLBACK_TOKEN} | Callback-Token: e5h2c84215935ebfc8371df59e679c773ea081f8edd273358c83ff9f16e024ce |\n| Content-Type | application/json | Content-Type: application/json |\n\n## Request\n\n| PARAMETER | DESCRIPTION | FORMAT | EXAMPLE |\n| --- | --- | --- | --- |\n| \"command\" | callback command | string | \"win\" |\n| \"data\" | {  <br>\"username\" : user name,  <br>\"amount\": win amount,  <br>\"trans_id\": transaction id ,  <br>\"betList\" : \\[\\]  <br>} | {  <br>\"username\" : string,  <br>\"amount\": number($double),  <br>\"trans_id\": string  <br>} | {  <br>\"username\" : \"testuser\",  <br>\"amount\": 5.5,  <br>\"trans_id\": \"1f343\"  <br>} |\n\nWith one \"win\" command, you will get results for all outcomes (win, loss, cashout, refund).\n\n\"trans_id\" is same with user bet unique id of user bet callback(item id of bet list).\n\n\"trans_hist_id\" is unique transaction id between you and provider.\n\n\"amount\" is win or cashout or refund amount, if bet is loss, amount is 0.\n\n## **Response**\n\n| PARAMETER | DESCRIPTION | FORMAT | EXAMPLE |\n| --- | --- | --- | --- |\n| \"code\" | Result codes 0, 1, 1001 (See Result Codes) | integer | 0 |\n| \"message\" | Description of the result. | string | OK |\n| \"data\" | {  <br>\"name\": user name  <br>\"balance\":user balance  <br>} | {  <br>\"name\": string  <br>\"balance\":number($double)  <br>} | {  <br>\"name\": \"testuser\"  <br>\"balance\":12000  <br>} |"
+          },
+          "response": [
+            {
+              "name": "Success",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{SPORTS_CALLBACK_TOKEN}}",
+                    "type": "text"
+                  },
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json",
+                    "type": "text"
+                  }
+                ],
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\r\n    \"command\": \"win\",\r\n    \"data\": {\r\n        \"username\" : \"testUser\",\r\n        \"amount\" : 11.00,\r\n        \"trans_id\" : \"1f343\"\r\n    }\r\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "url": {
+                  "raw": ""
+                }
+              },
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json",
+                  "description": "",
+                  "type": "text"
+                }
+              ],
+              "cookie": [],
+              "body": "{\r\n    \"code\" : 0,\r\n    \"message\": \"OK\",\r\n    \"data\": {\r\n        \"name\": \"testUser\",\r\n        \"balance\": 21.05\r\n    }\r\n}"
+            }
+          ]
+        }
+      ],
+      "description": "You will get Callback request for users that logged in (get game url) sports api.",
+      "auth": {
+        "type": "noauth"
+      },
+      "event": [
+        {
+          "listen": "prerequest",
+          "script": {
+            "type": "text/javascript",
+            "packages": {},
+            "exec": [
+              ""
+            ]
+          }
+        },
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "packages": {},
+            "exec": [
+              ""
+            ]
+          }
+        }
+      ]
+    }
+  ],
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "exec": [
+          ""
+        ]
+      }
+    },
+    {
+      "listen": "test",
+      "script": {
+        "type": "text/javascript",
+        "packages": {},
+        "exec": [
+          ""
+        ]
+      }
+    }
+  ],
+  "variable": [
+    {
+      "key": "SLOT_API_TOKEN",
+      "value": "f921ac69-8a28-4d9f-8496-00884f55aae6"
+    },
+    {
+      "key": "SLOT_API_ENDPOINT",
+      "value": "https://check-in-slot-api-admin"
+    },
+    {
+      "key": "SLOT_CALLBACK_ENDPOINT",
+      "value": "https://your-slot-callback-url"
+    },
+    {
+      "key": "user_code",
+      "value": "get-from-user-create-request"
+    },
+    {
+      "key": "SPORTS_API_TOKEN",
+      "value": "45a6e6ff-3a00-4308-aa58-81192e686ed3"
+    },
+    {
+      "key": "SLOT_CALLBACK_TOKEN",
+      "value": "c711ada0-2415-483d-83c8-dffbdb57e312"
+    },
+    {
+      "key": "SPORTS_API_ENDPOINT",
+      "value": "https://BaseApiLink/sportsAPI"
+    },
+    {
+      "key": "SPORTS_CALLBACK_TOKEN",
+      "value": "149eb004-68bc-4ddb-a5e1-42c491d9569a"
+    },
+    {
+      "key": "SPORTS_CALLBACK_ENDPOINT",
+      "value": "https://your-sports-callback-url"
+    }
+  ]
+}
