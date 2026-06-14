@@ -84,6 +84,19 @@ export class WalletService {
     await qr.startTransaction();
 
     try {
+      // Phone verification required to deposit (platform policy). A user must
+      // have at least one verified phone number on file.
+      const phoneRows = await qr.query(
+        `SELECT BOOL_OR(is_verified) AS verified
+           FROM user_phone_numbers WHERE user_id = $1`,
+        [dto.userId],
+      );
+      if (!phoneRows[0]?.verified) {
+        throw new ForbiddenException(
+          'Please verify your phone number before depositing',
+        );
+      }
+
       // Tier deposit limits (min/max) — enforced only when configured.
       const limits = await this.getTierLimits(qr, dto.userId);
       if (limits) {
