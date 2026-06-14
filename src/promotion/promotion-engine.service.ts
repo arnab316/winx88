@@ -118,7 +118,27 @@ export class PromotionEngineService  {
     if (!inGroup) {
       throw new ForbiddenException('You are not eligible for this promotion');
     }
- 
+
+    // 5b. VIP-tier eligibility — when the promo restricts to specific levels,
+    //     the user's vip_level must be one of them. No rows = open to all tiers.
+    const promoLevels = await runner.query(
+      `SELECT vip_level FROM promotion_vip_levels WHERE promotion_id = $1`,
+      [p.id],
+    );
+    if (promoLevels.length > 0) {
+      const userRow = await runner.query(
+        `SELECT vip_level FROM users WHERE id = $1 LIMIT 1`,
+        [userId],
+      );
+      const userLevel = userRow.length ? Number(userRow[0].vip_level) : null;
+      const allowed = promoLevels.map((r: any) => Number(r.vip_level));
+      if (userLevel === null || !allowed.includes(userLevel)) {
+        throw new ForbiddenException(
+          'You are not eligible for this promotion (VIP tier)',
+        );
+      }
+    }
+
     // 6. Per-user use limit
     const usesByUser = await runner.query(
       `SELECT COUNT(*)::int AS c FROM user_promotion_claims
@@ -745,6 +765,36 @@ export class PromotionEngineService  {
     }
   }
 
+  // Replace a promotion's VIP-tier set (validates each level is an active
+  // vip_level_config row). Empty array clears all. Used by create and update.
+  private async syncVipLevels(
+    runner: any,
+    promotionId: number,
+    levels: number[],
+  ): Promise<void> {
+    const unique = [...new Set(levels)];
+    if (unique.length) {
+      const found = await runner.query(
+        `SELECT level FROM vip_level_config WHERE level = ANY($1) AND status = 'ACTIVE'`,
+        [unique],
+      );
+      if (found.length !== unique.length) {
+        throw new BadRequestException('One or more VIP levels not found or inactive');
+      }
+    }
+    await runner.query(
+      `DELETE FROM promotion_vip_levels WHERE promotion_id = $1`,
+      [promotionId],
+    );
+    for (const lvl of unique) {
+      await runner.query(
+        `INSERT INTO promotion_vip_levels (promotion_id, vip_level)
+         VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+        [promotionId, lvl],
+      );
+    }
+  }
+
   async createPromotion(dto: CreatePromotionDto, adminId: number) {
     if (dto.kind === 'PROMOCODE' && !dto.code) {
       throw new BadRequestException('PROMOCODE kind requires a code');
@@ -874,6 +924,11 @@ export class PromotionEngineService  {
         await this.syncMemberGroups(this.dataSource, created.id, groupIds);
       }
 
+      // VIP-tier eligibility (join table).
+      if (dto.vipLevels && dto.vipLevels.length) {
+        await this.syncVipLevels(this.dataSource, created.id, dto.vipLevels);
+      }
+
       return created;
     } catch (e: any) {
       if (e.code === '23505') {
@@ -964,9 +1019,13 @@ export class PromotionEngineService  {
         values.push(JSON.stringify(val));
       }
     }
-    // memberGroupIds can be the only change, so allow an update with no scalar
-    // fields when it's present (empty array = clear all groups).
-    if (!fields.length && dto.memberGroupIds === undefined) {
+    // memberGroupIds / vipLevels can be the only change, so allow an update
+    // with no scalar fields when either is present (empty array = clear).
+    if (
+      !fields.length &&
+      dto.memberGroupIds === undefined &&
+      dto.vipLevels === undefined
+    ) {
       throw new BadRequestException('No fields to update');
     }
 
@@ -984,6 +1043,10 @@ export class PromotionEngineService  {
     // Sync multi member-group eligibility when provided.
     if (dto.memberGroupIds !== undefined) {
       await this.syncMemberGroups(this.dataSource, id, dto.memberGroupIds);
+    }
+    // Sync VIP-tier eligibility when provided.
+    if (dto.vipLevels !== undefined) {
+      await this.syncVipLevels(this.dataSource, id, dto.vipLevels);
     }
 
     return row;
@@ -1081,7 +1144,15 @@ async listPromotions(q: ListPromotionsQueryDto) {
               FROM promotion_member_groups pmg
               JOIN member_groups mg2 ON mg2.id = pmg.member_group_id
               WHERE pmg.promotion_id = p.id
-            ), '[]'::json) AS member_groups
+            ), '[]'::json) AS member_groups,
+            COALESCE((
+              SELECT json_agg(json_build_object(
+                       'level', vc.level, 'name', vc.level_name)
+                       ORDER BY vc.level)
+              FROM promotion_vip_levels pvl
+              JOIN vip_level_config vc ON vc.level = pvl.vip_level
+              WHERE pvl.promotion_id = p.id
+            ), '[]'::json) AS vip_levels
      FROM promotions p
      LEFT JOIN member_groups mg ON mg.id = p.member_group_id
      ${whereSql}

@@ -107,6 +107,9 @@ export class CreatePromotionDto {
   // open to all (subject to the legacy single memberGroupId if set).
   @IsOptional() @IsArray() @ArrayUnique() @IsInt({ each: true })
   memberGroupIds?: number[];
+  // VIP tiers (vip_level_config.level) the promo applies to. Empty/omitted = all tiers.
+  @IsOptional() @IsArray() @ArrayUnique() @IsInt({ each: true }) @Min(0, { each: true })
+  vipLevels?: number[];
   @IsOptional() @IsInt() @Min(1) maxUsesPerUser?: number;
   @IsOptional() @IsInt() @Min(1) maxUsesGlobal?: number;
   @IsOptional() @IsNumber() @Min(1) maxBonusPool?: number;
@@ -190,6 +193,8 @@ export class UpdatePromotionDto {
   @IsOptional() @IsInt() memberGroupId?: number;
   @IsOptional() @IsArray() @ArrayUnique() @IsInt({ each: true })
   memberGroupIds?: number[];
+  @IsOptional() @IsArray() @ArrayUnique() @IsInt({ each: true }) @Min(0, { each: true })
+  vipLevels?: number[];
   @IsOptional() @IsInt() @Min(1) maxUsesPerUser?: number;
   @IsOptional() @IsInt() @Min(1) maxUsesGlobal?: number;
   @IsOptional() @IsNumber() @Min(1) maxBonusPool?: number;
