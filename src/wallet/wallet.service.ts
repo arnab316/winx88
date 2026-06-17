@@ -73,10 +73,97 @@ export class WalletService {
     return rows.length ? rows[0] : null;
   }
 
+  // ─── Shared deposit gate ──────────────────────────────────────
+  //   The single source of truth for "is this deposit allowed?".
+  //   Runs against the supplied query runner (read-only — no writes)
+  //   so it can be used both by the pre-flight validateDeposit() and
+  //   inside the requestDeposit() transaction. Throws a descriptive
+  //   exception on the first failed rule; returns nothing on success.
+  //   Rules: phone verified → gateway active → tier min/max → promo
+  //   eligibility (full gate: verification, frequency, amount bounds).
+  private async assertDepositGate(
+    qr: QueryRunner,
+    args: { userId: number; gatewayId: number; amount: number; promotionId?: number },
+  ): Promise<void> {
+    // Phone verification required to deposit (platform policy). A user must
+    // have at least one verified phone number on file.
+    const phoneRows = await qr.query(
+      `SELECT BOOL_OR(is_verified) AS verified
+         FROM user_phone_numbers WHERE user_id = $1`,
+      [args.userId],
+    );
+    if (!phoneRows[0]?.verified) {
+      throw new ForbiddenException(
+        'Please verify your phone number before depositing',
+      );
+    }
+
+    // Gateway must exist and be active.
+    const gateway = await qr.query(
+      `SELECT id FROM payment_gateways WHERE id = $1 AND is_active = true LIMIT 1`,
+      [args.gatewayId],
+    );
+    if (!gateway.length) {
+      throw new BadRequestException('Payment gateway not found or inactive');
+    }
+
+    // Tier deposit limits (min/max) — enforced only when configured.
+    const limits = await this.getTierLimits(qr, args.userId);
+    if (limits) {
+      const min =
+        limits.deposit_min != null ? parseFloat(limits.deposit_min) : null;
+      const max =
+        limits.deposit_max != null ? parseFloat(limits.deposit_max) : null;
+      // A limit of 0 (or null) means "no limit" — only enforce when > 0.
+      if (min != null && min > 0 && args.amount < min)
+        throw new BadRequestException(`Minimum deposit for your tier is ${min}`);
+      if (max != null && max > 0 && args.amount > max)
+        throw new BadRequestException(`Maximum deposit for your tier is ${max}`);
+    }
+
+    // Promo eligibility (throws on bad promo). Runs the FULL gate — including
+    // phone/email/profile verification — so the user is told now (e.g. "Phone
+    // verification required for this promotion") instead of the bonus silently
+    // vanishing at approval.
+    if (args.promotionId) {
+      await this.promotionEngine.assertDepositEligible(
+        qr,
+        args.userId,
+        args.promotionId,
+        args.amount,
+      );
+    }
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // DEPOSIT: PRE-FLIGHT VALIDATION (no writes, no upload)
+  //   Call this the moment the user clicks "Deposit", BEFORE revealing
+  //   the agent number. Runs the exact same gate as requestDeposit but
+  //   persists nothing, so a player is never shown where to send money
+  //   for a deposit that would be rejected. Throws the same error the
+  //   real deposit would; returns { valid: true } when it would succeed.
+  // ═════════════════════════════════════════════════════════════
+  async validateDeposit(args: {
+    userId: number;
+    gatewayId: number;
+    amount: number;
+    promotionId?: number;
+  }) {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect(); // read-only — no transaction needed
+    try {
+      await this.assertDepositGate(qr, args);
+      return { valid: true as const };
+    } finally {
+      await qr.release();
+    }
+  }
+
   // ═════════════════════════════════════════════════════════════
   // DEPOSIT: USER REQUESTS
-  //   Pre-flight validates promotion (if attached) before creating
-  //   the deposit row. Fails fast on invalid promos.
+  //   Re-runs the shared deposit gate inside the transaction (catches
+  //   anything that changed since the frontend's pre-flight call), then
+  //   creates the deposit row. Fails fast on any failed rule.
   // ═════════════════════════════════════════════════════════════
   async requestDeposit(dto: DepositRequestDto) {
     const qr = this.dataSource.createQueryRunner();
@@ -84,49 +171,12 @@ export class WalletService {
     await qr.startTransaction();
 
     try {
-      // Phone verification required to deposit (platform policy). A user must
-      // have at least one verified phone number on file.
-      const phoneRows = await qr.query(
-        `SELECT BOOL_OR(is_verified) AS verified
-           FROM user_phone_numbers WHERE user_id = $1`,
-        [dto.userId],
-      );
-      if (!phoneRows[0]?.verified) {
-        throw new ForbiddenException(
-          'Please verify your phone number before depositing',
-        );
-      }
-
-      // Tier deposit limits (min/max) — enforced only when configured.
-      const limits = await this.getTierLimits(qr, dto.userId);
-      if (limits) {
-        const min =
-          limits.deposit_min != null ? parseFloat(limits.deposit_min) : null;
-        const max =
-          limits.deposit_max != null ? parseFloat(limits.deposit_max) : null;
-        // A limit of 0 (or null) means "no limit" — only enforce when > 0.
-        if (min != null && min > 0 && dto.amount < min)
-          throw new BadRequestException(
-            `Minimum deposit for your tier is ${min}`,
-          );
-        if (max != null && max > 0 && dto.amount > max)
-          throw new BadRequestException(
-            `Maximum deposit for your tier is ${max}`,
-          );
-      }
-
-      // Pre-flight promo eligibility (throws on bad promo). Runs the FULL gate
-      // — including phone/email/profile verification — so the user is told at
-      // deposit time (e.g. "Phone verification required for this promotion")
-      // instead of the bonus silently vanishing at approval.
-      if (dto.promotionId) {
-        await this.promotionEngine.assertDepositEligible(
-          qr,
-          dto.userId,
-          dto.promotionId,
-          dto.amount,
-        );
-      }
+      await this.assertDepositGate(qr, {
+        userId:      dto.userId,
+        gatewayId:   dto.gatewayId,
+        amount:      dto.amount,
+        promotionId: dto.promotionId,
+      });
 
       const deposit = await qr.query(
         `INSERT INTO deposits

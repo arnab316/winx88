@@ -58,6 +58,34 @@ export class WalletController {
   );
 }
  
+  // POST /wallet/deposit/validate
+  // body (JSON): { gatewayId, amount, promotionId? }
+  // Pre-flight check the frontend MUST call when the user clicks "Deposit",
+  // BEFORE showing the agent number. Returns { valid: true } if the deposit
+  // would be accepted, otherwise throws the same error the real deposit would
+  // (min amount, phone not verified, gateway inactive, promo ineligible, …).
+  // No file upload, nothing persisted — safe to call as often as needed.
+  @UseGuards(JwtAuthGuard)
+  @Post('deposit/validate')
+  async validateDeposit(@Req() req: any, @Body() body: any) {
+    const amount = parseFloat(body.amount);
+    const gatewayId = parseInt(body.gatewayId, 10);
+
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new BadRequestException('amount must be a positive number');
+    }
+    if (!Number.isFinite(gatewayId) || gatewayId <= 0) {
+      throw new BadRequestException('gatewayId is required');
+    }
+
+    return this.walletService.validateDeposit({
+      userId:      req.user.sub,
+      gatewayId,
+      amount,
+      promotionId: body.promotionId ? parseInt(body.promotionId, 10) : undefined,
+    });
+  }
+
   // POST /wallet/deposit
   // form-data: screenshot=<file>, gatewayId, amount, transactionNumber,
   //            agentId (recommended), promotionId (optional)
