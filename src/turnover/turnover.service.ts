@@ -198,6 +198,95 @@ export class TurnoverService {
   }
 
   // ═════════════════════════════════════════════════════════════
+  // REVERSE A SETTLED-BET CONTRIBUTION
+  //   Called when a bet is cancelled/refunded (e.g. Palace `cancel`).
+  //   Undoes exactly what `contributeFromSettledBet` added: we look up
+  //   the original CONTRIBUTION ledger rows for that bet and subtract
+  //   each from its specific requirement (so a multi-req split unwinds
+  //   correctly). A requirement that completed off this bet re-opens if
+  //   it drops back below target. Requirements already ARCHIVED (e.g. a
+  //   withdrawal reset zeroed them) or CANCELLED are skipped — their
+  //   progress is already gone, so there is nothing to take back.
+  //
+  //   `betReferenceId`    = reference_id used on the original contribution
+  //                         (the slot bet's transaction id).
+  //   `cancelReferenceId` = id to stamp on the reversal ledger rows
+  //                         (the cancel transaction id).
+  // ═════════════════════════════════════════════════════════════
+  async reverseContribution(
+    qr: QueryRunner,
+    userId: number,
+    betReferenceId: number,
+    cancelReferenceId: number,
+  ): Promise<void> {
+    // What did this bet contribute, per requirement? (One bet can hit several
+    // reqs FIFO.) Idempotency is guaranteed by the caller — the Palace cancel
+    // handler runs this once per original transaction via its is_cancelled flag.
+    const contribs = await qr.query(
+      `SELECT requirement_id, COALESCE(SUM(amount), 0) AS total
+         FROM turnover_ledger
+        WHERE user_id = $1
+          AND reference_type = 'BET'
+          AND reference_id = $2
+          AND event_type = 'CONTRIBUTION'
+        GROUP BY requirement_id`,
+      [userId, betReferenceId],
+    );
+    if (!contribs.length) return;
+
+    for (const c of contribs) {
+      const reverseAmt = parseFloat(c.total);
+      if (reverseAmt <= 0) continue;
+
+      const reqs = await qr.query(
+        `SELECT id, target_amount, current_amount, status, completed_at
+           FROM turnover_requirements
+          WHERE id = $1
+          FOR UPDATE`,
+        [c.requirement_id],
+      );
+      if (!reqs.length) continue;
+
+      const req = reqs[0];
+      // Only live progress can be taken back. ARCHIVED/CANCELLED are final.
+      if (req.status !== 'ACTIVE' && req.status !== 'COMPLETED') continue;
+
+      const current   = parseFloat(req.current_amount);
+      const target    = parseFloat(req.target_amount);
+      const newAmount = Math.max(0, current - reverseAmt);
+
+      // If this bet had completed the requirement, dropping below target
+      // re-opens it (ACTIVE, clear completed_at).
+      let newStatus: string = req.status;
+      let completedAt: Date | null = req.completed_at;
+      if (req.status === 'COMPLETED' && newAmount < target) {
+        newStatus   = 'ACTIVE';
+        completedAt = null;
+      }
+
+      await qr.query(
+        `UPDATE turnover_requirements
+           SET current_amount = $1, status = $2, completed_at = $3, updated_at = NOW()
+         WHERE id = $4`,
+        [newAmount, newStatus, completedAt, req.id],
+      );
+
+      await this.turnoverLedger.write({
+        qr,
+        userId,
+        requirementId: req.id,
+        eventType:     'REVERSAL',
+        amount:        reverseAmt,
+        balanceBefore: current,
+        balanceAfter:  newAmount,
+        referenceType: 'BET',
+        referenceId:   cancelReferenceId,
+        description:   `Reversed ${reverseAmt} turnover — bet cancelled`,
+      });
+    }
+  }
+
+  // ═════════════════════════════════════════════════════════════
   // GUARD: BLOCK WITHDRAWAL IF ANY ACTIVE REQS
   //   Called from wallet.requestWithdrawal() before locking funds.
   // ═════════════════════════════════════════════════════════════

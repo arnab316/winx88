@@ -68,7 +68,8 @@ export type TurnoverEventType =
   | 'COMPLETED'
   | 'RESET'
   | 'CANCELLED'
-  | 'ADMIN_ADJUST';
+  | 'ADMIN_ADJUST'
+  | 'REVERSAL';
 
 export interface TurnoverLedgerEntry {
   qr: QueryRunner;

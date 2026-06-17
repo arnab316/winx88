@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
-import { WalletGateway } from 'src/wallet/wallet.gateway';  
+import { WalletGateway } from 'src/wallet/wallet.gateway';
+import { TurnoverService } from 'src/turnover/turnover.service';
 
 /**
  * Handles wallet operations triggered by Palace callbacks.
@@ -22,6 +23,7 @@ export class PalaceCallbackService {
 
   constructor(private readonly dataSource: DataSource,
         private readonly walletGateway: WalletGateway,
+        private readonly turnoverService: TurnoverService,
 
   ) { }
 
@@ -78,7 +80,7 @@ export class PalaceCallbackService {
 
       // Find the original transaction being cancelled
       const original = await q.query(
-        `SELECT id, amount, is_cancelled FROM slot_transactions
+        `SELECT id, amount, is_cancelled, type FROM slot_transactions
          WHERE trans_guid = $1`,
         [data.cancel_trans_guid],
       );
@@ -109,10 +111,11 @@ export class PalaceCallbackService {
         [data.cancel_trans_guid],
       );
 
-      await q.query(
+      const cancelTx = await q.query(
         `INSERT INTO slot_transactions
            (trans_guid, user_id, round_id, game_code, provider_id, type, amount, balance_after)
-         VALUES ($1, $2, $3, $4, $5, 'cancel', $6, $7)`,
+         VALUES ($1, $2, $3, $4, $5, 'cancel', $6, $7)
+         RETURNING id`,
         [
           data.trans_guid,
           user.id,
@@ -123,6 +126,19 @@ export class PalaceCallbackService {
           newBalance,
         ],
       );
+
+      // 🎯 Turnover: only BET transactions contributed turnover, so only those
+      //   are reversed. Undoes the exact contribution this bet made (per
+      //   requirement); re-opens a requirement that this bet had completed.
+      //   Runs once — the is_cancelled guard above prevents re-processing.
+      if (original[0].type === 'bet') {
+        await this.turnoverService.reverseContribution(
+          q,
+          user.id,
+          Number(original[0].id),
+          Number(cancelTx[0].id),
+        );
+      }
 
       await q.commitTransaction();
        // 📡 Push updated balance to user's WS connection
@@ -251,10 +267,11 @@ export class PalaceCallbackService {
         user.id,
       ]);
 
-      await q.query(
+      const inserted = await q.query(
         `INSERT INTO slot_transactions
            (trans_guid, user_id, round_id, game_code, provider_id, type, amount, balance_after)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id`,
         [
           data.trans_guid,
           user.id,
@@ -266,6 +283,20 @@ export class PalaceCallbackService {
           newBalance,
         ],
       );
+
+      // 🎯 Turnover: a slot BET contributes its stake toward active turnover
+      //   requirements (mirrors in-house game settlement — stake counts whether
+      //   won or lost). WIN callbacks do NOT contribute, since payouts never
+      //   count as turnover. Runs in this same transaction so it's atomic with
+      //   the wallet debit; skips silently if the user has no active reqs.
+      if (type === 'bet') {
+        await this.turnoverService.contributeFromSettledBet(
+          q,
+          user.id,
+          Number(inserted[0].id),
+          Number(data.amount),
+        );
+      }
 
       await q.commitTransaction();
         // 📡 Push updated balance to user's WS — fire-and-forget, never break Palace response
