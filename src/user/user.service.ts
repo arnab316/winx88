@@ -264,6 +264,10 @@ export class UserService {
          vc.level_name AS vip_level_name,
          vc.group_name AS vip_group_name,
          u.account_status, u.created_at,
+         w.balance,
+         w.bonus_balance,
+         w.total_deposited,
+         w.total_withdrawn,
          (SELECT phone_number FROM user_phone_numbers
           WHERE user_id = u.id AND is_primary = true LIMIT 1) AS primary_phone,
          COALESCE((
@@ -274,6 +278,7 @@ export class UserService {
            FROM user_phone_numbers upn WHERE upn.user_id = u.id
          ), '[]'::json) AS phone_numbers
        FROM users u
+       LEFT JOIN wallets w ON w.user_id = u.id
        LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
        WHERE u.full_name ILIKE $1
           OR u.username   ILIKE $1
