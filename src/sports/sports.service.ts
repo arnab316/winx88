@@ -16,6 +16,7 @@ import {
 } from './dto/minicallback.dto';
 import { SlotGameCallbackDataDTO } from './dto/slotgamecallback.dto';
 import { SportsCallbackDataDTO } from './dto/sportscallback.dto';
+import { TurnoverService } from '../turnover/turnover.service';
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -100,6 +101,7 @@ export class SportsService {
     private readonly httpService: HttpService,
     private readonly dataSource: DataSource,
     private readonly walletGateway: WalletGateway,
+    private readonly turnoverService: TurnoverService,
   ) {
     this.casinoInfo = {
       apiUrl:
@@ -1684,9 +1686,10 @@ export class SportsService {
           ]);
 
           for (const betData of data.betList ?? []) {
-            await qr.query(
+            const betLog = await qr.query(
               `INSERT INTO sports_bet_logs (user_name, bet_list, trans_id, trans_hist_id, amount, type, date_time)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+               VALUES ($1, $2, $3, $4, $5, $6, $7)
+               RETURNING id`,
               [
                 user.username,
                 JSON.stringify(betData),
@@ -1698,6 +1701,17 @@ export class SportsService {
                 betData.status ?? 0,
                 data.dateTime ?? new Date().toISOString(),
               ],
+            );
+
+            // 🎯 Turnover: each sports bet's stake counts toward active turnover
+            //    requirements — stake counts whether the bet wins or loses, same
+            //    rule as the in-house game and the Palace/OroPlay integrations.
+            //    In this same transaction; skips silently if no active reqs.
+            await this.turnoverService.contributeFromSettledBet(
+              qr,
+              user.id,
+              Number(betLog[0].id),
+              Number(betData.totalStake),
             );
           }
 
