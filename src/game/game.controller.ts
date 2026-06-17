@@ -129,7 +129,7 @@ export class GameController {
     }
   }
 
-  // GET /games/results/feed?hours=24&gameId=1&digitLength=3&limit=50
+  // GET /games/results/feed?hours=24&gameId=1&gameCode=3D&digitLength=3&limit=50
   // Public — no auth. Last 24hrs by default, max 7 days.
   @Get('results/feed')
   async publicResultsFeed(
@@ -137,12 +137,14 @@ export class GameController {
     @Query('gameId',      new DefaultValuePipe(0),   ParseIntPipe) gameId:      number,
     @Query('digitLength', new DefaultValuePipe(0),   ParseIntPipe) digitLength: number,
     @Query('limit',       new DefaultValuePipe(50),  ParseIntPipe) limit:       number,
+    @Query('gameCode')    gameCode?:  string,
   ) {
     try {
       const data = await this.gameService.getPublicResultsFeed({
         hours,
         gameId:      gameId      > 0 ? gameId      : undefined,
         digitLength: digitLength > 0 ? digitLength : undefined,
+        gameCode:    gameCode?.trim() || undefined,
         limit,
       });
       return { statusCode: HttpStatus.OK, ...data };

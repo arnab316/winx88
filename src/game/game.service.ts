@@ -1817,6 +1817,7 @@ export class GameService {
     hours?: number;
     gameId?: number;
     digitLength?: number;
+    gameCode?: string;
     limit?: number;
   }) {
     // Clamp hours: default 24, max 168 (7 days)
@@ -1838,13 +1839,18 @@ export class GameService {
       where.push(`g.digit_length = $${i++}`);
       params.push(q.digitLength);
     }
- 
+    if (q.gameCode) {
+      where.push(`UPPER(g.code) = UPPER($${i++})`);
+      params.push(q.gameCode);
+    }
+
     params.push(limit);
  
     const rows = await this.dataSource.query(
       `SELECT
          -- Game info
          g.id               AS game_id,
+         g.code             AS game_code,
          g.name             AS game_name,
          g.digit_length,
          g.payout_multiplier,
@@ -1875,7 +1881,7 @@ export class GameService {
        WHERE ${where.join(' AND ')}
  
        GROUP BY
-         g.id, g.name, g.digit_length, g.payout_multiplier,
+         g.id, g.code, g.name, g.digit_length, g.payout_multiplier,
          gr.id, gr.round_code, gr.close_time, gr.draw_time, gr.status,
          res.result_number, res.created_at
  
@@ -1897,6 +1903,7 @@ export class GameService {
  
         return {
           gameId:       Number(r.game_id),
+          gameCode:     r.game_code,
           gameName:     r.game_name,
           gameType:     `${r.digit_length}D`,       // "1D", "3D", "4D", "5D"
           digitLength:  Number(r.digit_length),
