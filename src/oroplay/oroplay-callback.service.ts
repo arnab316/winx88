@@ -7,6 +7,7 @@ import {
   OroplayCallbackResponse,
   OROPLAY_ERROR,
 } from './dto/callback.dto';
+import { TurnoverService } from 'src/turnover/turnover.service';
 
 /**
  * Handles OroPlay's seamless wallet callbacks.
@@ -18,7 +19,10 @@ import {
 export class OroplayCallbackService {
   private readonly logger = new Logger(OroplayCallbackService.name);
 
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly turnoverService: TurnoverService,
+  ) {}
 
   // ─── Balance ─────────────────────────────────────────────────
   async getBalance(dto: BalanceRequestDto): Promise<OroplayCallbackResponse> {
@@ -148,18 +152,55 @@ export class OroplayCallbackService {
       );
 
       // 7️⃣ Record transaction — UNIQUE on transaction_code protects against races
-      await qr.query(
+      const inserted = await qr.query(
         `INSERT INTO oroplay_transactions
            (transaction_code, history_id, round_id, user_id, vendor_code, game_code,
             game_type, amount, is_finished, is_canceled, balance_after, detail,
             created_at_provider)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+         RETURNING id`,
         [
           transactionCode, historyId, roundId, userId, vendorCode, gameCode,
           gameType, txAmount, isFinished, isCanceled, newBalance, detail,
           createdAt ? new Date(createdAt) : null,
         ],
       );
+      const txRowId = Number(inserted[0].id);
+
+      // 8️⃣ Turnover (mirrors in-house settlement + Palace). Signed-amount model:
+      //   • BET (amount < 0, not cancelled) → stake counts toward turnover.
+      //   • WIN (amount > 0)                → contributes nothing (payouts never count).
+      //   • Bet refund (cancelled + amount > 0) → reverse the stake it had added.
+      //   All inside this same transaction, so it's atomic with the wallet move
+      //   and skips silently when the user has no active requirement.
+      if (!isCanceled && txAmount < 0) {
+        await this.turnoverService.contributeFromSettledBet(
+          qr, userId, txRowId, Math.abs(txAmount),
+        );
+      } else if (isCanceled && txAmount > 0 && roundId) {
+        // OroPlay cancels carry no pointer to the original bet, so match it by
+        // round + opposite amount (the not-yet-cancelled bet). Flag it cancelled
+        // to prevent a second refund reversing the same bet, then undo exactly
+        // the turnover that bet contributed.
+        const orig = await qr.query(
+          `SELECT id FROM oroplay_transactions
+            WHERE user_id = $1 AND round_id = $2
+              AND amount = $3 AND is_canceled = FALSE
+              AND id <> $4
+            ORDER BY id DESC
+            LIMIT 1`,
+          [userId, roundId, -txAmount, txRowId],
+        );
+        if (orig.length) {
+          await qr.query(
+            `UPDATE oroplay_transactions SET is_canceled = TRUE WHERE id = $1`,
+            [orig[0].id],
+          );
+          await this.turnoverService.reverseContribution(
+            qr, userId, Number(orig[0].id), txRowId,
+          );
+        }
+      }
 
       await qr.commitTransaction();
 

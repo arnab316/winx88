@@ -11,6 +11,7 @@ import { OroplayCallbackService } from './oroplay-callback.service';
 import { AuthModule } from 'src/auth/auth.module';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { WalletModule } from 'src/wallet/wallet.module';
+import { TurnoverModule } from 'src/turnover/turnover.module';
 
 /**
  * OroPlay (Live Casino / Slot / Mini-game) integration module.
@@ -35,6 +36,7 @@ import { WalletModule } from 'src/wallet/wallet.module';
     HttpModule.register({ timeout: 10_000 }),
     AuthModule,
     WalletModule,
+    TurnoverModule,
   ],
   controllers: [OroplayController, OroplayCallbackController],
   providers: [
