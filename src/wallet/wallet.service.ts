@@ -455,6 +455,28 @@ export class WalletService {
           'You must make at least one deposit before you can withdraw.',
         );
 
+      // Receive number must be a VERIFIED phone number on this account.
+      // Stored numbers come in mixed formats (+8801…, 01…, 8801…), so both
+      // sides are normalised to the bare subscriber digits before matching:
+      // strip non-digits, then drop a leading 880 (country code) and/or 0.
+      const phoneMatch = await qr.query(
+        `SELECT BOOL_OR(is_verified) AS any_verified
+           FROM user_phone_numbers
+          WHERE user_id = $1
+            AND regexp_replace(regexp_replace(phone_number, '[^0-9]', '', 'g'), '^(880)?0?', '')
+              = regexp_replace(regexp_replace($2,           '[^0-9]', '', 'g'), '^(880)?0?', '')`,
+        [dto.userId, dto.receiveNumber],
+      );
+      const matchedVerified = phoneMatch[0]?.any_verified;
+      if (matchedVerified === null || matchedVerified === undefined)
+        throw new ForbiddenException(
+          'Withdrawals are only allowed to a phone number registered on your account.',
+        );
+      if (matchedVerified !== true)
+        throw new ForbiddenException(
+          'The withdrawal number must be a verified number on your account.',
+        );
+
       // Tier withdrawal limits (min/max + daily caps) — enforced only when configured.
       const limits = await this.getTierLimits(qr, dto.userId);
       if (limits) {
