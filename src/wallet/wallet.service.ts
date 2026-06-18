@@ -442,6 +442,19 @@ export class WalletService {
       if (!gateway.length)
         throw new BadRequestException('Payment gateway not found or inactive');
 
+      // Must have funded the account at least once before withdrawing.
+      // Blocks no-deposit bonus/winnings extraction. total_deposited is
+      // bumped on every approved deposit + manual deposit, so a lifetime
+      // value of 0 means the user has never put money in.
+      const funded = await qr.query(
+        `SELECT total_deposited FROM wallets WHERE user_id = $1 LIMIT 1`,
+        [dto.userId],
+      );
+      if (!funded.length || parseFloat(funded[0].total_deposited) <= 0)
+        throw new ForbiddenException(
+          'You must make at least one deposit before you can withdraw.',
+        );
+
       // Tier withdrawal limits (min/max + daily caps) — enforced only when configured.
       const limits = await this.getTierLimits(qr, dto.userId);
       if (limits) {
