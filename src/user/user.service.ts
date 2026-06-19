@@ -586,6 +586,48 @@ export class UserService {
   }
 
   // ═════════════════════════════════════════════════════════════
+  // ADMIN: UPDATE PHONE NUMBER FOR ANY USER
+  //   Changes the phone_number of an existing entry. Resets
+  //   is_verified to false since the number itself changed.
+  // ═════════════════════════════════════════════════════════════
+  async adminUpdatePhone(userId: number, phoneId: number, phoneNumber: string) {
+    if (!phoneNumber?.trim()) {
+      throw new BadRequestException('phoneNumber is required');
+    }
+    const trimmed = phoneNumber.trim();
+
+    const phone = await this.dataSource.query(
+      `SELECT id FROM user_phone_numbers WHERE id = $1 AND user_id = $2`,
+      [phoneId, userId],
+    );
+    if (!phone.length) throw new NotFoundException('Phone not found for this user');
+
+    // Reject if another of this user's phones already has the new number
+    const dupe = await this.dataSource.query(
+      `SELECT id FROM user_phone_numbers
+        WHERE user_id = $1 AND phone_number = $2 AND id != $3`,
+      [userId, trimmed, phoneId],
+    );
+    if (dupe.length) throw new BadRequestException('Phone already exists');
+
+    try {
+      await this.dataSource.query(
+        `UPDATE user_phone_numbers
+            SET phone_number = $1,
+                is_verified  = false,
+                updated_at   = NOW()
+          WHERE id = $2`,
+        [trimmed, phoneId],
+      );
+    } catch (e: any) {
+      if (e.code === '23505') throw new BadRequestException('Phone number already exists');
+      throw e;
+    }
+
+    return { message: 'Phone number updated', phoneId, phone_number: trimmed };
+  }
+
+  // ═════════════════════════════════════════════════════════════
 // ADMIN: VERIFY / UNVERIFY PHONE FOR ANY USER
 // ═════════════════════════════════════════════════════════════
 async adminVerifyPhone(

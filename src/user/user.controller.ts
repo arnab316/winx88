@@ -704,6 +704,41 @@ export class UserController {
   }
 
 
+  // PATCH /user/admin/:userId/phone/:phoneId
+  // body: { phoneNumber: string }
+  @UseGuards(AdminGuard)
+  @Patch('admin/:userId/phone/:phoneId')
+  async adminUpdatePhone(
+    @Req() req: any,
+    @Param('userId',  ParseIntPipe) userId:  number,
+    @Param('phoneId', ParseIntPipe) phoneId: number,
+    @Body('phoneNumber') phoneNumber: string,
+  ) {
+    this.logger.info('Admin: update phone started', {
+      context: UserController.name, adminId: req.user?.sub,
+      targetUserId: userId, phoneId, ip: req.ip,
+    });
+    try {
+      if (!phoneNumber) throw new BadRequestException('phoneNumber is required');
+      const data = await this.userService.adminUpdatePhone(userId, phoneId, phoneNumber);
+      this.logger.info('Admin: phone updated', {
+        context: UserController.name, adminId: req.user?.sub,
+        targetUserId: userId, phoneId, ip: req.ip,
+      });
+      return { success: true, message: data.message, data };
+    } catch (error: any) {
+      this.logger.error('Admin: update phone failed', {
+        context: UserController.name, adminId: req.user?.sub,
+        targetUserId: userId, phoneId, ip: req.ip,
+        message: error.message, stack: error.stack,
+      });
+      throw new HttpException(
+        { success: false, message: error?.message || 'Failed' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   @UseGuards(AdminGuard)
 @Patch('admin/:userId/phone/:phoneId/verify')
 async adminVerifyPhone(
