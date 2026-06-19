@@ -288,6 +288,7 @@ export class UserService {
                SELECT 1 FROM user_phone_numbers upn2
                WHERE upn2.user_id = u.id AND upn2.phone_number ILIKE $1
              )
+       ORDER BY u.created_at DESC
        LIMIT 50`,
       [`%${search}%`],
     );
