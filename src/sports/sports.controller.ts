@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Logger, Param, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiHeader } from '@nestjs/swagger';
 import { SportsService } from './sports.service';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
@@ -9,6 +9,8 @@ import { SportsCallbackDTO } from './dto/sportscallback.dto';
 @ApiTags('sports')
 @Controller('sports')
 export class SportsController {
+  private readonly logger = new Logger(SportsController.name);
+
   constructor(private readonly sportsService: SportsService) {}
 
   @Get('live-vendors')
@@ -142,13 +144,36 @@ export class SportsController {
     const callbackToken =
       bearerToken || ((request.headers['callback-token'] as string) ?? '');
 
-    const response = await this.sportsService.consumeSportsCallback(
-      params.command,
-      params.data,
-      params.key ?? '',
-      callbackToken,
+    // Log every provider callback at the HTTP boundary. When the provider's
+    // placeWidget call 500s, this tells us whether the bet callback even
+    // reached us, what it sent, and exactly what we returned — so we can tell a
+    // provider-side failure apart from our callback rejecting the bet.
+    this.logger.log(
+      `[sportsCallback] IN ip=${request.ip} command=${params?.command} ` +
+        `tokenPresent=${!!callbackToken} body=${JSON.stringify(params)}`,
     );
-    return response;
+
+    try {
+      const response = await this.sportsService.consumeSportsCallback(
+        params.command,
+        params.data,
+        params.key ?? '',
+        callbackToken,
+      );
+      this.logger.log(
+        `[sportsCallback] OUT command=${params?.command} response=${JSON.stringify(response)}`,
+      );
+      return response;
+    } catch (err: any) {
+      // consumeSportsCallback handles its own DB errors and returns code 9999,
+      // but a throw before its try block (e.g. queryRunner connect failing on
+      // pool exhaustion) would otherwise surface as an opaque HTTP 500. Log it.
+      this.logger.error(
+        `[sportsCallback] UNHANDLED command=${params?.command}: ${err?.message}`,
+        err?.stack,
+      );
+      throw err;
+    }
   }
 
   // ── MINI GAME callbacks disabled ──────────────────────────────────────────
