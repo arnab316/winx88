@@ -1,7 +1,7 @@
 import { Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
-export type GameCategory = 'LOTTERY' | 'JACKPOT' | 'SLOT';
+export type GameCategory = 'LOTTERY' | 'JACKPOT' | 'SLOT' | 'SPORTS';
 
 export interface GameHistoryQuery {
   category?: GameCategory; // filter to one product; omit for all
@@ -104,6 +104,58 @@ export class GameHistoryService {
     `;
   }
 
+  // ── Source C: sportsbook wagers, from sports_bet_logs ───────────────────
+  //  Logged by user_name (not user_id), so join users to filter by $1.
+  //  One row = one bet slip. A slip is settled once settlement has run
+  //  (settled_at / trans_hist_id set); until then it's open → PLACED.
+  //
+  //  Outcome of a settled slip is taken from win_amount, the real amount
+  //  credited at settlement (0 for a loss) — so WON/LOST is a stored fact, not
+  //  a guess. Legacy rows written before win_amount existed fall back to the
+  //  provider's numeric status code in `type` (1/4/5 won-or-cashout,
+  //  3/6/7/8 void/refund → cancelled, else lost). bet_amount is the stake.
+  private sportsSourceSql(): string {
+    return `
+      SELECT
+        sb.id::text                                          AS ref_id,
+        COALESCE(sb.trans_id, sb.id::text)                   AS ref_code,
+        'SPORTS'                                             AS category,
+        'SPORTS'                                             AS game_code,
+        COALESCE(NULLIF(sb.bet_list->'selections'->0->>'eventName', ''), 'Sportsbook') AS game_name,
+        NULL::int                                            AS provider_id,
+        NULL::text                                           AS provider_name,
+        NULL::text                                           AS bet_number,
+        sb.amount::numeric                                   AS bet_amount,
+        NULLIF(sb.bet_list->>'totalOdds', '')::numeric       AS payout_multiplier,
+        NULLIF(sb.bet_list->>'totalWin', '')::numeric        AS potential_payout,
+        CASE
+          WHEN sb.settled_at IS NULL AND sb.trans_hist_id IS NULL THEN NULL
+          WHEN sb.win_amount IS NOT NULL                          THEN sb.win_amount
+          WHEN sb.type IN ('1','4','5')  THEN NULLIF(sb.bet_list->>'totalWin', '')::numeric
+          WHEN sb.type IN ('3','6','7','8')                       THEN NULL
+          ELSE 0
+        END                                                  AS actual_payout,
+        CASE
+          WHEN sb.settled_at IS NULL AND sb.trans_hist_id IS NULL THEN 'PLACED'
+          WHEN sb.type IN ('3','6','7','8')                       THEN 'CANCELLED'
+          WHEN sb.win_amount IS NOT NULL
+               THEN CASE WHEN sb.win_amount > 0 THEN 'WON' ELSE 'LOST' END
+          WHEN sb.type IN ('1','4','5')                           THEN 'WON'
+          ELSE 'LOST'
+        END                                                  AS status,
+        sb.created_at                                        AS placed_at,
+        COALESCE(
+          sb.settled_at,
+          CASE WHEN sb.trans_hist_id IS NULL THEN NULL ELSE sb.created_at END
+        )                                                    AS settled_at,
+        COALESCE(sb.trans_id, sb.id::text)                   AS round_code,
+        NULL::text                                           AS result_number
+      FROM sports_bet_logs sb
+      JOIN users u ON u.username = sb.user_name
+      WHERE u.id = $1
+    `;
+  }
+
   async getHistory(userId: number, q: GameHistoryQuery) {
     const page  = Math.max(q.page ?? 1, 1);
     const limit = Math.min(Math.max(q.limit ?? 20, 1), 100);
@@ -114,6 +166,7 @@ export class GameHistoryService {
 
     const betsSelect = this.betsSourceSql();
     const slotSelect = this.slotSourceSql();
+    const sportsSelect = this.sportsSourceSql();
 
     // Decide which sources to union based on the category filter.
     const parts: string[] = [];
@@ -122,6 +175,9 @@ export class GameHistoryService {
     }
     if (!category || category === 'SLOT') {
       parts.push(slotSelect);
+    }
+    if (!category || category === 'SPORTS') {
+      parts.push(sportsSelect);
     }
 
     // Outer query applies category/status/date filters + pagination uniformly.
@@ -281,6 +337,9 @@ export class GameHistoryService {
     }
     if (!category || category === 'SLOT') {
       parts.push(this.slotSourceSql());
+    }
+    if (!category || category === 'SPORTS') {
+      parts.push(this.sportsSourceSql());
     }
 
     const filters: string[] = [];

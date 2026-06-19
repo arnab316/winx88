@@ -41,7 +41,7 @@ export class GameHistoryController {
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit = 20,
   ) {
     try {
-      const validCategories: GameCategory[] = ['LOTTERY', 'JACKPOT', 'SLOT'];
+      const validCategories: GameCategory[] = ['LOTTERY', 'JACKPOT', 'SLOT', 'SPORTS'];
       const validStatuses = ['WON', 'LOST', 'PLACED', 'CANCELLED'];
 
       const data = await this.history.getHistory(req.user.sub, {
@@ -118,7 +118,7 @@ export class GameHistoryController {
     q: { category?: string; from?: string; to?: string; page: number; limit: number },
   ) {
     try {
-      const validCategories: GameCategory[] = ['LOTTERY', 'JACKPOT', 'SLOT'];
+      const validCategories: GameCategory[] = ['LOTTERY', 'JACKPOT', 'SLOT', 'SPORTS'];
       const data = await this.history.getHistory(req.user.sub, {
         settled,
         category: q.category && validCategories.includes(q.category.toUpperCase() as GameCategory)
@@ -194,7 +194,7 @@ export class GameHistoryController {
     @Query('to') to?: string,
   ) {
     try {
-      const validCategories: GameCategory[] = ['LOTTERY', 'JACKPOT', 'SLOT'];
+      const validCategories: GameCategory[] = ['LOTTERY', 'JACKPOT', 'SLOT', 'SPORTS'];
       const data = await this.history.getHistoryByProvider(req.user.sub, {
         category: category && validCategories.includes(category.toUpperCase() as GameCategory)
           ? (category.toUpperCase() as GameCategory)

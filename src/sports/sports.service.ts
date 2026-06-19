@@ -1792,11 +1792,17 @@ export class SportsService {
               updatedBetList.selections = data.betList[0].selections;
             }
             await qr.query(
-              `UPDATE sports_bet_logs SET bet_list = $1, type = $2, trans_hist_id = $3 WHERE id = $4`,
+              `UPDATE sports_bet_logs
+                  SET bet_list = $1, type = $2, trans_hist_id = $3,
+                      win_amount = $4, settled_at = NOW()
+                WHERE id = $5`,
               [
                 JSON.stringify(updatedBetList),
                 settledStatus,
                 data.trans_hist_id ?? null,
+                // Realized payout credited at settlement (0 for a losing slip);
+                // lets game-history report exact won/lost instead of guessing.
+                winAmount,
                 betLog.id,
               ],
             );
@@ -1807,8 +1813,9 @@ export class SportsService {
               `[SportsCallback] WIN: BetLog NOT FOUND for trans_id=${data.trans_id}; recording settlement row`,
             );
             await qr.query(
-              `INSERT INTO sports_bet_logs (user_name, bet_list, trans_id, trans_hist_id, amount, type, date_time)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+              `INSERT INTO sports_bet_logs
+                 (user_name, bet_list, trans_id, trans_hist_id, amount, type, date_time, win_amount, settled_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
               [
                 user.username,
                 JSON.stringify(data.betList?.[0] ?? {}),
@@ -1817,6 +1824,7 @@ export class SportsService {
                 winAmount,
                 settledStatus,
                 data.dateTime ?? new Date().toISOString(),
+                winAmount,
               ],
             );
           }

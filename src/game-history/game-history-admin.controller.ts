@@ -39,7 +39,7 @@ export class GameHistoryAdminController {
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit = 20,
   ) {
     try {
-      const validCategories: GameCategory[] = ['LOTTERY', 'JACKPOT', 'SLOT'];
+      const validCategories: GameCategory[] = ['LOTTERY', 'JACKPOT', 'SLOT', 'SPORTS'];
       const validStatuses = ['WON', 'LOST', 'PLACED', 'CANCELLED'];
 
       const data = await this.history.getHistory(userId, {
