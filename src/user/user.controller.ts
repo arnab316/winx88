@@ -479,26 +479,34 @@ export class UserController {
     }
   }
 
-  // GET /user/admin/search?q=alice
+  // GET /user/admin/search?q=alice&from=2026-06-01&to=2026-06-19
+  //   q (alias: search), from and to are all optional. from/to filter on
+  //   registration date (created_at); `to` is inclusive of the whole day.
   @UseGuards(AdminGuard)
   @Get('admin/search')
-  async searchUser(@Req() req: any, @Query('q') q: string) {
+  async searchUser(
+    @Req() req: any,
+    @Query('q') q?: string,
+    @Query('search') search?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    const term = (q ?? search ?? '').trim();
     this.logger.info('Admin: search users started', {
       context: UserController.name, adminId: req.user?.sub,
-      query: q, ip: req.ip,
+      query: term, from, to, ip: req.ip,
     });
     try {
-      if (!q?.trim()) throw new BadRequestException('Search query required');
-      const data = await this.userService.searchUser(q.trim());
+      const data = await this.userService.searchUser(term, { from, to });
       this.logger.info('Admin: search completed', {
         context: UserController.name, adminId: req.user?.sub,
-        query: q, results: data.length, ip: req.ip,
+        query: term, from, to, results: data.length, ip: req.ip,
       });
       return { success: true, count: data.length, data };
     } catch (error: any) {
       this.logger.error('Admin: search users failed', {
         context: UserController.name, adminId: req.user?.sub,
-        query: q, ip: req.ip, message: error.message,
+        query: term, from, to, ip: req.ip, message: error.message,
       });
       throw new HttpException(
         { success: false, message: error?.message || 'Failed' },
