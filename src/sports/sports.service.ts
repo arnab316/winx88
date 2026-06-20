@@ -306,18 +306,29 @@ export class SportsService {
         Accept: 'application/json',
       };
 
+      this.logger.log(
+        `[getSportsLink] userCreate request -> ${this.spotsInfo.apiUrl}/v1/user/create ` +
+          `userId=${userId} dbUsername="${user.username}" sportsUserName="${sportsUserName}" ` +
+          `apiToken=${this.maskSecret(this.spotsInfo.apiToken)}`,
+      );
+
       const { data: createUserRes } = await axios.post<any>(
         `${this.spotsInfo.apiUrl}/v1/user/create`,
         { name: sportsUserName },
         { headers: sportsHeaders },
       );
 
-      this.logger.log(`[getSportsLink] userCreate response ${JSON.stringify(createUserRes)}`);
+      this.logger.log(`[getSportsLink] userCreate response ${this.safeJson(createUserRes)}`);
 
       if (!createUserRes?.data?.userCode) {
         this.logger.error(`[getSportsLink] userCode missing from userCreate response`);
         return null;
       }
+
+      this.logger.log(
+        `[getSportsLink] gameUrl request -> ${this.spotsInfo.apiUrl}/v1/game/game-url ` +
+          `userCode=${createUserRes.data.userCode} language=${sportsLang}`,
+      );
 
       const { data } = await axios.post<any>(
         `${this.spotsInfo.apiUrl}/v1/game/game-url`,
@@ -325,7 +336,7 @@ export class SportsService {
         { headers: sportsHeaders },
       );
 
-      this.logger.log(`[getSportsLink] gameUrl response ${JSON.stringify(data)}`);
+      this.logger.log(`[getSportsLink] gameUrl response ${this.safeJson(data)}`);
       return data?.data?.gameUrl ?? null;
     } catch (error: any) {
       this.logger.error(
@@ -1567,6 +1578,22 @@ export class SportsService {
     }
   }
 
+  /** Mask a secret for logs: show only head/tail + length, never the raw value. */
+  private maskSecret(s?: string): string {
+    if (!s) return '<empty>';
+    if (s.length <= 6) return `***(len:${s.length})`;
+    return `${s.slice(0, 3)}…${s.slice(-2)}(len:${s.length})`;
+  }
+
+  /** JSON.stringify that never throws (circular refs / BigInt) — for log payloads. */
+  private safeJson(v: any): string {
+    try {
+      return JSON.stringify(v);
+    } catch {
+      return String(v);
+    }
+  }
+
   async consumeSportsCallback(
     command: string,
     data: SportsCallbackDataDTO,
@@ -1575,14 +1602,24 @@ export class SportsService {
   ) {
     // Provider payloads use "userName" in some callbacks and "username" in others
     const userName = data.userName ?? data.username ?? '';
+    // Short correlation id so every log line for ONE callback can be grep'd
+    // together — e.g. `grep 'SportsCallback#1a2b3c4d'`.
+    const reqId = createUUid().slice(0, 8);
+    const recvToken = this.maskSecret(callbackToken);
 
-    this.logger.log(`[SportsCallback] ========== START ==========`);
     this.logger.log(
-      `[SportsCallback] command=${command}, userName=${userName}, amount=${data.amount}, type=${data.type}, trans_id=${data.trans_id}`,
+      `[SportsCallback#${reqId}] ===== START ===== command=${command} userName="${userName}" ` +
+        `amount=${data.amount} type=${data.type} trans_id=${data.trans_id} ` +
+        `trans_hist_id=${data.trans_hist_id} betCount=${data.betList?.length ?? 0} token=${recvToken}`,
     );
+    // Full raw payload so a failed/odd callback can be replayed & inspected later.
+    this.logger.log(`[SportsCallback#${reqId}] payload=${this.safeJson(data)}`);
 
     if (this.spotsInfo.callbackToken !== callbackToken) {
-      this.logger.warn(`[SportsCallback] Invalid callback token`);
+      this.logger.warn(
+        `[SportsCallback#${reqId}] REJECTED 1001 invalid callback token: ` +
+          `received=${recvToken} expected=${this.maskSecret(this.spotsInfo.callbackToken)}`,
+      );
       return {
         code: 1001,
         message: 'Failed',
@@ -1603,6 +1640,9 @@ export class SportsService {
         [userName, desanitized],
       );
       if (!userRows.length) {
+        this.logger.warn(
+          `[SportsCallback#${reqId}] REJECTED 1002 user not found: userName="${userName}" desanitized="${desanitized}"`,
+        );
         await qr.rollbackTransaction();
         await qr.release();
         return {
@@ -1612,8 +1652,14 @@ export class SportsService {
         };
       }
       const user = userRows[0];
+      this.logger.log(
+        `[SportsCallback#${reqId}] user resolved: id=${user.id} username="${user.username}" status=${user.account_status}`,
+      );
 
       if (user.account_status !== 'ACTIVE') {
+        this.logger.warn(
+          `[SportsCallback#${reqId}] REJECTED 1001 account not active: userId=${user.id} status=${user.account_status}`,
+        );
         await qr.rollbackTransaction();
         await qr.release();
         return {
@@ -1628,10 +1674,14 @@ export class SportsService {
         [user.id],
       );
       const currentBalance = Number(walletRows[0]?.balance ?? 0);
+      this.logger.log(
+        `[SportsCallback#${reqId}] wallet locked: userId=${user.id} balance=${currentBalance}` +
+          (walletRows.length ? '' : ' (NO WALLET ROW — defaulted to 0)'),
+      );
 
       if (command === 'bet' && currentBalance < Number(data.amount)) {
         this.logger.warn(
-          `[SportsCallback] Insufficient balance: user=${user.username}, balance=${currentBalance}, required=${data.amount}`,
+          `[SportsCallback#${reqId}] REJECTED 1001 insufficient balance: user=${user.username} balance=${currentBalance} required=${data.amount}`,
         );
         await qr.rollbackTransaction();
         await qr.release();
@@ -1645,6 +1695,9 @@ export class SportsService {
       let result: any = null;
       switch (command) {
         case 'getBalance':
+          this.logger.log(
+            `[SportsCallback#${reqId}] getBalance -> balance=${currentBalance}`,
+          );
           result = {
             code: 0,
             message: 'success',
@@ -1667,7 +1720,7 @@ export class SportsService {
             );
             if (dup.length > 0) {
               this.logger.warn(
-                `[SportsCallback] Duplicate bet callback: ids=${betIds.join(',')}`,
+                `[SportsCallback#${reqId}] DUPLICATE bet (idempotent OK, no re-debit): ids=${betIds.join(',')}`,
               );
               result = {
                 code: 0,
@@ -1679,6 +1732,9 @@ export class SportsService {
           }
 
           const newBalance = currentBalance - totalStake;
+          this.logger.log(
+            `[SportsCallback#${reqId}] BET debit: stake=${totalStake} balance ${currentBalance} -> ${newBalance} slips=${data.betList?.length ?? 0}`,
+          );
 
           await qr.query(`UPDATE wallets SET balance = $1 WHERE user_id = $2`, [
             newBalance,
@@ -1712,6 +1768,11 @@ export class SportsService {
               user.id,
               Number(betLog[0].id),
               Number(betData.totalStake),
+            );
+
+            this.logger.log(
+              `[SportsCallback#${reqId}] bet slip recorded: logId=${betLog[0].id} ` +
+                `trans_id=${betData.id ?? data.trans_id} stake=${betData.totalStake} status=${betData.status ?? 0}`,
             );
           }
 
@@ -1757,7 +1818,7 @@ export class SportsService {
             );
             if (dup.length > 0) {
               this.logger.warn(
-                `[SportsCallback] Duplicate win callback: trans_hist_id=${data.trans_hist_id}`,
+                `[SportsCallback#${reqId}] DUPLICATE win (idempotent OK, no re-credit): trans_hist_id=${data.trans_hist_id}`,
               );
               result = {
                 code: 0,
@@ -1777,6 +1838,10 @@ export class SportsService {
 
           // Outcome (win/lose/cashout/refund) arrives in betList[0].status
           const settledStatus = data.betList?.[0]?.status ?? data.type ?? 1;
+          this.logger.log(
+            `[SportsCallback#${reqId}] WIN credit: payout=${winAmount} balance ${currentBalance} -> ${newBalance} ` +
+              `settledStatus=${settledStatus} trans_id=${data.trans_id} trans_hist_id=${data.trans_hist_id}`,
+          );
 
           const betLogs = await qr.query(
             `SELECT * FROM sports_bet_logs WHERE trans_id = $1 LIMIT 1`,
@@ -1806,11 +1871,14 @@ export class SportsService {
                 betLog.id,
               ],
             );
+            this.logger.log(
+              `[SportsCallback#${reqId}] settled existing slip: logId=${betLog.id} win_amount=${winAmount} status=${settledStatus}`,
+            );
           } else {
             // No matching bet log — record the settlement anyway so a
             // provider retry is still caught by the trans_hist_id check.
             this.logger.warn(
-              `[SportsCallback] WIN: BetLog NOT FOUND for trans_id=${data.trans_id}; recording settlement row`,
+              `[SportsCallback#${reqId}] WIN: no bet slip for trans_id=${data.trans_id} — inserting settlement-only row (bet callback may have been missed)`,
             );
             await qr.query(
               `INSERT INTO sports_bet_logs
@@ -1860,7 +1928,9 @@ export class SportsService {
         }
 
         default:
-          this.logger.warn(`[SportsCallback] Unknown command: ${command}`);
+          this.logger.warn(
+            `[SportsCallback#${reqId}] UNKNOWN command="${command}" -> 9999`,
+          );
           result = {
             code: 9999,
             message: 'Failed',
@@ -1877,20 +1947,23 @@ export class SportsService {
           .pushBalanceUpdate(user.id)
           .catch((e) =>
             this.logger.warn(
-              `WS push failed for user ${user.id}: ${e.message}`,
+              `[SportsCallback#${reqId}] WS push failed for user ${user.id}: ${e.message}`,
             ),
           );
       }
 
       this.logger.log(
-        `[SportsCallback] ========== END: command=${command}, result code=${result?.code} ==========`,
+        `[SportsCallback#${reqId}] ===== END ===== command=${command} code=${result?.code} response=${this.safeJson(result)}`,
       );
       return result;
     } catch (ex: any) {
       await qr.rollbackTransaction();
       await qr.release();
+      // This is what surfaces to the provider as a failed callback (and can be
+      // what makes their placeWidget call 500). Full context for a post-mortem.
       this.logger.error(
-        `[SportsCallback] CRITICAL ERROR: ${ex?.message}`,
+        `[SportsCallback#${reqId}] CRITICAL ERROR -> 9999: ${ex?.message} | ` +
+          `command=${command} userName="${userName}" payload=${this.safeJson(data)}`,
         ex?.stack,
       );
       return {
