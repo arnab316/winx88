@@ -7,6 +7,7 @@ import {
 } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
 import { TurnoverLedgerService } from '../ledger/turnover-ledger.service';
+import { ReferralEngineService } from '../referral/referral-engine.service';
 import {
   AdminAdjustTurnoverDto,
   AdminCancelTurnoverDto,
@@ -30,6 +31,7 @@ export class TurnoverService {
   constructor(
     private dataSource: DataSource,
     private turnoverLedger: TurnoverLedgerService,
+    private referralEngine: ReferralEngineService,
   ) {}
 
   // ═════════════════════════════════════════════════════════════
@@ -123,6 +125,11 @@ export class TurnoverService {
     betId: number,
     betAmount: number,
   ): Promise<void> {
+    // Refer-a-friend turnover/bonus-wagering progress. Self-isolated via a
+    // SAVEPOINT inside the engine, so it can't break this bet settlement. Runs
+    // before the turnover-requirements work so it fires even when there are none.
+    await this.referralEngine.onBetSettled(qr, userId, betAmount);
+
     const reqs = await qr.query(
       `SELECT id, target_amount, current_amount
        FROM turnover_requirements

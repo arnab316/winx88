@@ -7,7 +7,7 @@ import {
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
-import { generateUserCode, generateUsername } from './utils';
+import { generateUserCode, generateUsername, generateReferralCode } from './utils';
 import { JwtService } from '@nestjs/jwt';
 import { TwilioService } from '../twilio/twilio.service';
 import { PromotionEngineService } from '../promotion/promotion-engine.service';
@@ -88,12 +88,14 @@ async register(dto: any) {
 
     const hashedPassword = await bcrypt.hash(password, 10);
     const userCode = generateUserCode(full_name);
+    // This user's own permanent invite code, so they can refer others.
+    const referralCode = await this.generateUniqueReferralCode(qr, username || full_name);
 
     // Create user
     const result = await qr.query(
-      `INSERT INTO users (full_name, email, password, user_code, username)
-       VALUES ($1,$2,$3,$4,$5) RETURNING id`,
-      [full_name, email ?? null, hashedPassword, userCode, username],
+      `INSERT INTO users (full_name, email, password, user_code, username, referral_code)
+       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
+      [full_name, email ?? null, hashedPassword, userCode, username, referralCode],
     );
     const userId = result[0].id;
 
@@ -128,6 +130,16 @@ async register(dto: any) {
       `User registered + auto-logged-in: userId=${userId} username=${username} phone=${phone_number}`,
     );
 
+    // Refer-a-friend: if they arrived via an invite link, open the referral.
+    // Runs AFTER commit in its own transaction so a referral problem (bad code,
+    // race, etc.) can never roll back or block the registration itself.
+    const refCode = (dto.ref_code ?? dto.ref ?? dto.referrerCode ?? '')
+      .toString()
+      .trim();
+    if (refCode) {
+      await this.attachReferralOnSignup(userId, refCode);
+    }
+
     return {
       message: 'Account created successfully. Please verify your phone number.',
       userId,
@@ -155,6 +167,135 @@ async register(dto: any) {
     await qr.release();
   }
 }
+
+  // ─── Referral helpers (refer-a-friend system) ───────────────────────────
+
+  // Pick a referral_code that isn't taken yet. The DB enforces uniqueness;
+  // this just avoids the obvious clashes before insert. Runs on the caller's
+  // query runner so it shares the registration transaction.
+  private async generateUniqueReferralCode(qr: any, seed: string): Promise<string> {
+    for (let attempt = 0; attempt < 6; attempt++) {
+      const code = generateReferralCode(seed);
+      const exists = await qr.query(
+        `SELECT 1 FROM users WHERE referral_code = $1 LIMIT 1`,
+        [code],
+      );
+      if (!exists.length) return code;
+    }
+    // Astronomically unlikely; widen the random space and accept it.
+    return generateReferralCode(seed) + Math.floor(1000 + Math.random() * 9000);
+  }
+
+  // Live referral rules from referral_config, with safe fallbacks.
+  private async loadReferralConfig(qr: any): Promise<Record<string, number>> {
+    const rows = await qr.query(
+      `SELECT config_key, config_value FROM referral_config`,
+    );
+    const c: Record<string, number> = {};
+    for (const r of rows) c[r.config_key] = Number(r.config_value);
+    return {
+      bonus_amount:          c.bonus_amount          ?? 500,
+      wagering_multiplier:   c.wagering_multiplier   ?? 10,
+      referrer_deposit_min:  c.referrer_deposit_min  ?? 1000,
+      referee_deposit_min:   c.referee_deposit_min   ?? 1000,
+      referrer_turnover_min: c.referrer_turnover_min ?? 2250,
+      referee_turnover_min:  c.referee_turnover_min  ?? 4500,
+      window_hours:          c.window_hours          ?? 168,
+    };
+  }
+
+  // Best-effort: link the new referee to the referrer and open a PENDING
+  // referral with a config snapshot. NEVER throws — registration already
+  // committed by the time this runs.
+  private async attachReferralOnSignup(
+    refereeUserId: number,
+    refCode: string,
+  ): Promise<void> {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      // Resolve the referrer by invite code — active accounts only, never self.
+      const referrerRows = await qr.query(
+        `SELECT id FROM users
+          WHERE referral_code = $1 AND account_status = 'ACTIVE' AND id <> $2
+          LIMIT 1`,
+        [refCode, refereeUserId],
+      );
+      if (!referrerRows.length) {
+        await qr.rollbackTransaction();
+        this.logger.warn(
+          `Referral signup: invalid/ineligible ref_code="${refCode}" refereeId=${refereeUserId}`,
+        );
+        return;
+      }
+      const referrerId = Number(referrerRows[0].id);
+
+      const cfg = await this.loadReferralConfig(qr);
+
+      // Snapshot the referrer's one-time lifetime turnover unlock. If already
+      // unlocked, their turnover target is satisfied for this referral upfront.
+      const statusRows = await qr.query(
+        `SELECT referrer_turnover_unlocked FROM referral_status WHERE user_id = $1`,
+        [referrerId],
+      );
+      const referrerWasUnlocked = statusRows.length
+        ? Boolean(statusRows[0].referrer_turnover_unlocked)
+        : false;
+
+      // Link referee → referrer (the shared tree column; only if still unset).
+      await qr.query(
+        `UPDATE users SET referred_by_user_id = $1
+          WHERE id = $2 AND referred_by_user_id IS NULL`,
+        [referrerId, refereeUserId],
+      );
+
+      // Open the referral. ON CONFLICT keeps it safe if a row already exists
+      // for this referee (a user can only be referred once).
+      await qr.query(
+        `INSERT INTO friend_referrals (
+           referrer_user_id, referee_user_id, started_at, expires_at,
+           referrer_was_unlocked, referrer_turnover_met,
+           config_bonus_amount, config_wagering_mult,
+           config_referrer_dep_min, config_referee_dep_min,
+           config_referrer_turn_min, config_referee_turn_min,
+           config_window_hours, status
+         ) VALUES (
+           $1, $2, NOW(), NOW() + make_interval(hours => $3::int),
+           $4, $4, $5, $6, $7, $8, $9, $10, $3::int, 'PENDING'
+         )
+         ON CONFLICT (referee_user_id) DO NOTHING`,
+        [
+          referrerId, refereeUserId, cfg.window_hours, referrerWasUnlocked,
+          cfg.bonus_amount, cfg.wagering_multiplier,
+          cfg.referrer_deposit_min, cfg.referee_deposit_min,
+          cfg.referrer_turnover_min, cfg.referee_turnover_min,
+        ],
+      );
+
+      // Bump the referrer's lifetime "sent" counter.
+      await qr.query(
+        `INSERT INTO referral_status (user_id, total_referrals_sent)
+         VALUES ($1, 1)
+         ON CONFLICT (user_id) DO UPDATE
+           SET total_referrals_sent = referral_status.total_referrals_sent + 1,
+               updated_at = NOW()`,
+        [referrerId],
+      );
+
+      await qr.commitTransaction();
+      this.logger.log(
+        `Referral opened: referrerId=${referrerId} refereeId=${refereeUserId} ref_code="${refCode}"`,
+      );
+    } catch (e: any) {
+      await qr.rollbackTransaction();
+      this.logger.warn(
+        `attachReferralOnSignup failed (refCode="${refCode}", refereeId=${refereeUserId}): ${e?.message}`,
+      );
+    } finally {
+      await qr.release();
+    }
+  }
 
   // ═════════════════════════════════════════════════════════════
   // SEND OTP — for phone verification (after registration)

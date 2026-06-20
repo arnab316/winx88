@@ -28,6 +28,7 @@ import { CoinsService } from 'src/coins/coins.service';
 import { TurnoverService } from '../turnover/turnover.service';
 import { GameValidationService } from '../game/game-validation.service';
 import { PromotionEngineService } from '../promotion/promotion-engine.service';
+import { ReferralEngineService } from '../referral/referral-engine.service';
 
 @Injectable()
 export class WalletService {
@@ -40,6 +41,7 @@ export class WalletService {
     private turnoverService: TurnoverService,
     private gameValidation: GameValidationService,
     private promotionEngine: PromotionEngineService,
+    private referralEngine: ReferralEngineService,
      @Inject(forwardRef(() => WalletGateway))
     private readonly walletGateway: WalletGateway,
   ) {}
@@ -359,6 +361,10 @@ export class WalletService {
             null,
           );
         }
+
+        // Refer-a-friend deposit progress (referrer + referee sides). Isolated
+        // via a SAVEPOINT inside the engine — never breaks the deposit.
+        await this.referralEngine.onDeposit(qr, dep.user_id, amt);
 
         await qr.commitTransaction();
          await this.walletGateway.pushBalanceUpdate(dep.user_id)

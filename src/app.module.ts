@@ -14,6 +14,8 @@ import { GameHistoryModule } from './game-history/game-history.module';
 import { TwilioModule } from './twilio/twilio.module';
 import { CoinsModule } from './coins/coins.module';
 import { AffiliateModule } from './affiliate/affiliate.module';
+import { ReferralModule } from './referral/referral.module';
+import { ReferralEngineModule } from './referral/referral-engine.module';
 import { OtpCleanupService } from './auth/otpcleanup';
 import { AgentsModule } from './agents/agents.module';
 import { LedgerModule } from './ledger/ledger.module';
@@ -70,6 +72,8 @@ import { CatalogModule } from './catalog/catalog.module';
     TwilioModule,
     CoinsModule,
     AffiliateModule,
+    ReferralModule,
+    ReferralEngineModule,
     AgentsModule,
     LedgerModule,
     VipModule,
