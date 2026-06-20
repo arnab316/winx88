@@ -9,8 +9,8 @@ export class AdminService {
 
 
 
-      async searchUsers(search: string) {
-    return this.userService.searchUser(search);
+      async searchUsers(search?: string, from?: string, to?: string) {
+    return this.userService.searchUser(search, { from, to });
   }
 
     }

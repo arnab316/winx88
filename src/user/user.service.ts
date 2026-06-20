@@ -256,7 +256,47 @@ export class UserService {
   // ═════════════════════════════════════════════════════════════
   // ADMIN: SEARCH USERS
   // ═════════════════════════════════════════════════════════════
-  async searchUser(search: string) {
+  async searchUser(
+    search?: string,
+    opts?: { from?: string; to?: string },
+  ) {
+    const conditions: string[] = [];
+    const params: any[] = [];
+    let i = 1;
+
+    // Text term is optional: with an empty term the date range alone applies
+    // (and with neither, it returns the most recent users up to the limit).
+    const term = search?.trim();
+    if (term) {
+      const p = `$${i++}`;
+      params.push(`%${term}%`);
+      conditions.push(`(
+            u.full_name ILIKE ${p}
+            OR u.username  ILIKE ${p}
+            OR u.email     ILIKE ${p}
+            OR u.user_code ILIKE ${p}
+            OR EXISTS (
+                 SELECT 1 FROM user_phone_numbers upn2
+                 WHERE upn2.user_id = u.id AND upn2.phone_number ILIKE ${p}
+               )
+          )`);
+    }
+
+    // Registration-date range (created_at), both bounds optional. `to` is
+    // inclusive of the whole day, so '2026-06-19' covers up to 23:59:59.
+    if (opts?.from) {
+      conditions.push(`u.created_at >= $${i++}`);
+      params.push(opts.from);
+    }
+    if (opts?.to) {
+      conditions.push(`u.created_at < ($${i++}::date + INTERVAL '1 day')`);
+      params.push(opts.to);
+    }
+
+    const whereClause = conditions.length
+      ? 'WHERE ' + conditions.join('\n          AND ')
+      : '';
+
     return this.dataSource.query(
       `SELECT
          u.id, u.user_code, u.full_name, u.username, u.email,
@@ -280,17 +320,10 @@ export class UserService {
        FROM users u
        LEFT JOIN wallets w ON w.user_id = u.id
        LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
-       WHERE u.full_name ILIKE $1
-          OR u.username   ILIKE $1
-          OR u.email      ILIKE $1
-          OR u.user_code  ILIKE $1
-          OR EXISTS (
-               SELECT 1 FROM user_phone_numbers upn2
-               WHERE upn2.user_id = u.id AND upn2.phone_number ILIKE $1
-             )
+       ${whereClause}
        ORDER BY u.created_at DESC
        LIMIT 50`,
-      [`%${search}%`],
+      params,
     );
   }
 
