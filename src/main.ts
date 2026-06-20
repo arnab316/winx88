@@ -43,7 +43,7 @@ async function bootstrap() {
       },
     }),
   );
-  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'https://winx-88.com,https://www.winx-88.com,https://test.safurion.online')
+  const allowedOrigins = (process.env.CORS_ORIGINS ?? 'https://winx-88.com,https://www.winx-88.com,https://test.safurion.online', 'https://winx88.net')
     .split(',')
     .map(o => o.trim());
   console.log("origins", allowedOrigins);
