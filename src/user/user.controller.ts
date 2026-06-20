@@ -705,22 +705,28 @@ export class UserController {
 
 
   // PATCH /user/admin/:userId/phone/:phoneId
-  // body: { phoneNumber: string }
+  // body: { phoneNumber: string; isVerified?: boolean }
+  //   isVerified is optional — omit it to default to false (re-verify).
   @UseGuards(AdminGuard)
   @Patch('admin/:userId/phone/:phoneId')
   async adminUpdatePhone(
     @Req() req: any,
     @Param('userId',  ParseIntPipe) userId:  number,
     @Param('phoneId', ParseIntPipe) phoneId: number,
-    @Body('phoneNumber') phoneNumber: string,
+    @Body() dto: { phoneNumber: string; isVerified?: boolean },
   ) {
     this.logger.info('Admin: update phone started', {
       context: UserController.name, adminId: req.user?.sub,
-      targetUserId: userId, phoneId, ip: req.ip,
+      targetUserId: userId, phoneId, isVerified: dto?.isVerified, ip: req.ip,
     });
     try {
-      if (!phoneNumber) throw new BadRequestException('phoneNumber is required');
-      const data = await this.userService.adminUpdatePhone(userId, phoneId, phoneNumber);
+      if (!dto?.phoneNumber) throw new BadRequestException('phoneNumber is required');
+      const data = await this.userService.adminUpdatePhone(
+        userId,
+        phoneId,
+        dto.phoneNumber,
+        dto.isVerified,
+      );
       this.logger.info('Admin: phone updated', {
         context: UserController.name, adminId: req.user?.sub,
         targetUserId: userId, phoneId, ip: req.ip,

@@ -587,14 +587,21 @@ export class UserService {
 
   // ═════════════════════════════════════════════════════════════
   // ADMIN: UPDATE PHONE NUMBER FOR ANY USER
-  //   Changes the phone_number of an existing entry. Resets
-  //   is_verified to false since the number itself changed.
+  //   Changes the phone_number of an existing entry. is_verified is
+  //   optional: pass it to control the verified flag, otherwise it
+  //   defaults to false (the number changed, so it must be re-verified).
   // ═════════════════════════════════════════════════════════════
-  async adminUpdatePhone(userId: number, phoneId: number, phoneNumber: string) {
+  async adminUpdatePhone(
+    userId: number,
+    phoneId: number,
+    phoneNumber: string,
+    isVerified?: boolean,
+  ) {
     if (!phoneNumber?.trim()) {
       throw new BadRequestException('phoneNumber is required');
     }
     const trimmed = phoneNumber.trim();
+    const verified = isVerified ?? false;
 
     const phone = await this.dataSource.query(
       `SELECT id FROM user_phone_numbers WHERE id = $1 AND user_id = $2`,
@@ -602,29 +609,39 @@ export class UserService {
     );
     if (!phone.length) throw new NotFoundException('Phone not found for this user');
 
-    // Reject if another of this user's phones already has the new number
+    // Reject if the number is already registered to ANY account (excluding the
+    // row being edited) — mirrors the global one-number-per-account rule the
+    // registration flow enforces. The DB unique index is only on
+    // (user_id, phone_number), so it blocks same-user dupes but NOT the same
+    // number across two users; this app-level check closes that gap.
     const dupe = await this.dataSource.query(
       `SELECT id FROM user_phone_numbers
-        WHERE user_id = $1 AND phone_number = $2 AND id != $3`,
-      [userId, trimmed, phoneId],
+        WHERE phone_number = $1 AND id != $2
+        LIMIT 1`,
+      [trimmed, phoneId],
     );
-    if (dupe.length) throw new BadRequestException('Phone already exists');
+    if (dupe.length) throw new BadRequestException('Phone number already registered');
 
     try {
       await this.dataSource.query(
         `UPDATE user_phone_numbers
             SET phone_number = $1,
-                is_verified  = false,
+                is_verified  = $2,
                 updated_at   = NOW()
-          WHERE id = $2`,
-        [trimmed, phoneId],
+          WHERE id = $3`,
+        [trimmed, verified, phoneId],
       );
     } catch (e: any) {
       if (e.code === '23505') throw new BadRequestException('Phone number already exists');
       throw e;
     }
 
-    return { message: 'Phone number updated', phoneId, phone_number: trimmed };
+    return {
+      message: 'Phone number updated',
+      phoneId,
+      phone_number: trimmed,
+      is_verified: verified,
+    };
   }
 
   // ═════════════════════════════════════════════════════════════
