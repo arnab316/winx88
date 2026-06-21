@@ -1743,10 +1743,11 @@ export class SportsService {
 
           for (const betData of data.betList ?? []) {
             const betLog = await qr.query(
-              `INSERT INTO sports_bet_logs (user_name, bet_list, trans_id, trans_hist_id, amount, type, date_time)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)
+              `INSERT INTO sports_bet_logs (user_id, user_name, bet_list, trans_id, trans_hist_id, amount, type, date_time)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
                RETURNING id`,
               [
+                user.id,
                 user.username,
                 JSON.stringify(betData),
                 // The win callback's trans_id references this bet item id
@@ -1882,9 +1883,10 @@ export class SportsService {
             );
             await qr.query(
               `INSERT INTO sports_bet_logs
-                 (user_name, bet_list, trans_id, trans_hist_id, amount, type, date_time, win_amount, settled_at)
-               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+                 (user_id, user_name, bet_list, trans_id, trans_hist_id, amount, type, date_time, win_amount, settled_at)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW())`,
               [
+                user.id,
                 user.username,
                 JSON.stringify(data.betList?.[0] ?? {}),
                 data.trans_id ?? null,

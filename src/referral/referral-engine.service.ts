@@ -215,11 +215,14 @@ export class ReferralEngineService {
     );
     if (!r) return;
     if (r.status !== 'PENDING' && r.status !== 'ACTIVE') return;
+    // A target of 0 (or less) is satisfied by default: there is no deposit/bet
+    // event that would otherwise ever flip its `*_met` flag, so a 0-minimum
+    // requirement must count as met even with no activity on that side.
     const allMet =
-      r.referrer_deposit_met &&
-      r.referee_deposit_met &&
-      r.referrer_turnover_met &&
-      r.referee_turnover_met;
+      (r.referrer_deposit_met  || Number(r.config_referrer_dep_min)  <= 0) &&
+      (r.referee_deposit_met   || Number(r.config_referee_dep_min)   <= 0) &&
+      (r.referrer_turnover_met || Number(r.config_referrer_turn_min) <= 0) &&
+      (r.referee_turnover_met  || Number(r.config_referee_turn_min)  <= 0);
     if (!allMet) return;
     if (new Date(r.expires_at) <= new Date()) return; // expired — cron will flip it
 

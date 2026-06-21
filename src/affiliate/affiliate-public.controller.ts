@@ -6,7 +6,11 @@ import { AffiliateService } from './affiliate.service';
  * Public, unauthenticated affiliate tracking link.
  *
  *   GET /r/:code  → records a click (best-effort) and 302-redirects the visitor
- *                   to the public site's registration landing with ?ref=<code>.
+ *                   to the public site's registration landing with ?aff=<code>.
+ *
+ * `?aff` is the AFFILIATE attribution param (distinct from the refer-a-friend
+ * `?ref`). The frontend forwards it to POST /auth/register as `aff_code`, which
+ * records the downline edge in `referrals` only — the two systems stay separate.
  *
  * This is the link `AffiliateRevShareService.getMyLink` hands to affiliates, so
  * every share/click flows through here and lands in `affiliate_clicks`. The
@@ -30,6 +34,6 @@ export class AffiliatePublicController {
     });
 
     const base = process.env.PUBLIC_SITE_URL ?? 'https://winx-88.com';
-    return res.redirect(302, `${base}/?ref=${encodeURIComponent(code ?? '')}`);
+    return res.redirect(302, `${base}/?aff=${encodeURIComponent(code ?? '')}`);
   }
 }

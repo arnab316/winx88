@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
 export type GameCategory = 'LOTTERY' | 'JACKPOT' | 'SLOT' | 'SPORTS';
@@ -34,6 +34,8 @@ export interface GameHistoryQuery {
  */
 @Injectable()
 export class GameHistoryService {
+  private readonly logger = new Logger(GameHistoryService.name);
+
   constructor(private readonly dataSource: DataSource) {}
 
   // ── Source A: lottery + jackpot, from the bets table ($1 = userId) ──────
@@ -151,8 +153,11 @@ export class GameHistoryService {
         COALESCE(sb.trans_id, sb.id::text)                   AS round_code,
         NULL::text                                           AS result_number
       FROM sports_bet_logs sb
-      JOIN users u ON u.username = sb.user_name
-      WHERE u.id = $1
+      -- Keyed by user_id (added + backfilled in migration 1890000000000), so
+      -- sports filters by user_id like lottery (bets) and slots
+      -- (slot_transactions). No more username string-join — the old source of
+      -- silently-dropped sports history for email-style usernames.
+      WHERE sb.user_id = $1
     `;
   }
 
@@ -223,6 +228,13 @@ export class GameHistoryService {
     const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
     const unioned = `(${parts.join('\n      UNION ALL\n')}) h`;
 
+    this.logger.log(
+      `[getHistory] userId=${userId} sources=[${
+        category ?? 'ALL'
+      }] status=${status ?? '-'} settled=${q.settled ?? '-'} ` +
+        `providerId=${q.providerId ?? '-'} from=${fromTs} to=${toTs} page=${page} limit=${limit}`,
+    );
+
     const rows = await this.dataSource.query(
       `SELECT * FROM ${unioned}
        ${whereClause}
@@ -268,6 +280,24 @@ export class GameHistoryService {
     const total = cnt?.total ?? 0;
     const totalStaked = Number(stats?.total_staked ?? 0);
     const totalWon    = Number(stats?.total_won ?? 0);
+
+    // Per-category counts make it obvious at a glance whether SPORTS (the
+    // username-joined source) actually resolved any rows for this user.
+    const byCategoryLog =
+      catRows.map((c: any) => `${c.category}:${c.total_bets}`).join(',') ||
+      'none';
+    this.logger.log(
+      `[getHistory] userId=${userId} returned total=${total} rows=${rows.length} byCategory=${byCategoryLog}`,
+    );
+    if (
+      (!category || category === 'SPORTS') &&
+      !catRows.some((c: any) => c.category === 'SPORTS')
+    ) {
+      this.logger.warn(
+        `[getHistory] userId=${userId} no SPORTS rows in window — if the user placed bets, ` +
+          `check sports_bet_logs.user_name vs users.username (name-join mismatch).`,
+      );
+    }
 
     return {
       data: rows.map((r: any) => ({

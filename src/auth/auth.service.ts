@@ -140,6 +140,18 @@ async register(dto: any) {
       await this.attachReferralOnSignup(userId, refCode);
     }
 
+    // Affiliate attribution — a SEPARATE system from refer-a-friend above. If
+    // the user arrived via an affiliate tracking link (?aff=<affiliate user_code>),
+    // record the downline edge in `referrals` ONLY. It does NOT touch
+    // referred_by_user_id / friend_referrals / the ৳500 bonus. Best-effort,
+    // post-commit, in its own transaction so it can never break registration.
+    const affCode = (dto.aff_code ?? dto.aff ?? dto.affiliateCode ?? '')
+      .toString()
+      .trim();
+    if (affCode) {
+      await this.attachAffiliateOnSignup(userId, affCode);
+    }
+
     return {
       message: 'Account created successfully. Please verify your phone number.',
       userId,
@@ -250,19 +262,29 @@ async register(dto: any) {
         [referrerId, refereeUserId],
       );
 
+      // A 0 (or negative) minimum is satisfied at creation — there is no
+      // deposit/bet event that would otherwise ever flip its `*_met` flag, so
+      // without this a "0 turnover/deposit" rule would never complete.
+      const referrerDepMet  = cfg.referrer_deposit_min <= 0;
+      const refereeDepMet   = cfg.referee_deposit_min <= 0;
+      const referrerTurnMet = referrerWasUnlocked || cfg.referrer_turnover_min <= 0;
+      const refereeTurnMet  = cfg.referee_turnover_min <= 0;
+
       // Open the referral. ON CONFLICT keeps it safe if a row already exists
       // for this referee (a user can only be referred once).
       await qr.query(
         `INSERT INTO friend_referrals (
            referrer_user_id, referee_user_id, started_at, expires_at,
-           referrer_was_unlocked, referrer_turnover_met,
+           referrer_was_unlocked,
+           referrer_deposit_met, referee_deposit_met,
+           referrer_turnover_met, referee_turnover_met,
            config_bonus_amount, config_wagering_mult,
            config_referrer_dep_min, config_referee_dep_min,
            config_referrer_turn_min, config_referee_turn_min,
            config_window_hours, status
          ) VALUES (
            $1, $2, NOW(), NOW() + make_interval(hours => $3::int),
-           $4, $4, $5, $6, $7, $8, $9, $10, $3::int, 'PENDING'
+           $4, $11, $12, $13, $14, $5, $6, $7, $8, $9, $10, $3::int, 'PENDING'
          )
          ON CONFLICT (referee_user_id) DO NOTHING`,
         [
@@ -270,6 +292,7 @@ async register(dto: any) {
           cfg.bonus_amount, cfg.wagering_multiplier,
           cfg.referrer_deposit_min, cfg.referee_deposit_min,
           cfg.referrer_turnover_min, cfg.referee_turnover_min,
+          referrerDepMet, refereeDepMet, referrerTurnMet, refereeTurnMet,
         ],
       );
 
@@ -291,6 +314,62 @@ async register(dto: any) {
       await qr.rollbackTransaction();
       this.logger.warn(
         `attachReferralOnSignup failed (refCode="${refCode}", refereeId=${refereeUserId}): ${e?.message}`,
+      );
+    } finally {
+      await qr.release();
+    }
+  }
+
+  // ─── Affiliate downline (SEPARATE from refer-a-friend) ───────────────────
+  //
+  // Records the affiliate→referee edge in `referrals` only. The affiliate code
+  // is the affiliate's `users.user_code`. The referrer must be an ACTIVE
+  // affiliate (affiliate_users.is_active) and never self. NEVER touches
+  // referred_by_user_id / friend_referrals / referral_status, and awards no
+  // bonus — that's the refer-a-friend system's job, kept fully independent.
+  // Best-effort: never throws (registration has already committed).
+  private async attachAffiliateOnSignup(
+    refereeUserId: number,
+    affCode: string,
+  ): Promise<void> {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      // Resolve the affiliate by user_code — active affiliates only, never self.
+      const rows = await qr.query(
+        `SELECT au.user_id
+           FROM affiliate_users au
+           JOIN users u ON u.id = au.user_id
+          WHERE u.user_code = $1 AND au.is_active = true AND u.id <> $2
+          LIMIT 1`,
+        [affCode, refereeUserId],
+      );
+      if (!rows.length) {
+        await qr.rollbackTransaction();
+        this.logger.warn(
+          `Affiliate signup: invalid/ineligible aff_code="${affCode}" refereeId=${refereeUserId}`,
+        );
+        return;
+      }
+      const affiliateUserId = Number(rows[0].user_id);
+
+      // One affiliate edge per referee; never overwrite an existing attribution.
+      await qr.query(
+        `INSERT INTO referrals (referrer_user_id, referee_user_id)
+         SELECT $1, $2
+          WHERE NOT EXISTS (SELECT 1 FROM referrals WHERE referee_user_id = $2)`,
+        [affiliateUserId, refereeUserId],
+      );
+
+      await qr.commitTransaction();
+      this.logger.log(
+        `Affiliate downline attached: affiliateUserId=${affiliateUserId} refereeId=${refereeUserId} aff_code="${affCode}"`,
+      );
+    } catch (e: any) {
+      await qr.rollbackTransaction();
+      this.logger.warn(
+        `attachAffiliateOnSignup failed (affCode="${affCode}", refereeId=${refereeUserId}): ${e?.message}`,
       );
     } finally {
       await qr.release();
