@@ -106,14 +106,27 @@ export class AffiliateController {
     });
   }
 
-  // GET /affiliate/admin/list?page=1&limit=20
+  // GET /affiliate/admin/list?page=1&limit=20&q=&code=&tier=&status=&from=&to=
   @UseGuards(AdminGuard)
   @Get('admin/list')
   getAllAffiliates(
     @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('q')      q?: string,
+    @Query('code')   code?: string,
+    @Query('tier')   tier?: string,
+    @Query('status') status?: string,
+    @Query('from')   from?: string,
+    @Query('to')     to?: string,
   ) {
-    return this.affiliateService.getAllAffiliates(page, limit);
+    return this.affiliateService.getAllAffiliates(page, limit, {
+      q:      q?.trim() || undefined,
+      code:   code?.trim() || undefined,
+      tier:   tier !== undefined && tier !== '' && !isNaN(Number(tier)) ? Number(tier) : undefined,
+      status: status === 'active' || status === 'inactive' ? status : undefined,
+      from:   from || undefined,
+      to:     to || undefined,
+    });
   }
 
   // PATCH /affiliate/admin/commission
@@ -256,5 +269,13 @@ getDownlineUser(
   @Get('admin/:affiliateUserId/ngr-history')
   ngrHistory(@Param('affiliateUserId', ParseIntPipe) affiliateUserId: number) {
     return this.revshare.getNgrHistory(affiliateUserId);
+  }
+
+  // GET /affiliate/admin/:userId/detail — consolidated affiliate detail + KPIs
+  // (:userId is the user's id, matching admin/:userId/downline)
+  @UseGuards(AdminGuard)
+  @Get('admin/:userId/detail')
+  affiliateDetail(@Param('userId', ParseIntPipe) userId: number) {
+    return this.revshare.getAffiliateDetail(userId);
   }
 }

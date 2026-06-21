@@ -9,6 +9,8 @@ export interface DecideApplicationDto {
   action:         'APPROVE' | 'REJECT';
   rejectionReason?: string;
   commissionPct?:   number;
+  /** Optional RevShare % override applied on approval (else auto-tiered monthly). */
+  revshareRate?:    number;
 }
 
 export interface UpdateCommissionDto {

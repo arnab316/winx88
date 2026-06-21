@@ -68,6 +68,59 @@ export class AffiliateService {
   }
 
   // ─────────────────────────────────────────────────────────────
+  // PUBLIC: record a referral-link click (best-effort, never throws)
+  // ─────────────────────────────────────────────────────────────
+
+  async recordClick(
+    code: string,
+    meta: {
+      ip?: string;
+      userAgent?: string | string[];
+      referer?: string | string[];
+      landingPath?: string;
+    } = {},
+  ) {
+    if (!code || !code.trim()) return { ok: false };
+    const ref = code.trim();
+    try {
+      // Resolve the code owner + (if any) their affiliate row. A code that
+      // matches no user is still logged — useful for spotting dead links.
+      const rows = await this.dataSource.query(
+        `SELECT u.id AS user_id, au.id AS affiliate_user_id
+           FROM users u
+           LEFT JOIN affiliate_users au ON au.user_id = u.id
+          WHERE u.referral_code = $1 OR u.user_code = $1
+          LIMIT 1`,
+        [ref],
+      );
+      const ownerUserId = rows.length ? rows[0].user_id : null;
+      const affiliateUserId = rows.length ? rows[0].affiliate_user_id : null;
+
+      const first = (v?: string | string[]) =>
+        (Array.isArray(v) ? v[0] : v) ?? null;
+
+      await this.dataSource.query(
+        `INSERT INTO affiliate_clicks
+           (referral_code, affiliate_user_id, referrer_user_id, ip, user_agent, referer, landing_path)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          ref,
+          affiliateUserId,
+          ownerUserId,
+          meta.ip ?? null,
+          first(meta.userAgent),
+          first(meta.referer),
+          meta.landingPath ?? null,
+        ],
+      );
+      return { ok: true };
+    } catch {
+      // Tracking is best-effort; never propagate to the redirect.
+      return { ok: false };
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // USER: get my affiliate status
   // ─────────────────────────────────────────────────────────────
 
@@ -222,7 +275,7 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
     if (!affiliate.length)
       throw new ForbiddenException('You are not an active affiliate');
 
-    const [totalDownline, totalBonus, pendingBonus] = await Promise.all([
+    const [totalDownline, totalBonus, pendingBonus, totalClicks] = await Promise.all([
       this.dataSource.query(
         `SELECT COUNT(*) AS total FROM referrals WHERE referrer_user_id = $1`,
         [userId],
@@ -239,13 +292,23 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
          WHERE referrer_user_id = $1 AND status = 'PENDING'`,
         [userId],
       ),
+      this.dataSource.query(
+        `SELECT COUNT(*) AS total FROM affiliate_clicks WHERE referrer_user_id = $1`,
+        [userId],
+      ),
     ]);
+
+    const downlineCount = parseInt(totalDownline[0].total);
+    const clicks = parseInt(totalClicks[0].total);
 
     return {
       commissionPct:      parseFloat(affiliate[0].commission_pct),
-      totalDownlineCount: parseInt(totalDownline[0].total),
+      totalDownlineCount: downlineCount,
       totalBonusEarned:   parseFloat(totalBonus[0].total),
       pendingBonus:       parseFloat(pendingBonus[0].total),
+      totalClicks:        clicks,
+      // Share of clicks that turned into a signup (sign-up conversion).
+      signupConversionPct: clicks > 0 ? Math.round((downlineCount / clicks) * 1000) / 10 : 0,
     };
   }
 
@@ -315,17 +378,21 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
           [dto.adminId, dto.applicationId],
         );
 
-        // 2. Insert into affiliate_users
+        // 2. Insert into affiliate_users. RevShare tier/rate is normally
+        //    auto-derived monthly by active-player count; an optional
+        //    revshareRate here sets a per-affiliate override at approval time
+        //    (the winX88partners "assign group on approval" step).
         await queryRunner.query(
           `INSERT INTO affiliate_users
-             (user_id, commission_pct, is_active, approved_at, approved_by_admin_id, created_at, updated_at)
-           VALUES ($1, $2, true, NOW(), $3, NOW(), NOW())
+             (user_id, commission_pct, revshare_rate, is_active, approved_at, approved_by_admin_id, created_at, updated_at)
+           VALUES ($1, $2, $3, true, NOW(), $4, NOW(), NOW())
            ON CONFLICT (user_id) DO UPDATE
            SET is_active = true,
                commission_pct = EXCLUDED.commission_pct,
+               revshare_rate = COALESCE(EXCLUDED.revshare_rate, affiliate_users.revshare_rate),
                approved_by_admin_id = EXCLUDED.approved_by_admin_id,
                updated_at = NOW()`,
-          [app.user_id, dto.commissionPct ?? 0, dto.adminId],
+          [app.user_id, dto.commissionPct ?? 0, dto.revshareRate ?? null, dto.adminId],
         );
 
         await queryRunner.commitTransaction();
@@ -356,34 +423,91 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
   // ADMIN: list all affiliates
   // ─────────────────────────────────────────────────────────────
 
-  async getAllAffiliates(page = 1, limit = 20) {
+  async getAllAffiliates(
+    page = 1,
+    limit = 20,
+    filters: {
+      q?: string;
+      code?: string;
+      tier?: number;
+      status?: 'active' | 'inactive';
+      from?: string;
+      to?: string;
+    } = {},
+  ) {
     const offset = (page - 1) * limit;
+
+    // Build the shared WHERE (applies to both the page query and the count).
+    const where: string[] = [];
+    const params: any[] = [];
+    let i = 1;
+    if (filters.q) {
+      where.push(`(u.username ILIKE $${i} OR u.email ILIKE $${i} OR u.full_name ILIKE $${i})`);
+      params.push(`%${filters.q}%`);
+      i++;
+    }
+    if (filters.code) {
+      where.push(`(u.user_code ILIKE $${i} OR u.referral_code ILIKE $${i})`);
+      params.push(`%${filters.code}%`);
+      i++;
+    }
+    if (filters.tier !== undefined) {
+      where.push(`au.revshare_tier = $${i}`);
+      params.push(filters.tier);
+      i++;
+    }
+    if (filters.status === 'active') where.push(`au.is_active = true`);
+    else if (filters.status === 'inactive') where.push(`au.is_active = false`);
+    if (filters.from) {
+      where.push(`au.approved_at >= $${i}::timestamptz`);
+      params.push(filters.from);
+      i++;
+    }
+    if (filters.to) {
+      // inclusive end-of-day for a YYYY-MM-DD bound
+      where.push(`au.approved_at < ($${i}::date + INTERVAL '1 day')`);
+      params.push(filters.to);
+      i++;
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
     const [rows, count] = await Promise.all([
       this.dataSource.query(
         `SELECT
            au.id,
            au.user_id,
            au.commission_pct,
+           au.revshare_tier,
+           au.revshare_rate,
            au.is_active,
            au.approved_at,
            u.full_name,
            u.username,
            u.email,
            u.user_code,
+           u.referral_code,
            u.vip_level,
            w.total_deposited,
            w.balance,
-           (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = au.user_id) AS downline_count,
+           (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = au.user_id)      AS downline_count,
+           (SELECT COUNT(*) FROM affiliate_clicks WHERE referrer_user_id = au.user_id) AS click_count,
            (SELECT COALESCE(SUM(amount),0) FROM referral_bonus
-            WHERE referrer_user_id = au.user_id AND status = 'APPROVED')       AS total_bonus_paid
+            WHERE referrer_user_id = au.user_id AND status = 'APPROVED')             AS total_bonus_paid
          FROM affiliate_users au
          JOIN users   u ON u.id = au.user_id
          JOIN wallets w ON w.user_id = au.user_id
+         ${whereSql}
          ORDER BY au.approved_at DESC
-         LIMIT $1 OFFSET $2`,
-        [limit, offset],
+         LIMIT $${i} OFFSET $${i + 1}`,
+        [...params, limit, offset],
       ),
-      this.dataSource.query(`SELECT COUNT(*) AS total FROM affiliate_users`),
+      this.dataSource.query(
+        `SELECT COUNT(*) AS total
+           FROM affiliate_users au
+           JOIN users u ON u.id = au.user_id
+           ${whereSql}`,
+        params,
+      ),
     ]);
     return { data: rows, total: parseInt(count[0].total), page, limit };
   }

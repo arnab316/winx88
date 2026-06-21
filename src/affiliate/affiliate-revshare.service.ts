@@ -379,6 +379,98 @@ export class AffiliateRevShareService {
   }
 
   // ═════════════════════════════════════════════════════════════
+  // ADMIN: consolidated detail for one affiliate (by users.id)
+  //   winX88partners affiliate-detail page — header + KPIs + payouts.
+  // ═════════════════════════════════════════════════════════════
+  async getAffiliateDetail(userId: number) {
+    const afRows = await this.dataSource.query(
+      `SELECT au.id, au.user_id, au.is_active, au.commission_pct,
+              au.revshare_tier, au.revshare_rate, au.payment_method, au.payment_details,
+              au.approved_at,
+              u.username, u.full_name, u.email, u.user_code, u.referral_code, u.account_status
+         FROM affiliate_users au
+         JOIN users u ON u.id = au.user_id
+        WHERE au.user_id = $1
+        LIMIT 1`,
+      [userId],
+    );
+    if (!afRows.length) throw new NotFoundException('Affiliate not found');
+    const af = afRows[0];
+
+    const cfg = await this.getConfig();
+    const now = new Date();
+    const period = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
+    const customRate = af.revshare_rate != null ? parseFloat(af.revshare_rate) : null;
+    // Live month-to-date figures (active players / NGR / projected payout).
+    const live = await this.computeAffiliatePeriod(
+      af.id, Number(af.user_id), period, cfg, customRate,
+    );
+
+    const [paidRows, refRows, depRows, clickRows] = await Promise.all([
+      this.dataSource.query(
+        `SELECT COALESCE(SUM(payable_amount),0) AS v
+           FROM affiliate_monthly_ngr WHERE affiliate_user_id = $1 AND status = 'PAID'`,
+        [af.id],
+      ),
+      this.dataSource.query(
+        `SELECT COUNT(*) AS v FROM referrals WHERE referrer_user_id = $1`,
+        [af.user_id],
+      ),
+      this.dataSource.query(
+        `SELECT COALESCE(SUM(w.total_deposited),0) AS v
+           FROM referrals r JOIN wallets w ON w.user_id = r.referee_user_id
+          WHERE r.referrer_user_id = $1`,
+        [af.user_id],
+      ),
+      this.dataSource.query(
+        `SELECT COUNT(*) AS v FROM affiliate_clicks WHERE referrer_user_id = $1`,
+        [af.user_id],
+      ),
+    ]);
+
+    const payouts = await this.getNgrHistory(af.id);
+
+    return {
+      affiliate: {
+        affiliateUserId: af.id,
+        userId: af.user_id,
+        username: af.username,
+        fullName: af.full_name,
+        email: af.email,
+        userCode: af.user_code,
+        referralCode: af.referral_code,
+        accountStatus: af.account_status,
+        isActive: af.is_active,
+        status: af.is_active ? 'active' : 'suspended',
+        tier: af.revshare_tier ?? live.tier,
+        revshareRate: customRate ?? live.rate,
+        commissionPct: af.commission_pct != null ? parseFloat(af.commission_pct) : 0,
+        paymentMethod: af.payment_method,
+        paymentDetails: af.payment_details,
+        approvedAt: af.approved_at,
+      },
+      kpis: {
+        lifetimePaid: parseFloat(paidRows[0].v),
+        pendingCommission: live.grossEarning, // live MTD projection
+        playerDeposits: parseFloat(depRows[0].v),
+        referredPlayers: Number(refRows[0].v),
+        activePlayers: live.activePlayerCount,
+        totalClicks: Number(clickRows[0].v),
+      },
+      currentMonth: {
+        period,
+        ngr: live.ngr,
+        totalBets: live.totalBets,
+        totalWins: live.totalWins,
+        bonusesGiven: live.bonusesGiven,
+        adminFee: live.adminFee,
+        projectedPayout: live.grossEarning,
+      },
+      payouts,
+    };
+  }
+
+  // ═════════════════════════════════════════════════════════════
   // AFFILIATE-FACING
   // ═════════════════════════════════════════════════════════════
   private async requireActiveAffiliate(userId: number) {
