@@ -262,7 +262,10 @@ export class ReferralEngineService {
       return;
     }
 
-    // Credit the bonus to the referrer's bonus_balance.
+    // Credit the bonus. Mirrors the promotion-bonus model: the amount is added
+    // to the spendable main `balance` (so the referrer can play with it) AND
+    // mirrored into `bonus_balance` so admins can see how much of the balance is
+    // bonus — withdrawal stays gated by the wagering requirement below.
     const [w] = await qr.query(
       `SELECT id, balance, bonus_balance FROM wallets WHERE user_id = $1 FOR UPDATE`,
       [referrerId],
@@ -276,13 +279,14 @@ export class ReferralEngineService {
       this.logger.warn(`Referral ${referralId}: referrer ${referrerId} has no wallet — bonus withheld`);
       return;
     }
-    const balance = Number(w.balance);
+    const balanceBefore = Number(w.balance);
     const bonusBefore = Number(w.bonus_balance);
+    const balanceAfter = balanceBefore + bonus;
     const bonusAfter = bonusBefore + bonus;
 
     await qr.query(
-      `UPDATE wallets SET bonus_balance = $1, updated_at = NOW() WHERE id = $2`,
-      [bonusAfter, w.id],
+      `UPDATE wallets SET balance = $1, bonus_balance = $2, updated_at = NOW() WHERE id = $3`,
+      [balanceAfter, bonusAfter, w.id],
     );
 
     // Bonus wagering tracker (the audit + clearing record for this bonus).
@@ -302,8 +306,8 @@ export class ReferralEngineService {
       entryType: 'REFERRAL_BONUS_CREDIT',
       flow: 'CREDIT',
       amount: bonus,
-      balanceBefore: balance,
-      balanceAfter: balance, // credited to bonus_balance, not main balance
+      balanceBefore,
+      balanceAfter, // bonus added to spendable balance (mirrored in bonus_balance)
       bonusBefore,
       bonusAfter,
       referenceType: 'REFERRAL_BONUS',
