@@ -306,7 +306,7 @@ export class ReferralEngineService {
       balanceAfter: balance, // credited to bonus_balance, not main balance
       bonusBefore,
       bonusAfter,
-      referenceType: 'REFERRAL',
+      referenceType: 'REFERRAL_BONUS',
       referenceId: referralId,
       status: 'SUCCESS',
       description: `Referral bonus for friend referral #${referralId}`,
