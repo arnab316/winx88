@@ -26,7 +26,9 @@ export class ReferralSystem1800000000002 implements MigrationInterface {
         config_key    VARCHAR(100) NOT NULL UNIQUE,
         config_value  TEXT NOT NULL,
         description   TEXT,
-        updated_by    BIGINT REFERENCES public.users(id),
+        -- admin_users.id (admins are NOT in the users table). No FK, matching
+        -- the existing convention for admin-id columns (e.g. deposits.approved_by_admin_id).
+        updated_by    BIGINT,
         updated_at    TIMESTAMPTZ DEFAULT NOW()
       );
     `);
