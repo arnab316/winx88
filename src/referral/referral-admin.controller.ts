@@ -68,6 +68,18 @@ export class ReferralAdminController {
     return this.wrap(() => this.admin.fraudScan(dryRun === 'true'));
   }
 
+  // Re-run completion for every eligible PENDING/ACTIVE referral (credits any
+  // whose targets are all met but were never triggered by a deposit/bet event).
+  @Post('recompute')
+  async recomputeAll() {
+    return this.wrap(() => this.admin.recompute());
+  }
+
+  @Post(':id/recompute')
+  async recomputeOne(@Param('id', ParseIntPipe) id: number) {
+    return this.wrap(() => this.admin.recompute(id));
+  }
+
   @Get()
   async list(
     @Query('status') status?: string,

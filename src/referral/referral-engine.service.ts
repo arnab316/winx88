@@ -342,6 +342,63 @@ export class ReferralEngineService {
     );
   }
 
+  // ── Admin/maintenance: force a completion re-check ──
+  //  For referrals whose targets are all met but were never credited because no
+  //  deposit/bet event fired tryComplete — e.g. a 0-minimum rule, or rows fixed
+  //  up by a config change/backfill. Runs the real tryComplete path (wallet
+  //  credit + ledger + wagering record) in one transaction. Idempotent:
+  //  already-credited (BONUS_CLEARING/DONE/COMPLETED) rows are left untouched.
+  async recompute(
+    referralId?: number,
+  ): Promise<{ checked: number; credited: number[] }> {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      const targets = referralId
+        ? await qr.query(
+            `SELECT id FROM friend_referrals
+              WHERE id = $1 AND status IN ('PENDING','ACTIVE')`,
+            [referralId],
+          )
+        : await qr.query(
+            `SELECT id FROM friend_referrals WHERE status IN ('PENDING','ACTIVE')`,
+          );
+
+      const credited: number[] = [];
+      for (const t of targets) {
+        const id = Number(t.id);
+        const [before] = await qr.query(
+          `SELECT status FROM friend_referrals WHERE id = $1`,
+          [id],
+        );
+        await this.tryComplete(qr, id);
+        const [after] = await qr.query(
+          `SELECT status FROM friend_referrals WHERE id = $1`,
+          [id],
+        );
+        if (
+          before?.status !== after?.status &&
+          ['BONUS_CLEARING', 'COMPLETED'].includes(after?.status)
+        ) {
+          credited.push(id);
+        }
+      }
+
+      await qr.commitTransaction();
+      this.logger.log(
+        `recompute(${referralId ?? 'all'}): checked ${targets.length}, credited [${credited.join(',')}]`,
+      );
+      return { checked: targets.length, credited };
+    } catch (e: any) {
+      await qr.rollbackTransaction();
+      this.logger.error(`recompute failed: ${e?.message}`);
+      throw e;
+    } finally {
+      await qr.release();
+    }
+  }
+
   // ── Expiry sweep: PENDING/ACTIVE past their window → EXPIRED ──
   @Cron('*/15 * * * *')
   async expireOverdue(): Promise<void> {

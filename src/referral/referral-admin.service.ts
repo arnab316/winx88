@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { SHARED_DEVICE_OR_IP_SQL, describeShared } from './referral-fraud.util';
+import { ReferralEngineService } from './referral-engine.service';
 
 const CONVERTED = `('COMPLETED','BONUS_CLEARING','DONE')`;
 const BONUS_PAID = `('BONUS_CLEARING','DONE')`;
@@ -24,7 +25,25 @@ const EDITABLE_CONFIG = new Set([
  */
 @Injectable()
 export class ReferralAdminService {
-  constructor(private readonly dataSource: DataSource) {}
+  constructor(
+    private readonly dataSource: DataSource,
+    private readonly engine: ReferralEngineService,
+  ) {}
+
+  // ── POST /admin/referrals/recompute  (and /:id/recompute) ──
+  //   Re-run completion for all (or one) PENDING/ACTIVE referral. Credits any
+  //   whose targets are all met but were never triggered by a deposit/bet
+  //   event (e.g. 0-minimum rules). Idempotent — already-paid rows are skipped.
+  async recompute(referralId?: number) {
+    if (referralId !== undefined) {
+      const [r] = await this.dataSource.query(
+        `SELECT id FROM friend_referrals WHERE id = $1`,
+        [referralId],
+      );
+      if (!r) throw new NotFoundException('Referral not found');
+    }
+    return this.engine.recompute(referralId);
+  }
 
   // Optional started_at date window for the referral-based KPIs.
   private dateClause(from?: string, to?: string) {
