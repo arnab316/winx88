@@ -29,8 +29,14 @@ export const SHARED_DEVICE_OR_IP_SQL = `
 `;
 
 export function describeShared(row: any): { shared: boolean; reason: string } {
+  // TEMPORARY: IP-based matching is unreliable while every request is recorded
+  // as the Docker gateway (172.17.0.1) — it flags everyone. Set
+  // REFERRAL_FRAUD_IP_ENABLED=false to ignore the shared-IP signal until the
+  // proxy forwards the real client IP. Device-fingerprint matching is unaffected.
+  const ipEnabled = process.env.REFERRAL_FRAUD_IP_ENABLED !== 'false';
+
   const fp = !!row?.shared_fp;
-  const ip = !!row?.shared_ip;
+  const ip = ipEnabled && !!row?.shared_ip;
   const parts: string[] = [];
   if (fp) parts.push('shared device fingerprint');
   if (ip) parts.push('shared IP');
