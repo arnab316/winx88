@@ -950,6 +950,64 @@ async resetPassword(dto: { resetToken: string; new_password: string }) {
  
   return { message: 'Password reset successfully' };
 }
+
+/**
+ * Authenticated password change for a logged-in user.
+ * Requires the current password as proof of ownership — distinct from the
+ * unauthenticated phone-OTP forgot/reset flow above. Revokes all sessions on
+ * success so a changed password logs the account out everywhere (mirrors
+ * resetPassword).
+ */
+async changePassword(
+  userId: number,
+  dto: { current_password: string; new_password: string },
+) {
+  const { current_password, new_password } = dto ?? ({} as any);
+
+  if (!userId) {
+    throw new UnauthorizedException('Not authenticated');
+  }
+  if (!current_password || !new_password) {
+    throw new BadRequestException('current_password and new_password are required');
+  }
+  if (new_password.length < 8) {
+    throw new BadRequestException('Password must be at least 8 characters');
+  }
+  if (current_password === new_password) {
+    throw new BadRequestException('New password must be different from the current password');
+  }
+
+  const rows = await this.dataSource.query(
+    `SELECT password FROM users WHERE id = $1`,
+    [userId],
+  );
+  if (!rows.length) {
+    throw new UnauthorizedException('User not found');
+  }
+
+  // Verify the current password. Guard against accounts with no password set.
+  const currentHash: string | null = rows[0].password;
+  const ok = currentHash
+    ? await bcrypt.compare(current_password, currentHash)
+    : false;
+  if (!ok) {
+    throw new BadRequestException('Current password is incorrect');
+  }
+
+  const hashed = await bcrypt.hash(new_password, 10);
+  await this.dataSource.query(
+    `UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2`,
+    [hashed, userId],
+  );
+
+  // Log out everywhere — any old/stolen refresh token is now dead.
+  await this.dataSource.query(
+    `UPDATE refresh_tokens SET is_revoked = true WHERE user_id = $1`,
+    [userId],
+  );
+
+  return { message: 'Password changed successfully' };
+}
 }
 
 

@@ -260,6 +260,7 @@ import {
 } from '@nestjs/common';
 import { AuthService } from './auth.service';
 import { SuperAdminGuard } from 'src/common/guards/super-admin.guard';
+import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { Logger } from 'winston';
 import type { Request, Response } from 'express';
@@ -710,6 +711,28 @@ async resetPassword(@Body() dto: { resetToken: string; new_password: string }) {
     throw new HttpException(
       { success: false, message: error.message || 'Password reset failed' },
       HttpStatus.BAD_REQUEST,
+    );
+  }
+}
+
+// 🔑 Authenticated: a logged-in user changes their own password.
+//   Requires the current password as proof of ownership (distinct from the
+//   unauthenticated phone-OTP forgot/reset flow above).
+//   POST /auth/change-password
+//   body: { current_password, new_password }
+@UseGuards(JwtAuthGuard)
+@Post('change-password')
+async changePassword(
+  @Req() req: any,
+  @Body() dto: { current_password: string; new_password: string },
+) {
+  try {
+    const result = await this.authService.changePassword(req.user?.sub, dto);
+    return { success: true, message: result.message };
+  } catch (error: any) {
+    throw new HttpException(
+      { success: false, message: error.message || 'Failed to change password' },
+      error?.status || HttpStatus.BAD_REQUEST,
     );
   }
 }
