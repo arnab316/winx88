@@ -515,6 +515,73 @@ export class UserController {
     }
   }
 
+  // GET /user/admin/members/search
+  //   Member Info Filters panel. All query params optional, ANDed together.
+  //   Currency and Affiliate are intentionally excluded.
+  //     memberGroupId  → MEMBER GROUP (member_groups.id)
+  //     memberId       → MEMBER ID (user_code)
+  //     status         → USER STATUS (ACTIVE | BLOCKED | SUSPENDED)
+  //     q              → USER ID / USERNAME
+  //     name           → NAME (full_name)
+  //     contactNumber  → CONTACT NUMBER (national part, no +880)
+  //     email          → EMAIL
+  //     referrer       → REFERRER (their username / member id / name)
+  //     from, to       → registration DATE FROM / DATE TO (to is inclusive)
+  //     page, limit    → pagination (limit capped at 200)
+  @UseGuards(AdminGuard)
+  @Get('admin/members/search')
+  async searchMembers(
+    @Req() req: any,
+    @Query('memberGroupId') memberGroupId?: string,
+    @Query('memberId') memberId?: string,
+    @Query('status') status?: string,
+    @Query('q') q?: string,
+    @Query('name') name?: string,
+    @Query('contactNumber') contactNumber?: string,
+    @Query('email') email?: string,
+    @Query('referrer') referrer?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    const filters = {
+      memberGroupId: memberGroupId ? Number(memberGroupId) : undefined,
+      memberId,
+      status,
+      userIdOrUsername: q,
+      name,
+      contactNumber,
+      email,
+      referrer,
+      from,
+      to,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    };
+    this.logger.info('Admin: member search started', {
+      context: UserController.name, adminId: req.user?.sub,
+      filters: { ...filters }, ip: req.ip,
+    });
+    try {
+      const data = await this.userService.searchMembers(filters);
+      this.logger.info('Admin: member search completed', {
+        context: UserController.name, adminId: req.user?.sub,
+        total: data.total, ip: req.ip,
+      });
+      return { success: true, message: 'Members retrieved successfully', ...data };
+    } catch (error: any) {
+      this.logger.error('Admin: member search failed', {
+        context: UserController.name, adminId: req.user?.sub,
+        ip: req.ip, message: error.message, stack: error.stack,
+      });
+      throw new HttpException(
+        { success: false, message: error?.message || 'Failed' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   // GET /user/admin/:userId
   // (replaces old /user/user-details/:userId)
   @UseGuards(AdminGuard)

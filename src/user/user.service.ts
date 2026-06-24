@@ -328,6 +328,184 @@ export class UserService {
   }
 
   // ═════════════════════════════════════════════════════════════
+  // ADMIN: MEMBER INFO FILTERS (granular multi-field search)
+  //   Powers the "Member Info Filters" panel. Every filter is
+  //   optional and ANDed together; with no filters it returns the
+  //   most recent members (paginated). Currency and Affiliate are
+  //   intentionally NOT part of this search.
+  // ═════════════════════════════════════════════════════════════
+  async searchMembers(filters: {
+    memberGroupId?: number;       // member_groups.id  (MEMBER GROUP dropdown)
+    memberId?: string;            // users.user_code   (MEMBER ID)
+    status?: string;              // account_status    (USER STATUS dropdown)
+    userIdOrUsername?: string;    // users.id / username (USER ID / USERNAME)
+    name?: string;                // users.full_name   (NAME)
+    contactNumber?: string;       // user_phone_numbers (CONTACT NUMBER)
+    email?: string;               // users.email       (EMAIL)
+    referrer?: string;            // referrer's username/code/name (REFERRER)
+    from?: string;                // created_at >=     (DATE FROM)
+    to?: string;                  // created_at <      (DATE TO, whole-day inclusive)
+    page?: number;
+    limit?: number;
+  }) {
+    const conditions: string[] = [];
+    const params: any[] = [];
+    let i = 1;
+
+    // MEMBER GROUP — membership in member_group_users
+    if (filters.memberGroupId) {
+      conditions.push(
+        `EXISTS (SELECT 1 FROM member_group_users mgu
+                  WHERE mgu.user_id = u.id AND mgu.group_id = $${i++})`,
+      );
+      params.push(filters.memberGroupId);
+    }
+
+    // MEMBER ID — user_code (partial match, case-insensitive)
+    const memberId = filters.memberId?.trim();
+    if (memberId) {
+      conditions.push(`u.user_code ILIKE $${i++}`);
+      params.push(`%${memberId}%`);
+    }
+
+    // USER STATUS — exact account_status (normalised to upper-case)
+    const status = filters.status?.trim();
+    if (status) {
+      conditions.push(`u.account_status = $${i++}`);
+      params.push(status.toUpperCase());
+    }
+
+    // USER ID / USERNAME — username (partial) OR exact numeric id
+    const userIdOrUsername = filters.userIdOrUsername?.trim();
+    if (userIdOrUsername) {
+      if (/^\d+$/.test(userIdOrUsername)) {
+        const likeP = `$${i++}`;
+        params.push(`%${userIdOrUsername}%`);
+        const idP = `$${i++}`;
+        params.push(Number(userIdOrUsername));
+        conditions.push(`(u.username ILIKE ${likeP} OR u.id = ${idP})`);
+      } else {
+        conditions.push(`u.username ILIKE $${i++}`);
+        params.push(`%${userIdOrUsername}%`);
+      }
+    }
+
+    // NAME — full_name (partial match)
+    const name = filters.name?.trim();
+    if (name) {
+      conditions.push(`u.full_name ILIKE $${i++}`);
+      params.push(`%${name}%`);
+    }
+
+    // CONTACT NUMBER — any phone on the account (partial match)
+    const contactNumber = filters.contactNumber?.trim();
+    if (contactNumber) {
+      conditions.push(
+        `EXISTS (SELECT 1 FROM user_phone_numbers upn
+                  WHERE upn.user_id = u.id AND upn.phone_number ILIKE $${i++})`,
+      );
+      params.push(`%${contactNumber}%`);
+    }
+
+    // EMAIL — partial match
+    const email = filters.email?.trim();
+    if (email) {
+      conditions.push(`u.email ILIKE $${i++}`);
+      params.push(`%${email}%`);
+    }
+
+    // REFERRER — the member who referred this member (referral tree link,
+    // NOT affiliate). Matches the referrer's username, user_code or name.
+    const referrer = filters.referrer?.trim();
+    if (referrer) {
+      conditions.push(
+        `ru.id IS NOT NULL AND (
+            ru.username  ILIKE $${i}
+         OR ru.user_code ILIKE $${i}
+         OR ru.full_name ILIKE $${i}
+        )`,
+      );
+      params.push(`%${referrer}%`);
+      i++;
+    }
+
+    // DATE range on registration date (created_at); `to` is whole-day inclusive
+    if (filters.from) {
+      conditions.push(`u.created_at >= $${i++}`);
+      params.push(filters.from);
+    }
+    if (filters.to) {
+      conditions.push(`u.created_at < ($${i++}::date + INTERVAL '1 day')`);
+      params.push(filters.to);
+    }
+
+    const whereClause = conditions.length
+      ? 'WHERE ' + conditions.join('\n          AND ')
+      : '';
+
+    const page = Math.max(Number(filters.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(filters.limit) || 20, 1), 200);
+    const offset = (page - 1) * limit;
+
+    const limitP = `$${i++}`;
+    params.push(limit);
+    const offsetP = `$${i++}`;
+    params.push(offset);
+
+    const rows = await this.dataSource.query(
+      `SELECT
+         u.id,
+         u.user_code,
+         u.full_name,
+         u.username,
+         u.email,
+         u.vip_level,
+         vc.level_name          AS vip_level_name,
+         vc.group_name          AS vip_group_name,
+         u.account_status,
+         u.is_email_verified,
+         u.is_kyc_verified,
+         u.referral_code,
+         u.referred_by_user_id,
+         ru.username            AS referrer_username,
+         ru.user_code           AS referrer_user_code,
+         ru.full_name           AS referrer_name,
+         u.created_at,
+         u.last_login_at,
+
+         w.balance,
+         w.bonus_balance,
+         w.total_deposited,
+         w.total_withdrawn,
+
+         (SELECT phone_number FROM user_phone_numbers
+           WHERE user_id = u.id AND is_primary = true LIMIT 1) AS primary_phone,
+
+         COALESCE((
+           SELECT json_agg(DISTINCT mg.name)
+           FROM member_group_users mgu
+           JOIN member_groups mg ON mg.id = mgu.group_id
+           WHERE mgu.user_id = u.id
+         ), '[]'::json) AS member_groups,
+
+         COUNT(*) OVER() AS total_count
+       FROM users u
+       LEFT JOIN wallets w           ON w.user_id = u.id
+       LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
+       LEFT JOIN users ru            ON ru.id = u.referred_by_user_id
+       ${whereClause}
+       ORDER BY u.created_at DESC
+       LIMIT ${limitP} OFFSET ${offsetP}`,
+      params,
+    );
+
+    const total = rows.length ? Number(rows[0].total_count) : 0;
+    const data = rows.map(({ total_count, ...rest }: any) => rest);
+
+    return { data, total, page, limit };
+  }
+
+  // ═════════════════════════════════════════════════════════════
   // ADMIN: GET FULL USER DETAILS
   // ═════════════════════════════════════════════════════════════
   async getUserDetailsByAdmin(userId: number) {
