@@ -5,6 +5,7 @@ import { ValidationPipe } from '@nestjs/common';
 import { WinstonModule } from 'nest-winston';
 import { winstonConfig } from './logger/logger.module';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
+import { json, urlencoded } from 'express';
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const cookieParser = require('cookie-parser');
@@ -12,6 +13,7 @@ const cookieParser = require('cookie-parser');
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
     logger: WinstonModule.createLogger(winstonConfig),
+    bodyParser: false, // disable the default 100kb parser; we register our own below
   });
 
   // Behind a reverse proxy (nginx) / Docker / Cloudflare, the TCP peer is the
@@ -21,6 +23,13 @@ async function bootstrap() {
   // If the origin is also directly reachable, scope this to the proxy subnet
   // instead so clients can't spoof X-Forwarded-For.
   app.set('trust proxy', true);
+
+  // Raise the body-parser limit. Express defaults to 100kb, which 413s large
+  // JSON/form payloads (e.g. base64 promotion images) before they reach the
+  // handler. We disabled the default parser via `bodyParser: false` above and
+  // register our own here. Kept in sync with nginx client_max_body_size (20m).
+  app.use(json({ limit: '20mb' }));
+  app.use(urlencoded({ extended: true, limit: '20mb' }));
 
   app.use(cookieParser());
 
