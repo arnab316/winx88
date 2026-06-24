@@ -343,6 +343,8 @@ export class UserService {
     contactNumber?: string;       // user_phone_numbers (CONTACT NUMBER)
     email?: string;               // users.email       (EMAIL)
     referrer?: string;            // referrer's username/code/name (REFERRER)
+    deposited?: boolean;          // INTERNAL: true=has deposited, false=deposit not yet
+    phoneVerified?: boolean;      // INTERNAL: true=number verified, false=not yet
     from?: string;                // created_at >=     (DATE FROM)
     to?: string;                  // created_at <      (DATE TO, whole-day inclusive)
     page?: number;
@@ -429,6 +431,28 @@ export class UserService {
       i++;
     }
 
+    // INTERNAL SEARCH — DEPOSIT. total_deposited is bumped on every approved
+    // + manual deposit, so a lifetime value of 0 means "deposit not yet".
+    if (filters.deposited === true) {
+      conditions.push(`COALESCE(w.total_deposited, 0) > 0`);
+    } else if (filters.deposited === false) {
+      conditions.push(`COALESCE(w.total_deposited, 0) = 0`);
+    }
+
+    // INTERNAL SEARCH — NUMBER VERIFY. "verified" = at least one phone row
+    // with is_verified = true; "not yet" = none (incl. no phone at all).
+    if (filters.phoneVerified === true) {
+      conditions.push(
+        `EXISTS (SELECT 1 FROM user_phone_numbers upn
+                  WHERE upn.user_id = u.id AND upn.is_verified = true)`,
+      );
+    } else if (filters.phoneVerified === false) {
+      conditions.push(
+        `NOT EXISTS (SELECT 1 FROM user_phone_numbers upn
+                      WHERE upn.user_id = u.id AND upn.is_verified = true)`,
+      );
+    }
+
     // DATE range on registration date (created_at); `to` is whole-day inclusive
     if (filters.from) {
       conditions.push(`u.created_at >= $${i++}`);
@@ -480,6 +504,9 @@ export class UserService {
 
          (SELECT phone_number FROM user_phone_numbers
            WHERE user_id = u.id AND is_primary = true LIMIT 1) AS primary_phone,
+
+         EXISTS (SELECT 1 FROM user_phone_numbers upn
+                  WHERE upn.user_id = u.id AND upn.is_verified = true) AS has_verified_phone,
 
          COALESCE((
            SELECT json_agg(DISTINCT mg.name)

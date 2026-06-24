@@ -526,6 +526,8 @@ export class UserController {
   //     contactNumber  → CONTACT NUMBER (national part, no +880)
   //     email          → EMAIL
   //     referrer       → REFERRER (their username / member id / name)
+  //     deposited      → INTERNAL: 'true' = has deposited, 'false' = deposit not yet
+  //     phoneVerified  → INTERNAL: 'true' = number verified, 'false' = not yet
   //     from, to       → registration DATE FROM / DATE TO (to is inclusive)
   //     page, limit    → pagination (limit capped at 200)
   @UseGuards(AdminGuard)
@@ -540,11 +542,16 @@ export class UserController {
     @Query('contactNumber') contactNumber?: string,
     @Query('email') email?: string,
     @Query('referrer') referrer?: string,
+    @Query('deposited') deposited?: string,
+    @Query('phoneVerified') phoneVerified?: string,
     @Query('from') from?: string,
     @Query('to') to?: string,
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
+    // Tri-state: 'true'/'false' set the filter, anything else (incl. absent) skips it.
+    const toBool = (v?: string) =>
+      v === 'true' ? true : v === 'false' ? false : undefined;
     const filters = {
       memberGroupId: memberGroupId ? Number(memberGroupId) : undefined,
       memberId,
@@ -554,6 +561,8 @@ export class UserController {
       contactNumber,
       email,
       referrer,
+      deposited: toBool(deposited),
+      phoneVerified: toBool(phoneVerified),
       from,
       to,
       page: page ? Number(page) : undefined,
