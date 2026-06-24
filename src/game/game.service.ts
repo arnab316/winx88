@@ -1815,26 +1815,45 @@ export class GameService {
 
    async getPublicResultsFeed(q: {
     hours?: number;
+    date?: string;
     gameId?: number;
     digitLength?: number;
     gameCode?: string;
     limit?: number;
   }) {
-    // Clamp hours: default 24, max 168 (7 days)
-    const hours   = Math.min(Math.max(Number(q.hours ?? 24), 1), 168);
-    const limit   = Math.min(Math.max(Number(q.limit ?? 50), 1), 200);
- 
-    // `hours` selects a single 24-hour day-slice ending (hours - 24) hours ago,
-    // NOT a cumulative window: 24 → today, 48 → only yesterday, 72 → only the
-    // day before, etc. Lower bound = now - hours; upper bound = now - (hours-24).
-    const upperOffset = hours - 24; // 0 for hours=24 → upper bound is NOW()
-    const where: string[] = [
-      `res.created_at >= NOW() - ($1 || ' hours')::interval`,
-      `res.created_at <  NOW() - ($2 || ' hours')::interval`,
-      `gr.status IN ('RESULT_PUBLISHED', 'SETTLED')`,
-    ];
-    const params: any[] = [hours, upperOffset];
-    let i = 3;
+    const hours = Math.min(Math.max(Number(q.hours ?? 24), 1), 168);
+    const limit = Math.min(Math.max(Number(q.limit ?? 50), 1), 200);
+
+    // Calendar-day filtering in the platform timezone (Asia/Dhaka) — NOT rolling
+    // hours. Each query returns exactly ONE calendar day [00:00, next 00:00) in
+    // Dhaka time. Pick the day either way:
+    //   • explicit `date` = 'YYYY-MM-DD' → that exact day (e.g. the 22nd Jun tab)
+    //   • else legacy `hours` → day offset: 24=today, 48=yesterday, 72=the day
+    //     before, … (offset = round(hours/24) - 1, clamped 0..6).
+    const TZ = 'Asia/Dhaka';
+    const where: string[] = [`gr.status IN ('RESULT_PUBLISHED', 'SETTLED')`];
+    const params: any[] = [];
+    let i = 1;
+    let windowLabel: string;
+
+    if (typeof q.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(q.date)) {
+      where.push(`res.created_at >= ($${i}::timestamp AT TIME ZONE '${TZ}')`);
+      where.push(`res.created_at <  (($${i}::date + 1)::timestamp AT TIME ZONE '${TZ}')`);
+      params.push(q.date);
+      i++;
+      windowLabel = q.date;
+    } else {
+      const dayOffset = Math.min(Math.max(Math.round(hours / 24) - 1, 0), 6);
+      where.push(
+        `res.created_at >= ((date_trunc('day', NOW() AT TIME ZONE '${TZ}') - make_interval(days => $${i}::int)) AT TIME ZONE '${TZ}')`,
+      );
+      where.push(
+        `res.created_at <  ((date_trunc('day', NOW() AT TIME ZONE '${TZ}') - make_interval(days => ($${i} - 1)::int)) AT TIME ZONE '${TZ}')`,
+      );
+      params.push(dayOffset);
+      i++;
+      windowLabel = dayOffset === 0 ? 'today' : dayOffset === 1 ? 'yesterday' : `${dayOffset} days ago`;
+    }
  
     if (q.gameId) {
       where.push(`res.game_id = $${i++}`);
@@ -1899,6 +1918,7 @@ export class GameService {
  
     return {
       hoursShown: hours,
+      window: windowLabel,
       count: rows.length,
       results: rows.map((r: any) => {
         const mult = parseFloat(r.payout_multiplier);

@@ -129,8 +129,10 @@ export class GameController {
     }
   }
 
-  // GET /games/results/feed?hours=24&gameId=1&gameCode=3D&digitLength=3&limit=50
-  // Public — no auth. Last 24hrs by default, max 7 days.
+  // GET /games/results/feed?date=2026-06-24&gameId=1&gameCode=3D&digitLength=3&limit=50
+  // Public — no auth. Returns ONE calendar day (Asia/Dhaka), midnight→midnight.
+  //   • date=YYYY-MM-DD → that exact day (e.g. 24th Jun button)
+  //   • else hours: 24=today, 48=yesterday, 72=the day before, … (max 7 days)
   @Get('results/feed')
   async publicResultsFeed(
     @Query('hours',       new DefaultValuePipe(24),  ParseIntPipe) hours:       number,
@@ -138,10 +140,12 @@ export class GameController {
     @Query('digitLength', new DefaultValuePipe(0),   ParseIntPipe) digitLength: number,
     @Query('limit',       new DefaultValuePipe(50),  ParseIntPipe) limit:       number,
     @Query('gameCode')    gameCode?:  string,
+    @Query('date')        date?:      string,
   ) {
     try {
       const data = await this.gameService.getPublicResultsFeed({
         hours,
+        date:        date?.trim() || undefined,
         gameId:      gameId      > 0 ? gameId      : undefined,
         digitLength: digitLength > 0 ? digitLength : undefined,
         gameCode:    gameCode?.trim() || undefined,
