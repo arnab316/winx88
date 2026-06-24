@@ -800,8 +800,12 @@ export class TurnoverService {
          au.name                                         AS approved_by
        FROM turnover_requirements tr
        JOIN users u            ON u.id = tr.user_id
+       -- Only PROMOTION rows reference a promotion via source_id. Referral
+       -- ("Buddy Bonus", source_type BONUS) stores source_id = referral id, so
+       -- it must NOT join here or it would pick up an unrelated promo's code.
+       -- Its name still resolves via COALESCE(tr.label, …) below.
        LEFT JOIN promotions p  ON p.id = tr.source_id
-                               AND tr.source_type IN ('PROMOTION','BONUS')
+                               AND tr.source_type = 'PROMOTION'
        LEFT JOIN admin_users au ON au.id = tr.created_by_admin_id
        ${whereSql}
        ORDER BY tr.created_at DESC, tr.id DESC
@@ -814,7 +818,7 @@ export class TurnoverService {
        FROM turnover_requirements tr
        JOIN users u           ON u.id = tr.user_id
        LEFT JOIN promotions p ON p.id = tr.source_id
-                              AND tr.source_type IN ('PROMOTION','BONUS')
+                              AND tr.source_type = 'PROMOTION'
        ${whereSql}`,
       params,
     );

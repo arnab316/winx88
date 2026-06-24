@@ -302,6 +302,24 @@ export class ReferralEngineService {
       [referralId, referrerId, bonus, wageringRequired],
     );
 
+    // Mirror the wagering requirement into the unified turnover system so it
+    // shows on the user's turnover page as "Buddy Bonus", is fed by the same
+    // settled-bet chokepoint, and gates withdrawal like every other bonus
+    // turnover. (referral_bonus_wagering above still drives the referral's own
+    // BONUS_CLEARING → DONE status; this row is the user-facing/enforcement view.)
+    // Guard: turnover_requirements CHECK demands base > 0 and target >= base, so
+    // only mirror when there's a real wagering target (multiplier >= 1). With a
+    // 0/sub-1 multiplier the bonus is effectively non-wagered — nothing to show.
+    if (bonus > 0 && multiplier >= 1) {
+      await qr.query(
+        `INSERT INTO turnover_requirements
+           (user_id, source_type, source_id, base_amount, multiplier,
+            target_amount, current_amount, status, created_by_admin_id, label)
+         VALUES ($1, 'BONUS', $2, $3, $4, $5, 0, 'ACTIVE', NULL, 'Buddy Bonus')`,
+        [referrerId, referralId, bonus, multiplier, wageringRequired],
+      );
+    }
+
     await this.financialLedger.write({
       qr,
       walletId: Number(w.id),
