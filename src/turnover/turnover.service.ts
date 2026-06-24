@@ -202,6 +202,64 @@ export class TurnoverService {
       remaining -= contribution;
     }
     // Excess (remaining > 0) is dropped — each req is a closed contract.
+
+    // After this bet, if the wallet is wagered down to ~empty (≤ 1) there is
+    // nothing left to cash out, so any remaining turnover lock is pointless —
+    // auto-complete the user's other still-ACTIVE requirements.
+    await this.completeAllIfWalletDepleted(qr, userId, betId);
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // AUTO-COMPLETE WHEN WALLET IS DEPLETED
+  //   If the user's wallet balance has dropped to 0 or 1, complete ALL their
+  //   remaining ACTIVE turnover requirements: there's no balance left to
+  //   withdraw, so holding them behind a wagering gate serves no purpose.
+  //   Runs inside the settled-bet transaction; idempotent (no ACTIVE rows → no-op).
+  // ═════════════════════════════════════════════════════════════
+  private async completeAllIfWalletDepleted(
+    qr: QueryRunner,
+    userId: number,
+    betId: number,
+  ): Promise<void> {
+    const [w] = await qr.query(
+      `SELECT balance FROM wallets WHERE user_id = $1`,
+      [userId],
+    );
+    if (!w || parseFloat(w.balance) > 1) return;
+
+    const active = await qr.query(
+      `SELECT id, current_amount, target_amount
+         FROM turnover_requirements
+        WHERE user_id = $1 AND status = 'ACTIVE'
+        FOR UPDATE`,
+      [userId],
+    );
+    if (!active.length) return;
+
+    await qr.query(
+      `UPDATE turnover_requirements
+          SET current_amount = target_amount, status = 'COMPLETED',
+              completed_at = NOW(), updated_at = NOW()
+        WHERE user_id = $1 AND status = 'ACTIVE'`,
+      [userId],
+    );
+
+    for (const r of active) {
+      const current = parseFloat(r.current_amount);
+      const target  = parseFloat(r.target_amount);
+      await this.turnoverLedger.write({
+        qr,
+        userId,
+        requirementId: Number(r.id),
+        eventType:     'COMPLETED',
+        amount:        Math.max(0, target - current),
+        balanceBefore: current,
+        balanceAfter:  target,
+        referenceType: 'BET',
+        referenceId:   betId,
+        description:   'Auto-completed: wallet balance depleted (≤ 1)',
+      });
+    }
   }
 
   // ═════════════════════════════════════════════════════════════
