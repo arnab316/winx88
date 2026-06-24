@@ -6,6 +6,8 @@ import { ReferralController } from './referral.controller';
 import { ReferralService } from './referral.service';
 import { ReferralAdminController } from './referral-admin.controller';
 import { ReferralAdminService } from './referral-admin.service';
+import { ReferralInfoStatController } from './referral-info-stat.controller';
+import { ReferralInfoStatService } from './referral-info-stat.service';
 
 /**
  * Refer-a-friend referral system — Phase 1 (signup linking + referrer panel)
@@ -19,8 +21,8 @@ import { ReferralAdminService } from './referral-admin.service';
  */
 @Module({
   imports: [AuthModule],
-  controllers: [ReferralController, ReferralAdminController],
-  providers: [ReferralService, ReferralAdminService, JwtAuthGuard, AdminGuard],
+  controllers: [ReferralController, ReferralAdminController, ReferralInfoStatController],
+  providers: [ReferralService, ReferralAdminService, ReferralInfoStatService, JwtAuthGuard, AdminGuard],
   exports: [ReferralService],
 })
 export class ReferralModule {}
