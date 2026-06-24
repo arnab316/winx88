@@ -1824,12 +1824,17 @@ export class GameService {
     const hours   = Math.min(Math.max(Number(q.hours ?? 24), 1), 168);
     const limit   = Math.min(Math.max(Number(q.limit ?? 50), 1), 200);
  
+    // `hours` selects a single 24-hour day-slice ending (hours - 24) hours ago,
+    // NOT a cumulative window: 24 → today, 48 → only yesterday, 72 → only the
+    // day before, etc. Lower bound = now - hours; upper bound = now - (hours-24).
+    const upperOffset = hours - 24; // 0 for hours=24 → upper bound is NOW()
     const where: string[] = [
       `res.created_at >= NOW() - ($1 || ' hours')::interval`,
+      `res.created_at <  NOW() - ($2 || ' hours')::interval`,
       `gr.status IN ('RESULT_PUBLISHED', 'SETTLED')`,
     ];
-    const params: any[] = [hours];
-    let i = 2;
+    const params: any[] = [hours, upperOffset];
+    let i = 3;
  
     if (q.gameId) {
       where.push(`res.game_id = $${i++}`);
