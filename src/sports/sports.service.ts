@@ -677,6 +677,11 @@ export class SportsService {
     const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
     const offset = (page - 1) * limit;
 
+    this.logger.log(
+      `[SportsBetHistory] user=${userId} status=${query?.status ?? '-'} ` +
+        `from=${query?.from ?? '-'} to=${query?.to ?? '-'} page=${page} limit=${limit}`,
+    );
+
     // Inner filters (user + date) — applied on the raw row.
     const inner: string[] = ['sb.user_id = $1'];
     const params: any[] = [userId];
@@ -722,6 +727,12 @@ export class SportsService {
     const totalStaked = Number(stats?.total_staked ?? 0);
     const totalWon = Number(stats?.total_won ?? 0);
 
+    this.logger.log(
+      `[SportsBetHistory] user=${userId} returned rows=${rows.length} total=${total} ` +
+        `staked=${totalStaked} won=${totalWon}` +
+        (total === 0 ? ' (no sportsbook bets in range — check sportsCallback logs if unexpected)' : ''),
+    );
+
     return {
       data: rows.map((r: any) => this.mapSportsBetRow(r)),
       page,
@@ -758,6 +769,12 @@ export class SportsService {
     const page = Math.max(Number(query?.page) || 1, 1);
     const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 200);
     const offset = (page - 1) * limit;
+
+    this.logger.log(
+      `[AdminSportsBetHistory] userId=${query?.userId ?? '-'} username=${query?.username ?? '-'} ` +
+        `status=${query?.status ?? '-'} from=${query?.from ?? '-'} to=${query?.to ?? '-'} ` +
+        `page=${page} limit=${limit}`,
+    );
 
     const inner: string[] = [];
     const params: any[] = [];
@@ -812,6 +829,10 @@ export class SportsService {
       userCode: r.user_code,
       fullName: r.full_name,
     }));
+
+    this.logger.log(
+      `[AdminSportsBetHistory] returned rows=${rows.length} total=${total}`,
+    );
 
     return { data, page, limit, total, totalPages: Math.ceil(total / limit) || 0 };
   }

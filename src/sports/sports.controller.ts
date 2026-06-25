@@ -127,13 +127,28 @@ export class SportsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.sportsService.getSportsBetHistory(req.user.sub, {
-      status,
-      from,
-      to,
-      page: page ? Number(page) : undefined,
-      limit: limit ? Number(limit) : undefined,
-    });
+    const userId = req.user?.sub;
+    this.logger.log(
+      `[GET /sports/my-bets] HIT user=${userId} status=${status ?? '-'} ` +
+        `from=${from ?? '-'} to=${to ?? '-'} page=${page ?? '-'} limit=${limit ?? '-'}`,
+    );
+    try {
+      const data = await this.sportsService.getSportsBetHistory(userId, {
+        status,
+        from,
+        to,
+        page: page ? Number(page) : undefined,
+        limit: limit ? Number(limit) : undefined,
+      });
+      this.logger.log(`[GET /sports/my-bets] OK user=${userId} total=${data.total}`);
+      return data;
+    } catch (err: any) {
+      this.logger.error(
+        `[GET /sports/my-bets] FAILED user=${userId}: ${err?.message}`,
+        err?.stack,
+      );
+      throw err;
+    }
   }
 
   // ADMIN panel: sportsbook bets across players, filterable by user.
@@ -152,15 +167,29 @@ export class SportsController {
     @Query('page') page?: string,
     @Query('limit') limit?: string,
   ) {
-    return this.sportsService.getAdminSportsBetHistory({
-      userId: userId ? Number(userId) : undefined,
-      username,
-      status,
-      from,
-      to,
-      page: page ? Number(page) : undefined,
-      limit: limit ? Number(limit) : undefined,
-    });
+    this.logger.log(
+      `[GET /sports/admin/bets] HIT userId=${userId ?? '-'} username=${username ?? '-'} ` +
+        `status=${status ?? '-'} from=${from ?? '-'} to=${to ?? '-'} page=${page ?? '-'} limit=${limit ?? '-'}`,
+    );
+    try {
+      const data = await this.sportsService.getAdminSportsBetHistory({
+        userId: userId ? Number(userId) : undefined,
+        username,
+        status,
+        from,
+        to,
+        page: page ? Number(page) : undefined,
+        limit: limit ? Number(limit) : undefined,
+      });
+      this.logger.log(`[GET /sports/admin/bets] OK total=${data.total}`);
+      return data;
+    } catch (err: any) {
+      this.logger.error(
+        `[GET /sports/admin/bets] FAILED: ${err?.message}`,
+        err?.stack,
+      );
+      throw err;
+    }
   }
 
   @UseGuards(JwtAuthGuard)
