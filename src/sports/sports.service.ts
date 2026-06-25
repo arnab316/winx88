@@ -603,6 +603,219 @@ export class SportsService {
     };
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  // SPORTSBOOK BET HISTORY (sports_bet_logs)
+  //   Dedicated history for the actual sportsbook wagers (NOT the slots/casino
+  //   `casino_game_logs` that getLogs returns). Mirrors the jackpot module's
+  //   "my-bets" (user) + "admin bets" (admin) pattern so sports has its own
+  //   user and admin panels like lottery and palace-casino do.
+  //
+  //   Status / payout are derived exactly like the unified game-history feed
+  //   (game-history.service.ts sportsSourceSql) so both views agree:
+  //     PLACED    → open slip (no settlement yet)
+  //     WON/LOST  → from win_amount (the real amount credited at settlement)
+  //     CANCELLED → void/refund status codes (3,6,7,8)
+  // ════════════════════════════════════════════════════════════════════════
+
+  /** Normalized column list for one sports_bet_logs row (alias sb). */
+  private sportsBetColumns(): string {
+    return `
+      sb.id,
+      sb.trans_id,
+      sb.trans_hist_id,
+      sb.amount::numeric                                   AS bet_amount,
+      NULLIF(sb.bet_list->>'totalOdds', '')::numeric       AS total_odds,
+      NULLIF(sb.bet_list->>'totalWin', '')::numeric        AS potential_win,
+      COALESCE(NULLIF(sb.bet_list->'selections'->0->>'eventName', ''), 'Sportsbook') AS event_name,
+      sb.bet_list->'selections'                            AS selections,
+      CASE
+        WHEN sb.settled_at IS NULL AND sb.trans_hist_id IS NULL THEN NULL
+        WHEN sb.win_amount IS NOT NULL                          THEN sb.win_amount
+        WHEN sb.type IN ('1','4','5')  THEN NULLIF(sb.bet_list->>'totalWin', '')::numeric
+        WHEN sb.type IN ('3','6','7','8')                       THEN NULL
+        ELSE 0
+      END                                                  AS actual_payout,
+      CASE
+        WHEN sb.settled_at IS NULL AND sb.trans_hist_id IS NULL THEN 'PLACED'
+        WHEN sb.type IN ('3','6','7','8')                       THEN 'CANCELLED'
+        WHEN sb.win_amount IS NOT NULL
+             THEN CASE WHEN sb.win_amount > 0 THEN 'WON' ELSE 'LOST' END
+        WHEN sb.type IN ('1','4','5')                           THEN 'WON'
+        ELSE 'LOST'
+      END                                                  AS status,
+      sb.created_at                                        AS placed_at,
+      sb.settled_at                                        AS settled_at
+    `;
+  }
+
+  private mapSportsBetRow(r: any) {
+    return {
+      id: Number(r.id),
+      transId: r.trans_id,
+      transHistId: r.trans_hist_id,
+      eventName: r.event_name,
+      betAmount: r.bet_amount === null ? null : Number(r.bet_amount),
+      totalOdds: r.total_odds === null ? null : Number(r.total_odds),
+      potentialWin: r.potential_win === null ? null : Number(r.potential_win),
+      actualPayout: r.actual_payout === null ? null : Number(r.actual_payout),
+      status: r.status,
+      placedAt: r.placed_at,
+      settledAt: r.settled_at,
+      selections: r.selections ?? null,
+    };
+  }
+
+  /**
+   * USER panel: the logged-in user's own sportsbook bets.
+   * Filters: status (WON|LOST|PLACED|CANCELLED), from, to (whole-day inclusive).
+   */
+  async getSportsBetHistory(
+    userId: number,
+    query: { status?: string; from?: string; to?: string; page?: number; limit?: number },
+  ) {
+    const page = Math.max(Number(query?.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 100);
+    const offset = (page - 1) * limit;
+
+    // Inner filters (user + date) — applied on the raw row.
+    const inner: string[] = ['sb.user_id = $1'];
+    const params: any[] = [userId];
+    let i = 2;
+    if (query?.from) {
+      inner.push(`sb.created_at >= $${i++}`);
+      params.push(query.from);
+    }
+    if (query?.to) {
+      inner.push(`sb.created_at < ($${i++}::date + INTERVAL '1 day')`);
+      params.push(query.to);
+    }
+    const innerWhere = `WHERE ${inner.join(' AND ')}`;
+    const innerSql = `SELECT ${this.sportsBetColumns()} FROM sports_bet_logs sb ${innerWhere}`;
+
+    // Outer status filter (status is a derived column).
+    const status = query?.status?.toUpperCase();
+    const outerWhere = status ? `WHERE h.status = $${i++}` : '';
+    if (status) params.push(status);
+
+    const rows = await this.dataSource.query(
+      `SELECT * FROM (${innerSql}) h
+       ${outerWhere}
+       ORDER BY h.placed_at DESC
+       LIMIT $${i++} OFFSET $${i++}`,
+      [...params, limit, offset],
+    );
+
+    const [stats] = await this.dataSource.query(
+      `SELECT
+         COUNT(*)::int                                            AS total_bets,
+         COUNT(*) FILTER (WHERE h.status = 'WON')::int            AS total_wins,
+         COUNT(*) FILTER (WHERE h.status = 'LOST')::int           AS total_losses,
+         COUNT(*) FILTER (WHERE h.status = 'PLACED')::int         AS total_pending,
+         COUNT(*) FILTER (WHERE h.status = 'CANCELLED')::int      AS total_cancelled,
+         COALESCE(SUM(h.bet_amount), 0)::numeric                  AS total_staked,
+         COALESCE(SUM(h.actual_payout) FILTER (WHERE h.status = 'WON'), 0)::numeric AS total_won
+       FROM (${innerSql}) h ${outerWhere}`,
+      params,
+    );
+
+    const total = stats?.total_bets ?? 0;
+    const totalStaked = Number(stats?.total_staked ?? 0);
+    const totalWon = Number(stats?.total_won ?? 0);
+
+    return {
+      data: rows.map((r: any) => this.mapSportsBetRow(r)),
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit) || 0,
+      summary: {
+        totalBets: stats?.total_bets ?? 0,
+        totalWins: stats?.total_wins ?? 0,
+        totalLosses: stats?.total_losses ?? 0,
+        totalPending: stats?.total_pending ?? 0,
+        totalCancelled: stats?.total_cancelled ?? 0,
+        totalStaked,
+        totalWon,
+        netPL: Number((totalWon - totalStaked).toFixed(2)),
+      },
+    };
+  }
+
+  /**
+   * ADMIN panel: sportsbook bets across players.
+   * Filters: userId, username (ILIKE), status, from, to. Each row carries the
+   * player's username / user_code / full_name for display.
+   */
+  async getAdminSportsBetHistory(query: {
+    userId?: number;
+    username?: string;
+    status?: string;
+    from?: string;
+    to?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const page = Math.max(Number(query?.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(query?.limit) || 20, 1), 200);
+    const offset = (page - 1) * limit;
+
+    const inner: string[] = [];
+    const params: any[] = [];
+    let i = 1;
+    if (query?.userId) {
+      inner.push(`sb.user_id = $${i++}`);
+      params.push(query.userId);
+    }
+    if (query?.username) {
+      inner.push(`u.username ILIKE $${i++}`);
+      params.push(`%${query.username}%`);
+    }
+    if (query?.from) {
+      inner.push(`sb.created_at >= $${i++}`);
+      params.push(query.from);
+    }
+    if (query?.to) {
+      inner.push(`sb.created_at < ($${i++}::date + INTERVAL '1 day')`);
+      params.push(query.to);
+    }
+    const innerWhere = inner.length ? `WHERE ${inner.join(' AND ')}` : '';
+    const innerSql = `
+      SELECT
+        ${this.sportsBetColumns()},
+        sb.user_id                                         AS user_id,
+        u.username                                         AS username,
+        u.user_code                                        AS user_code,
+        u.full_name                                        AS full_name
+      FROM sports_bet_logs sb
+      LEFT JOIN users u ON u.id = sb.user_id
+      ${innerWhere}
+    `;
+
+    const status = query?.status?.toUpperCase();
+    const outerWhere = status ? `WHERE h.status = $${i++}` : '';
+    if (status) params.push(status);
+
+    const rows = await this.dataSource.query(
+      `SELECT *, COUNT(*) OVER() AS total_count
+       FROM (${innerSql}) h
+       ${outerWhere}
+       ORDER BY h.placed_at DESC
+       LIMIT $${i++} OFFSET $${i++}`,
+      [...params, limit, offset],
+    );
+
+    const total = rows.length ? Number(rows[0].total_count) : 0;
+    const data = rows.map((r: any) => ({
+      ...this.mapSportsBetRow(r),
+      userId: r.user_id === null ? null : Number(r.user_id),
+      username: r.username,
+      userCode: r.user_code,
+      fullName: r.full_name,
+    }));
+
+    return { data, page, limit, total, totalPages: Math.ceil(total / limit) || 0 };
+  }
+
   async updateLiveCasinoGames() {
     try {
       this.logger.log('[OroPlay] Starting live casino games sync...');

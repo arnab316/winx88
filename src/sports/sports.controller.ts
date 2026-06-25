@@ -111,6 +111,58 @@ export class SportsController {
     return await this.sportsService.getLogs(query, userPayload);
   }
 
+  // ─── Sportsbook bet history (sports_bet_logs) ────────────────────────────
+  // USER panel: the logged-in user's own sportsbook bets. This is the real
+  // sportsbook wager history (the older /sports/logs returns slots/casino logs).
+  //   GET /sports/my-bets?status=WON&from=2026-06-01&to=2026-06-25&page=1&limit=20
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
+  @Get('my-bets')
+  @ApiOperation({ summary: "Logged-in user's sportsbook bet history" })
+  async getMyBets(
+    @Req() req: any,
+    @Query('status') status?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.sportsService.getSportsBetHistory(req.user.sub, {
+      status,
+      from,
+      to,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
+  // ADMIN panel: sportsbook bets across players, filterable by user.
+  //   GET /sports/admin/bets?userId=42&status=PLACED&from=&to=&page=1&limit=20
+  //   GET /sports/admin/bets?username=alice
+  @UseGuards(AdminGuard)
+  @ApiBearerAuth()
+  @Get('admin/bets')
+  @ApiOperation({ summary: 'Admin: sportsbook bet history across players' })
+  async getAdminBets(
+    @Query('userId') userId?: string,
+    @Query('username') username?: string,
+    @Query('status') status?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.sportsService.getAdminSportsBetHistory({
+      userId: userId ? Number(userId) : undefined,
+      username,
+      status,
+      from,
+      to,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @Get('sports-link')
