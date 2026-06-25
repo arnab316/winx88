@@ -1,7 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
-export type GameCategory = 'LOTTERY' | 'JACKPOT' | 'SLOT' | 'SPORTS';
+export type GameCategory = 'LOTTERY' | 'JACKPOT' | 'SLOT' | 'LIVE' | 'SPORTS';
 
 export interface GameHistoryQuery {
   category?: GameCategory; // filter to one product; omit for all
@@ -161,6 +161,45 @@ export class GameHistoryService {
     `;
   }
 
+  // ── Source D: OroPlay live casino, collapsed per round from oroplay_transactions
+  //  Ledger model like slots: bet rows have amount < 0, win rows amount > 0,
+  //  cancels carry is_canceled. Collapse per round (round_id can be NULL → fall
+  //  back to transaction_code) into one synthetic wager:
+  //    bet_amount    = total staked (|negative amounts|, excluding cancelled)
+  //    actual_payout = total won    (positive amounts, excluding cancelled)
+  //    status: fully-cancelled → CANCELLED; any winnings → WON; finished with no
+  //            win → LOST; otherwise (still in play) → PLACED.
+  private oroplaySourceSql(): string {
+    return `
+      SELECT
+        COALESCE(ot.round_id, ot.transaction_code)            AS ref_id,
+        COALESCE(ot.round_id, ot.transaction_code)            AS ref_code,
+        'LIVE'                                                AS category,
+        MAX(ot.game_code)                                     AS game_code,
+        MAX(ot.game_code)                                     AS game_name,
+        NULL::int                                             AS provider_id,
+        MAX(ot.vendor_code)                                   AS provider_name,
+        NULL::text                                            AS bet_number,
+        COALESCE(SUM(-ot.amount) FILTER (WHERE ot.amount < 0 AND ot.is_canceled = FALSE), 0) AS bet_amount,
+        NULL::numeric                                         AS payout_multiplier,
+        NULL::numeric                                         AS potential_payout,
+        COALESCE(SUM(ot.amount) FILTER (WHERE ot.amount > 0 AND ot.is_canceled = FALSE), 0)  AS actual_payout,
+        CASE
+          WHEN bool_and(ot.is_canceled)                                     THEN 'CANCELLED'
+          WHEN COALESCE(SUM(ot.amount) FILTER (WHERE ot.amount > 0 AND ot.is_canceled = FALSE), 0) > 0 THEN 'WON'
+          WHEN bool_or(ot.is_finished)                                      THEN 'LOST'
+          ELSE 'PLACED'
+        END                                                   AS status,
+        MIN(ot.created_at)                                    AS placed_at,
+        MAX(ot.created_at)                                    AS settled_at,
+        COALESCE(ot.round_id, ot.transaction_code)            AS round_code,
+        NULL::text                                            AS result_number
+      FROM oroplay_transactions ot
+      WHERE ot.user_id = $1
+      GROUP BY COALESCE(ot.round_id, ot.transaction_code)
+    `;
+  }
+
   async getHistory(userId: number, q: GameHistoryQuery) {
     const page  = Math.max(q.page ?? 1, 1);
     const limit = Math.min(Math.max(q.limit ?? 20, 1), 100);
@@ -171,6 +210,7 @@ export class GameHistoryService {
 
     const betsSelect = this.betsSourceSql();
     const slotSelect = this.slotSourceSql();
+    const oroplaySelect = this.oroplaySourceSql();
     const sportsSelect = this.sportsSourceSql();
 
     // Decide which sources to union based on the category filter.
@@ -180,6 +220,9 @@ export class GameHistoryService {
     }
     if (!category || category === 'SLOT') {
       parts.push(slotSelect);
+    }
+    if (!category || category === 'LIVE') {
+      parts.push(oroplaySelect);
     }
     if (!category || category === 'SPORTS') {
       parts.push(sportsSelect);
@@ -367,6 +410,9 @@ export class GameHistoryService {
     }
     if (!category || category === 'SLOT') {
       parts.push(this.slotSourceSql());
+    }
+    if (!category || category === 'LIVE') {
+      parts.push(this.oroplaySourceSql());
     }
     if (!category || category === 'SPORTS') {
       parts.push(this.sportsSourceSql());
