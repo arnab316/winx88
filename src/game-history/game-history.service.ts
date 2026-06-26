@@ -1,7 +1,20 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 
-export type GameCategory = 'LOTTERY' | 'JACKPOT' | 'SLOT' | 'LIVE' | 'SPORTS';
+export type GameCategory =
+  | 'LOTTERY'
+  | 'JACKPOT'
+  | 'SLOT'
+  | 'LIVE'
+  | 'FISHING'
+  | 'CRASH'
+  | 'POKER'
+  | 'SPORTS';
+
+// Categories that are sourced from oroplay_transactions (split by vendor_code
+// prefix: fishing-* → FISHING, mini-* → CRASH, poker-* → POKER, casino-* → LIVE).
+// Used to decide when to include the OroPlay source in the union.
+export const OROPLAY_CATEGORIES: GameCategory[] = ['LIVE', 'FISHING', 'CRASH', 'POKER'];
 
 export interface GameHistoryQuery {
   category?: GameCategory; // filter to one product; omit for all
@@ -161,7 +174,7 @@ export class GameHistoryService {
     `;
   }
 
-  // ── Source D: OroPlay live casino, collapsed per round from oroplay_transactions
+  // ── Source D: OroPlay games, collapsed per round from oroplay_transactions
   //  Ledger model like slots: bet rows have amount < 0, win rows amount > 0,
   //  cancels carry is_canceled. Collapse per round (round_id can be NULL → fall
   //  back to transaction_code) into one synthetic wager:
@@ -169,12 +182,19 @@ export class GameHistoryService {
   //    actual_payout = total won    (positive amounts, excluding cancelled)
   //    status: fully-cancelled → CANCELLED; any winnings → WON; finished with no
   //            win → LOST; otherwise (still in play) → PLACED.
+  //  category is derived from the vendor_code PREFIX (one product per round):
+  //    fishing-* → FISHING, mini-* → CRASH, poker-* → POKER, casino-*/other → LIVE.
   private oroplaySourceSql(): string {
     return `
       SELECT
         COALESCE(ot.round_id, ot.transaction_code)            AS ref_id,
         COALESCE(ot.round_id, ot.transaction_code)            AS ref_code,
-        'LIVE'                                                AS category,
+        CASE
+          WHEN MAX(ot.vendor_code) LIKE 'fishing-%' THEN 'FISHING'
+          WHEN MAX(ot.vendor_code) LIKE 'mini-%'    THEN 'CRASH'
+          WHEN MAX(ot.vendor_code) LIKE 'poker-%'   THEN 'POKER'
+          ELSE 'LIVE'
+        END                                                  AS category,
         MAX(ot.game_code)                                     AS game_code,
         MAX(ot.game_code)                                     AS game_name,
         NULL::int                                             AS provider_id,
@@ -221,7 +241,7 @@ export class GameHistoryService {
     if (!category || category === 'SLOT') {
       parts.push(slotSelect);
     }
-    if (!category || category === 'LIVE') {
+    if (!category || OROPLAY_CATEGORIES.includes(category)) {
       parts.push(oroplaySelect);
     }
     if (!category || category === 'SPORTS') {
@@ -411,7 +431,7 @@ export class GameHistoryService {
     if (!category || category === 'SLOT') {
       parts.push(this.slotSourceSql());
     }
-    if (!category || category === 'LIVE') {
+    if (!category || OROPLAY_CATEGORIES.includes(category)) {
       parts.push(this.oroplaySourceSql());
     }
     if (!category || category === 'SPORTS') {
