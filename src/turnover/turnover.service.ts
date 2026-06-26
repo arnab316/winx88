@@ -236,9 +236,13 @@ export class TurnoverService {
     );
     if (!active.length) return;
 
+    // Only flip the status — keep current_amount at what the player ACTUALLY
+    // wagered. (Previously this overwrote current_amount = target_amount, so the
+    // wagering page showed a completed requirement at its full target even
+    // though the player never wagered that much.)
     await qr.query(
       `UPDATE turnover_requirements
-          SET current_amount = target_amount, status = 'COMPLETED',
+          SET status = 'COMPLETED',
               completed_at = NOW(), updated_at = NOW()
         WHERE user_id = $1 AND status = 'ACTIVE'`,
       [userId],
@@ -246,15 +250,14 @@ export class TurnoverService {
 
     for (const r of active) {
       const current = parseFloat(r.current_amount);
-      const target  = parseFloat(r.target_amount);
       await this.turnoverLedger.write({
         qr,
         userId,
         requirementId: Number(r.id),
         eventType:     'COMPLETED',
-        amount:        Math.max(0, target - current),
+        amount:        0, // administrative completion — no real turnover added
         balanceBefore: current,
-        balanceAfter:  target,
+        balanceAfter:  current,
         referenceType: 'BET',
         referenceId:   betId,
         description:   'Auto-completed: wallet balance depleted (≤ 1)',
@@ -550,10 +553,15 @@ export class TurnoverService {
         targetAmount:  target,
         currentAmount: current,
         remaining,
+        // currentAmount stays at what the player actually wagered. A COMPLETED
+        // requirement reads 100% (it IS done) even if it was force-completed
+        // below target (wallet depleted / admin), so the bar isn't stuck < full.
         progressPercent:
-          target > 0
-            ? Number(Math.min((current / target) * 100, 100).toFixed(2))
-            : 100,
+          r.status === 'COMPLETED'
+            ? 100
+            : target > 0
+              ? Number(Math.min((current / target) * 100, 100).toFixed(2))
+              : 100,
         status:        r.status,
         completedAt:   r.completed_at,
         createdAt:     r.created_at,
@@ -932,14 +940,16 @@ export class TurnoverService {
       }
 
       const current = parseFloat(req.current_amount);
-      const target = parseFloat(req.target_amount);
 
+      // Flip to COMPLETED but keep current_amount = what the player actually
+      // wagered (don't inflate to target), so the displayed completed amount
+      // reflects reality.
       await qr.query(
         `UPDATE turnover_requirements
-         SET current_amount = $1, status = 'COMPLETED',
+         SET status = 'COMPLETED',
              completed_at = NOW(), updated_at = NOW()
-         WHERE id = $2`,
-        [target, requirementId],
+         WHERE id = $1`,
+        [requirementId],
       );
 
       await this.turnoverLedger.write({
@@ -947,9 +957,9 @@ export class TurnoverService {
         userId:        req.user_id,
         requirementId: req.id,
         eventType:     'COMPLETED',
-        amount:        Math.max(0, target - current),
+        amount:        0, // administrative completion — no real turnover added
         balanceBefore: current,
-        balanceAfter:  target,
+        balanceAfter:  current,
         referenceType: 'ADMIN',
         referenceId:   adminId,
         description:   'Turnover marked complete by admin',
@@ -959,7 +969,7 @@ export class TurnoverService {
       return {
         message: 'Turnover marked complete',
         requirementId: req.id,
-        completed: target,
+        completed: current,
         status: 'COMPLETED',
       };
     } catch (e) {
