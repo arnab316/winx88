@@ -2051,7 +2051,22 @@ export class SportsService {
             user.id,
           ]);
 
+          // The live provider's bet payload omits per-slip stake fields — each
+          // betList item is just { id, selections } and the stake is the
+          // top-level data.amount. Prefer any slip-level stake if present,
+          // otherwise split the total evenly across slips (single-slip bets →
+          // the full amount). `amount` is NOT NULL, so never insert undefined.
+          const slipCount = (data.betList ?? []).length || 1;
           for (const betData of data.betList ?? []) {
+            const rawStake =
+              betData.totalStake ??
+              betData.finalStake ??
+              betData.unitStake ??
+              totalStake / slipCount;
+            const slipStake = Number.isFinite(Number(rawStake))
+              ? Number(rawStake)
+              : 0;
+
             const betLog = await qr.query(
               `INSERT INTO sports_bet_logs (user_id, user_name, bet_list, trans_id, trans_hist_id, amount, type, date_time)
                VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
@@ -2064,8 +2079,8 @@ export class SportsService {
                 betData.id ?? data.trans_id ?? null,
                 // trans_hist_id is only assigned at settlement (win callback)
                 null,
-                betData.totalStake,
-                betData.status ?? 0,
+                slipStake,
+                betData.status ?? data.type ?? 0,
                 data.dateTime ?? new Date().toISOString(),
               ],
             );
@@ -2078,12 +2093,12 @@ export class SportsService {
               qr,
               user.id,
               Number(betLog[0].id),
-              Number(betData.totalStake),
+              slipStake,
             );
 
             this.logger.log(
               `[SportsCallback#${reqId}] bet slip recorded: logId=${betLog[0].id} ` +
-                `trans_id=${betData.id ?? data.trans_id} stake=${betData.totalStake} status=${betData.status ?? 0}`,
+                `trans_id=${betData.id ?? data.trans_id} stake=${slipStake} status=${betData.status ?? data.type ?? 0}`,
             );
           }
 
