@@ -64,6 +64,19 @@ function getCasinoConfig(
 @Injectable()
 export class SportsService {
   private readonly logger = new Logger(SportsService.name);
+
+  // Last sports callback the provider sent us, recorded in-memory (resets on
+  // restart). The key signal for "is the provider actually reaching us": if this
+  // is null, NO callback has arrived — the provider's callback URL is wrong/
+  // unreachable. Surfaced via GET /sports/admin/callback-info.
+  private lastSportsCallback: {
+    at: string;
+    reqId: string;
+    command: string;
+    userName: string;
+    code: number | null;
+    note: string;
+  } | null = null;
   private readonly casinoInfo: {
     apiUrl: string;
     merchantID: string;
@@ -835,6 +848,55 @@ export class SportsService {
     );
 
     return { data, page, limit, total, totalPages: Math.ceil(total / limit) || 0 };
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // ADMIN: SPORTS CALLBACK HEALTH
+  //   Confirms how the provider should reach us and whether it actually has.
+  //   `lastCallbackReceived` is in-memory (resets on restart); `storage`
+  //   reflects persisted bet rows. If BOTH show nothing, the provider is not
+  //   reaching this server — fix the callback URL on the provider's side.
+  // ════════════════════════════════════════════════════════════════════════
+  async getCallbackInfo() {
+    const base = (this.configService.get<string>('APP_BASE_URL') ?? '').replace(/\/+$/, '');
+    const callbackUrl = base ? `${base}/sports/sportsCallback` : '/sports/sportsCallback';
+
+    const [s] = await this.dataSource.query(
+      `SELECT
+         COUNT(*)::int                                          AS total_bets,
+         COUNT(*) FILTER (WHERE settled_at IS NOT NULL)::int    AS total_settled,
+         MAX(created_at)                                        AS last_bet_at,
+         MAX(settled_at)                                        AS last_settled_at
+       FROM sports_bet_logs`,
+    );
+
+    const received = !!this.lastSportsCallback;
+    return {
+      // What the provider must be configured to call:
+      callbackUrl,
+      callbackPath: '/sports/sportsCallback',
+      callbackMethod: 'POST',
+      expectedAuthHeader: 'Authorization: Bearer <SPORTS_CALLBACK_TOKEN>',
+      callbackTokenConfigured: !!this.spotsInfo.callbackToken,
+      callbackTokenMasked: this.maskSecret(this.spotsInfo.callbackToken),
+      providerApiUrl: this.spotsInfo.apiUrl,
+
+      // Has the provider actually reached us (since last restart)?
+      lastCallbackReceived: this.lastSportsCallback,
+
+      // Persisted evidence of successful bet/win callbacks:
+      storage: {
+        totalBets: s?.total_bets ?? 0,
+        totalSettled: s?.total_settled ?? 0,
+        lastBetAt: s?.last_bet_at ?? null,
+        lastSettledAt: s?.last_settled_at ?? null,
+      },
+
+      healthy: received || (s?.total_bets ?? 0) > 0,
+      note: received
+        ? `Last callback: ${this.lastSportsCallback?.command} → code ${this.lastSportsCallback?.code ?? '?'} (${this.lastSportsCallback?.note}) at ${this.lastSportsCallback?.at}.`
+        : 'NO sports callback received since last restart. The provider is not reaching this server — verify the callback URL registered on the provider matches callbackUrl above and that it is publicly reachable.',
+    };
   }
 
   async updateLiveCasinoGames() {
@@ -1849,11 +1911,25 @@ export class SportsService {
     // Full raw payload so a failed/odd callback can be replayed & inspected later.
     this.logger.log(`[SportsCallback#${reqId}] payload=${this.safeJson(data)}`);
 
+    // Record receipt BEFORE any validation — proves the provider reached us at
+    // all (the #1 thing to confirm when bets fail). Outcome code is filled in
+    // below as we resolve the request.
+    this.lastSportsCallback = {
+      at: new Date().toISOString(),
+      reqId,
+      command,
+      userName,
+      code: null,
+      note: 'received',
+    };
+
     if (this.spotsInfo.callbackToken !== callbackToken) {
       this.logger.warn(
         `[SportsCallback#${reqId}] REJECTED 1001 invalid callback token: ` +
           `received=${recvToken} expected=${this.maskSecret(this.spotsInfo.callbackToken)}`,
       );
+      this.lastSportsCallback.code = 1001;
+      this.lastSportsCallback.note = 'invalid callback token';
       return {
         code: 1001,
         message: 'Failed',
@@ -2188,6 +2264,11 @@ export class SportsService {
           );
       }
 
+      if (this.lastSportsCallback) {
+        this.lastSportsCallback.code = result?.code ?? null;
+        this.lastSportsCallback.note = result?.message ?? 'ok';
+      }
+
       this.logger.log(
         `[SportsCallback#${reqId}] ===== END ===== command=${command} code=${result?.code} response=${this.safeJson(result)}`,
       );
@@ -2195,6 +2276,10 @@ export class SportsService {
     } catch (ex: any) {
       await qr.rollbackTransaction();
       await qr.release();
+      if (this.lastSportsCallback) {
+        this.lastSportsCallback.code = 9999;
+        this.lastSportsCallback.note = ex?.message ?? 'exception';
+      }
       // This is what surfaces to the provider as a failed callback (and can be
       // what makes their placeWidget call 500). Full context for a post-mortem.
       this.logger.error(

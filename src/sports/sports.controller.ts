@@ -192,6 +192,29 @@ export class SportsController {
     }
   }
 
+  // ADMIN: sports callback health — is the provider reaching us, and at what URL?
+  //   GET /sports/admin/callback-info
+  @UseGuards(AdminGuard)
+  @ApiBearerAuth()
+  @Get('admin/callback-info')
+  @ApiOperation({ summary: 'Admin: sports callback URL + last-received status' })
+  async getCallbackInfo() {
+    this.logger.log('[GET /sports/admin/callback-info] HIT');
+    try {
+      const data = await this.sportsService.getCallbackInfo();
+      this.logger.log(
+        `[GET /sports/admin/callback-info] healthy=${data.healthy} received=${!!data.lastCallbackReceived}`,
+      );
+      return data;
+    } catch (err: any) {
+      this.logger.error(
+        `[GET /sports/admin/callback-info] FAILED: ${err?.message}`,
+        err?.stack,
+      );
+      throw err;
+    }
+  }
+
   @UseGuards(JwtAuthGuard)
   @ApiBearerAuth()
   @Get('sports-link')
