@@ -518,7 +518,7 @@ export class UserController {
   // GET /user/admin/members/search
   //   Member Info Filters panel. All query params optional, ANDed together.
   //   Currency and Affiliate are intentionally excluded.
-  //     memberGroupId  → MEMBER GROUP (member_groups.id)
+  //     memberGroupId  → MEMBER GROUP = VIP tier (vip_level_config.level); alias: vipLevel
   //     memberId       → MEMBER ID (user_code)
   //     status         → USER STATUS (ACTIVE | BLOCKED | SUSPENDED)
   //     q              → USER ID / USERNAME
@@ -535,6 +535,7 @@ export class UserController {
   async searchMembers(
     @Req() req: any,
     @Query('memberGroupId') memberGroupId?: string,
+    @Query('vipLevel') vipLevel?: string,
     @Query('memberId') memberId?: string,
     @Query('status') status?: string,
     @Query('q') q?: string,
@@ -552,8 +553,15 @@ export class UserController {
     // Tri-state: 'true'/'false' set the filter, anything else (incl. absent) skips it.
     const toBool = (v?: string) =>
       v === 'true' ? true : v === 'false' ? false : undefined;
+    // MEMBER GROUP = VIP tier. Accept `vipLevel` or legacy `memberGroupId`;
+    // level 0 (Normal) is valid, so only treat empty/garbage as "unset".
+    const lvlRaw = vipLevel ?? memberGroupId;
+    const vip =
+      lvlRaw !== undefined && lvlRaw !== '' && Number.isFinite(Number(lvlRaw))
+        ? Number(lvlRaw)
+        : undefined;
     const filters = {
-      memberGroupId: memberGroupId ? Number(memberGroupId) : undefined,
+      vipLevel: vip,
       memberId,
       status,
       userIdOrUsername: q,

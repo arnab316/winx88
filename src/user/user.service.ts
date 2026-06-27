@@ -335,7 +335,7 @@ export class UserService {
   //   intentionally NOT part of this search.
   // ═════════════════════════════════════════════════════════════
   async searchMembers(filters: {
-    memberGroupId?: number;       // member_groups.id  (MEMBER GROUP dropdown)
+    vipLevel?: number;            // vip_level_config.level (MEMBER GROUP dropdown = VIP tier)
     memberId?: string;            // users.user_code   (MEMBER ID)
     status?: string;              // account_status    (USER STATUS dropdown)
     userIdOrUsername?: string;    // users.id / username (USER ID / USERNAME)
@@ -354,13 +354,11 @@ export class UserService {
     const params: any[] = [];
     let i = 1;
 
-    // MEMBER GROUP — membership in member_group_users
-    if (filters.memberGroupId) {
-      conditions.push(
-        `EXISTS (SELECT 1 FROM member_group_users mgu
-                  WHERE mgu.user_id = u.id AND mgu.group_id = $${i++})`,
-      );
-      params.push(filters.memberGroupId);
+    // MEMBER GROUP = VIP tier (vip_level_config.level). Note level 0 (Normal)
+    // is valid, so test for undefined/null rather than truthiness.
+    if (filters.vipLevel !== undefined && filters.vipLevel !== null) {
+      conditions.push(`u.vip_level = $${i++}`);
+      params.push(filters.vipLevel);
     }
 
     // MEMBER ID — user_code (partial match, case-insensitive)
