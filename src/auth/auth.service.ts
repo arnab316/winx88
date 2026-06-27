@@ -673,7 +673,15 @@ async register(dto: any) {
       throw new UnauthorizedException(`Admin account is ${a.status}`);
     }
 
-    const payload = { sub: a.id, role: a.role ?? 'ADMIN' };
+    // RBAC: resolve roles + effective permissions (AWS-style) for this admin.
+    const access = await this.loadAdminAccess(a.id, a.role);
+
+    const payload = {
+      sub: a.id,
+      type: 'ADMIN',
+      role: a.role ?? 'ADMIN', // legacy primary role (kept for SuperAdminGuard etc.)
+      roles: access.roles,     // full role set (groups)
+    };
     const accessToken  = this.jwtService.sign(payload, { expiresIn: '7d' });
     const refreshToken = this.jwtService.sign(payload, { expiresIn: '7d' });
     const hashedToken  = await bcrypt.hash(refreshToken, 10);
@@ -687,8 +695,45 @@ async register(dto: any) {
     return {
       accessToken,
       refreshToken,
-      admin: { id: a.id, email: a.email, role: a.role },
+      admin: { id: a.id, name: a.name, email: a.email, role: a.role },
+      roles: access.roles,            // ['CS']
+      permissions: access.permissions, // { users: ['view','update'], … }
     };
+  }
+
+  // Roles + effective permissions for an admin, in the AWS-style shape the
+  // frontend `can(resource, action)` helper consumes. Resilient: if the RBAC
+  // tables don't exist yet (migration not run), fall back to the legacy role
+  // so admin login never breaks.
+  private async loadAdminAccess(
+    adminId: number,
+    legacyRole?: string,
+  ): Promise<{ roles: string[]; permissions: Record<string, string[]> }> {
+    try {
+      const roleRows = await this.dataSource.query(
+        `SELECT ar.code
+           FROM admin_user_roles aur
+           JOIN admin_roles ar ON ar.id = aur.role_id
+          WHERE aur.admin_id = $1`,
+        [adminId],
+      );
+      const roles: string[] = roleRows.map((r: any) => r.code);
+
+      const permRows = await this.dataSource.query(
+        `SELECT DISTINCT p.resource, p.action
+           FROM admin_user_roles aur
+           JOIN admin_role_permissions arp ON arp.role_id = aur.role_id
+           JOIN admin_permissions p        ON p.id = arp.permission_id
+          WHERE aur.admin_id = $1`,
+        [adminId],
+      );
+      const permissions: Record<string, string[]> = {};
+      for (const r of permRows) (permissions[r.resource] ??= []).push(r.action);
+
+      return { roles: roles.length ? roles : (legacyRole ? [legacyRole] : []), permissions };
+    } catch {
+      return { roles: legacyRole ? [legacyRole] : [], permissions: {} };
+    }
   }
 
   // ═════════════════════════════════════════════════════════════

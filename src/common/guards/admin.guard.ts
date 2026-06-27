@@ -58,11 +58,18 @@ export class AdminGuard {
     try {
       const decoded = this.jwtService.verify(token);
 
-      if (decoded.role !== 'ADMIN') {
+      // Any admin account passes this gate (ADMIN, SUPER_ADMIN, CS, SUPPORT,
+      // TL, OPERATOR, …). Fine-grained access is enforced per-route by
+      // PermissionsGuard + @RequirePermissions. Only player tokens are rejected.
+      // Admin tokens carry type='ADMIN' (new) or a non-USER role (legacy).
+      const isAdmin =
+        decoded.type === 'ADMIN' || (decoded.role && decoded.role !== 'USER');
+      if (!isAdmin) {
         throw new ForbiddenException('Admin access only');
       }
 
-      request.user = decoded; // { sub: adminId, role: 'ADMIN' }
+      request.user = decoded; // { sub, role, roles?, type? }
+      request.admin = { id: decoded.sub, role: decoded.role };
       return true;
     } catch (err) {
       if (err instanceof ForbiddenException) throw err;
