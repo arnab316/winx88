@@ -232,6 +232,145 @@ export class ReferralAdminService {
     return { data: rows, page, limit, total, totalPages: Math.ceil(total / limit) || 0 };
   }
 
+  // ════════════════════════════════════════════════════════════════════════
+  // REFERRER SEARCH (top-level table)
+  //   Filters: currency, username, referralCode, date range (started_at).
+  //   Returns one row per referrer who made ≥1 matching referral:
+  //   { currency, username, referralCode, referralCount }.
+  //   NOTE: there is no per-user currency column in the schema (BDT-only
+  //   platform), so currency is the constant 'BDT' and the filter is a BDT
+  //   pass-through — a non-BDT value yields no rows.
+  // ════════════════════════════════════════════════════════════════════════
+  async searchReferrers(q: {
+    currency?: string;
+    username?: string;
+    referralCode?: string;
+    from?: string;
+    to?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const page = Math.max(q.page ?? 1, 1);
+    const limit = Math.min(Math.max(q.limit ?? 20, 1), 100);
+    const offset = (page - 1) * limit;
+
+    // Single-currency platform: a non-BDT currency request matches nothing.
+    if (q.currency && q.currency.trim().toUpperCase() !== 'BDT') {
+      return { data: [], page, limit, total: 0, totalPages: 0 };
+    }
+
+    const conds: string[] = [];
+    const params: any[] = [];
+    let i = 1;
+    if (q.username?.trim()) {
+      conds.push(`ru.username ILIKE $${i++}`);
+      params.push(`%${q.username.trim()}%`);
+    }
+    if (q.referralCode?.trim()) {
+      conds.push(`ru.referral_code ILIKE $${i++}`);
+      params.push(`%${q.referralCode.trim()}%`);
+    }
+    if (q.from) {
+      conds.push(`r.started_at >= $${i++}`);
+      params.push(q.from);
+    }
+    if (q.to) {
+      conds.push(`r.started_at < ($${i++}::date + INTERVAL '1 day')`);
+      params.push(q.to);
+    }
+    const where = conds.length ? `WHERE ${conds.join(' AND ')}` : '';
+
+    const rows = await this.dataSource.query(
+      `SELECT 'BDT'                  AS currency,
+              ru.id                  AS referrer_user_id,
+              ru.username,
+              ru.user_code,
+              ru.referral_code,
+              COUNT(r.id)::int       AS referral_count,
+              COUNT(*) OVER()::int   AS total_count
+         FROM friend_referrals r
+         JOIN users ru ON ru.id = r.referrer_user_id
+         ${where}
+         GROUP BY ru.id, ru.username, ru.user_code, ru.referral_code
+         ORDER BY referral_count DESC, ru.username ASC
+         LIMIT $${i++} OFFSET $${i++}`,
+      [...params, limit, offset],
+    );
+
+    const total = rows.length ? Number(rows[0].total_count) : 0;
+    const data = rows.map((r: any) => ({
+      currency:       r.currency,
+      referrerUserId: Number(r.referrer_user_id),
+      username:       r.username,
+      userCode:       r.user_code,
+      referralCode:   r.referral_code,
+      referralCount:  Number(r.referral_count),
+    }));
+
+    return { data, page, limit, total, totalPages: Math.ceil(total / limit) || 0 };
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // REFERRER DRILL-DOWN (clicking the referral count)
+  //   Lists the people a referrer referred: name, registration date/time,
+  //   bonus creation date/time (completed_at), and status mapped to the
+  //   admin's vocabulary: Approved / Disqualified / Expired (Pending while
+  //   still in progress). Same date range as the search so it matches the count.
+  // ════════════════════════════════════════════════════════════════════════
+  async getReferralDetails(
+    referrerUserId: number,
+    q?: { from?: string; to?: string },
+  ) {
+    const conds: string[] = ['r.referrer_user_id = $1'];
+    const params: any[] = [referrerUserId];
+    let i = 2;
+    if (q?.from) {
+      conds.push(`r.started_at >= $${i++}`);
+      params.push(q.from);
+    }
+    if (q?.to) {
+      conds.push(`r.started_at < ($${i++}::date + INTERVAL '1 day')`);
+      params.push(q.to);
+    }
+    const where = `WHERE ${conds.join(' AND ')}`;
+
+    const rows = await this.dataSource.query(
+      `SELECT r.id,
+              eu.id          AS referee_user_id,
+              eu.full_name   AS name,
+              eu.username    AS referee_username,
+              eu.user_code   AS referee_user_code,
+              eu.created_at  AS registered_at,
+              r.completed_at AS bonus_created_at,
+              r.status       AS raw_status,
+              CASE
+                WHEN r.status IN ('COMPLETED','BONUS_CLEARING','DONE') THEN 'Approved'
+                WHEN r.status = 'DISQUALIFIED'                         THEN 'Disqualified'
+                WHEN r.status = 'EXPIRED'                              THEN 'Expired'
+                ELSE 'Pending'
+              END            AS status,
+              r.disqualification_reason
+         FROM friend_referrals r
+         JOIN users eu ON eu.id = r.referee_user_id
+         ${where}
+         ORDER BY r.started_at DESC`,
+      params,
+    );
+
+    return rows.map((r: any) => ({
+      referralId:             Number(r.id),
+      refereeUserId:          Number(r.referee_user_id),
+      name:                   r.name,
+      refereeUsername:        r.referee_username,
+      refereeUserCode:        r.referee_user_code,
+      registeredAt:           r.registered_at,     // registration date & time
+      bonusCreatedAt:         r.bonus_created_at,   // bonus creation date & time
+      status:                 r.status,            // Approved | Disqualified | Expired | Pending
+      rawStatus:              r.raw_status,
+      disqualificationReason: r.disqualification_reason,
+    }));
+  }
+
   // ── GET /admin/referrals/leaderboard — top affiliates ──
   async getLeaderboard(sort = 'conversions', limit = 20) {
     const orderBy =

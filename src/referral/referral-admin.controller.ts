@@ -53,6 +53,37 @@ export class ReferralAdminController {
     return this.wrap(() => this.admin.getTree(userId));
   }
 
+  // Referrer search (top-level table): Currency, Username, Referral Code, Date
+  // Range → rows of { currency, username, referralCode, referralCount }.
+  //   GET /admin/referrals/referrers?currency=BDT&username=&referralCode=&from=&to=&page=&limit=
+  @Get('referrers')
+  async searchReferrers(
+    @Query('currency') currency?: string,
+    @Query('username') username?: string,
+    @Query('referralCode') referralCode?: string,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit = 20,
+  ) {
+    return this.wrap(() =>
+      this.admin.searchReferrers({ currency, username, referralCode, from, to, page, limit }),
+    );
+  }
+
+  // Drill-down (click the referral count): the people this user referred, with
+  // name, registration date/time, bonus creation date/time, and status. Pass the
+  // same from/to used in the search so the list matches the count.
+  //   GET /admin/referrals/referrers/:userId/referees?from=&to=
+  @Get('referrers/:userId/referees')
+  async referees(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+  ) {
+    return this.wrap(() => this.admin.getReferralDetails(userId, { from, to }));
+  }
+
   @Get('config')
   async getConfig() {
     return this.wrap(() => this.admin.getConfig());
