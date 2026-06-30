@@ -43,7 +43,7 @@ async function bootstrap() {
 
   app.use(cookieParser());
 
-  const swaggerConfig = new DocumentBuilder()
+  const swaggerConfig = new DocumentBuilder() 
     .setTitle('WinX88 API Documentation')
     .setDescription('The complete API documentation for WinX88 platform, including Sportsbook, Casino, and Mini-Games with dummy data/examples.')
     .setVersion('1.0')
