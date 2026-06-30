@@ -66,7 +66,7 @@ export interface WithdrawalRequestDto {
 
 export interface AdminDepositDecideDto {
   depositId: number;
-  adminId: number;
+  adminId: number | null;   // null = automated/system decision (e.g. WinyPay callback)
   action: 'APPROVE' | 'REJECT';
   rejectionReason?: string;
 }

@@ -304,7 +304,7 @@ export class WalletService {
           status: 'SUCCESS',
           description: 'Deposit approved by admin',
           createdByType: 'ADMIN',
-          createdById: dto.adminId,
+          createdById: dto.adminId ?? undefined,
         });
 
         // ─── COIN AWARD ────────────────────────────────────────
@@ -335,7 +335,7 @@ export class WalletService {
                 kind: 'DEPOSIT',
                 depositId: Number(dto.depositId),
                 depositAmount: amt,
-                adminId: dto.adminId,
+                adminId: dto.adminId ?? undefined,
               },
             );
           } catch (e: any) {
@@ -403,7 +403,7 @@ export class WalletService {
           status: 'FAILED',
           description: dto.rejectionReason ?? 'Deposit rejected by admin',
           createdByType: 'ADMIN',
-          createdById: dto.adminId,
+          createdById: dto.adminId ?? undefined,
         });
 
         await qr.commitTransaction();
@@ -415,6 +415,113 @@ export class WalletService {
     } finally {
       await qr.release();
     }
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // PROVIDER (PSP) DEPOSITS — e.g. WinyPay automated online deposits
+  //   createProviderDeposit  → runs the SAME deposit gate, inserts a PENDING
+  //                            `deposits` row tagged with the provider (no
+  //                            screenshot/agent), returns the order code.
+  //   approve/rejectDepositFromProvider → reuse decideDeposit so the credit
+  //                            path (balance, total_deposited, ledger, coins,
+  //                            promotion, default turnover, referral) is
+  //                            IDENTICAL to an admin approval. adminId=null
+  //                            marks it as an automated/system decision.
+  // ═════════════════════════════════════════════════════════════
+  async createProviderDeposit(dto: {
+    userId: number;
+    gatewayId: number;
+    amount: number;
+    payType: string;       // bkash | nagad
+    provider: string;      // 'WINYPAY'
+    promotionId?: number;
+  }): Promise<{ depositId: number; depositCode: string }> {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      await this.assertDepositGate(qr, {
+        userId: dto.userId,
+        gatewayId: dto.gatewayId,
+        amount: dto.amount,
+        promotionId: dto.promotionId,
+      });
+
+      const depositCode = generateCode('DEP'); // also serves as the provider order_id
+      const deposit = await qr.query(
+        `INSERT INTO deposits
+           (deposit_code, user_id, gateway_id, agent_id, promotion_id,
+            amount, transaction_number, screenshot_url, status,
+            provider, pay_type, requested_at, created_at, updated_at)
+         VALUES ($1,$2,$3,NULL,$4,$5,$6,'','PENDING',$7,$8,NOW(),NOW(),NOW())
+         RETURNING id`,
+        [
+          depositCode, dto.userId, dto.gatewayId, dto.promotionId ?? null,
+          dto.amount, depositCode /* transaction_number = order_id */,
+          dto.provider, dto.payType,
+        ],
+      );
+      const depositId = Number(deposit[0].id);
+
+      const wallet = await this.getWalletForUpdate(qr, dto.userId);
+      const bal = parseFloat(wallet.balance);
+      const bon = parseFloat(wallet.bonus_balance);
+      const lck = parseFloat(wallet.locked_balance);
+
+      await this.financialLedger.write({
+        qr,
+        walletId: wallet.id,
+        userId: dto.userId,
+        entryType: 'DEPOSIT_PENDING',
+        flow: 'CREDIT',
+        amount: dto.amount,
+        balanceBefore: bal,
+        balanceAfter: bal,
+        bonusBefore: bon,
+        bonusAfter: bon,
+        lockedBefore: lck,
+        lockedAfter: lck,
+        referenceType: 'DEPOSIT',
+        referenceId: depositId,
+        status: 'PENDING',
+        description: `${dto.provider} deposit initiated (${dto.payType}). Order: ${depositCode}`,
+        createdByType: 'USER',
+        createdById: dto.userId,
+      });
+
+      await qr.commitTransaction();
+      return { depositId, depositCode };
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+  }
+
+  async approveDepositFromProvider(depositId: number, providerTxnId?: string) {
+    if (providerTxnId) {
+      await this.dataSource.query(
+        `UPDATE deposits SET provider_txn_id = $1, updated_at = NOW() WHERE id = $2`,
+        [providerTxnId, depositId],
+      );
+    }
+    return this.decideDeposit({ depositId, adminId: null, action: 'APPROVE' });
+  }
+
+  async rejectDepositFromProvider(depositId: number, reason: string, providerTxnId?: string) {
+    if (providerTxnId) {
+      await this.dataSource.query(
+        `UPDATE deposits SET provider_txn_id = $1, updated_at = NOW() WHERE id = $2`,
+        [providerTxnId, depositId],
+      );
+    }
+    return this.decideDeposit({
+      depositId,
+      adminId: null,
+      action: 'REJECT',
+      rejectionReason: reason,
+    });
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -678,7 +785,7 @@ export class WalletService {
           status: 'SUCCESS',
           description: 'Withdrawal approved by admin',
           createdByType: 'ADMIN',
-          createdById: dto.adminId,
+          createdById: dto.adminId ?? undefined,
         });
 
         // Reset all turnover progress on approved withdrawal.
@@ -729,7 +836,7 @@ export class WalletService {
           status: 'FAILED',
           description: dto.rejectionReason ?? 'Withdrawal rejected. Amount refunded.',
           createdByType: 'ADMIN',
-          createdById: dto.adminId,
+          createdById: dto.adminId ?? undefined,
         });
 
         await qr.commitTransaction();

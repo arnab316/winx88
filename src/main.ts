@@ -28,7 +28,17 @@ async function bootstrap() {
   // JSON/form payloads (e.g. base64 promotion images) before they reach the
   // handler. We disabled the default parser via `bodyParser: false` above and
   // register our own here. Kept in sync with nginx client_max_body_size (20m).
-  app.use(json({ limit: '20mb' }));
+  // Stash the raw request body on req.rawBody so payment-gateway callbacks
+  // (e.g. WinyPay) can verify the HMAC over the EXACT bytes the provider signed.
+  // Re-serializing parsed JSON would change spacing/key order and break the hash.
+  app.use(
+    json({
+      limit: '20mb',
+      verify: (req: any, _res, buf: Buffer) => {
+        req.rawBody = buf;
+      },
+    }),
+  );
   app.use(urlencoded({ extended: true, limit: '20mb' }));
 
   app.use(cookieParser());
