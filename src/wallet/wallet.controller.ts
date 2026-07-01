@@ -318,6 +318,34 @@ export class WalletController {
     });
   }
  
+  // POST /wallet/admin/manual-deposit
+  // body: { usernameOrPhone, amount, description?, turnoverMultiplier? }
+  //   Credits a user's wallet by username OR primary mobile number.
+  //   amount must be positive. turnoverMultiplier (optional) = wagering req.
+  @UseGuards(AdminGuard)
+  @Post('admin/manual-deposit')
+  adminManualDeposit(@Req() req: any, @Body() body: any) {
+    const usernameOrPhone =
+      body.usernameOrPhone ?? body.username ?? body.phone ?? body.mobile;
+    if (!usernameOrPhone || typeof usernameOrPhone !== 'string') {
+      throw new BadRequestException('usernameOrPhone is required');
+    }
+    const amount = Number(body.amount);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      throw new BadRequestException('amount must be a positive number');
+    }
+    return this.walletService.adminManualDeposit({
+      usernameOrPhone,
+      amount,
+      description: body.description,
+      turnoverMultiplier:
+        body.turnoverMultiplier !== undefined && body.turnoverMultiplier !== null
+          ? Number(body.turnoverMultiplier)
+          : undefined,
+      adminId: req.user.sub,
+    });
+  }
+
   // POST /wallet/admin/adjust
   // body: { userId, amount (signed: + credit, - debit), adjustmentType,
   //         description, meta?, turnoverMultiplier? }

@@ -971,6 +971,81 @@ export class WalletService {
 }
 
   // ═════════════════════════════════════════════════════════════
+  // ADMIN: MANUAL DEPOSIT (credit by username OR mobile number)
+  //   Admin types an amount + a username or phone number; we resolve the
+  //   account and credit it as a MANUAL_DEPOSIT (bumps total_deposited, writes
+  //   the ledger, optional turnover) by reusing adminAdjustWallet.
+  // ═════════════════════════════════════════════════════════════
+  async adminManualDeposit(dto: {
+    usernameOrPhone: string;
+    amount: number;
+    description?: string;
+    turnoverMultiplier?: number;
+    adminId: number;
+  }) {
+    const identifier = (dto.usernameOrPhone ?? '').trim();
+    if (!identifier) {
+      throw new BadRequestException('username or mobile number is required');
+    }
+    if (!Number.isFinite(dto.amount) || dto.amount <= 0) {
+      throw new BadRequestException('amount must be a positive number');
+    }
+
+    const user = await this.resolveUserByUsernameOrPhone(identifier);
+    if (!user) {
+      throw new NotFoundException(`No account found for "${identifier}"`);
+    }
+
+    const result = await this.adminAdjustWallet({
+      userId: user.id,
+      amount: dto.amount, // positive → credit
+      adjustmentType: 'MANUAL_DEPOSIT',
+      description: dto.description?.trim() || 'Manual deposit by admin',
+      turnoverMultiplier: dto.turnoverMultiplier,
+      adminId: dto.adminId,
+    });
+
+    return {
+      ...result,
+      message: 'Manual deposit credited.',
+      user: {
+        id: Number(user.id),
+        username: user.username,
+        fullName: user.full_name,
+        primaryPhone: user.primary_phone,
+      },
+    };
+  }
+
+  // Find a user by exact username, else by phone number (primary preferred).
+  // Phone match is format-tolerant: strip non-digits, then drop a leading 880
+  // (country code) and/or 0 — same normalization the withdrawal flow uses.
+  private async resolveUserByUsernameOrPhone(identifier: string) {
+    const byName = await this.dataSource.query(
+      `SELECT u.id, u.username, u.full_name,
+              (SELECT phone_number FROM user_phone_numbers
+                WHERE user_id = u.id AND is_primary = true LIMIT 1) AS primary_phone
+         FROM users u WHERE u.username = $1 LIMIT 1`,
+      [identifier],
+    );
+    if (byName.length) return byName[0];
+
+    const norm = identifier.replace(/[^0-9]/g, '').replace(/^(880)?0?/, '');
+    if (!norm) return null;
+
+    const byPhone = await this.dataSource.query(
+      `SELECT u.id, u.username, u.full_name, p.phone_number AS primary_phone
+         FROM user_phone_numbers p
+         JOIN users u ON u.id = p.user_id
+        WHERE regexp_replace(regexp_replace(p.phone_number, '[^0-9]', '', 'g'), '^(880)?0?', '') = $1
+        ORDER BY p.is_primary DESC, p.id ASC
+        LIMIT 1`,
+      [norm],
+    );
+    return byPhone.length ? byPhone[0] : null;
+  }
+
+  // ═════════════════════════════════════════════════════════════
   // ADMIN: LIST PENDING DEPOSITS (with agent + promo info)
   // ═════════════════════════════════════════════════════════════
 async getPendingDeposits(q: DepositListQuery = {}) {
