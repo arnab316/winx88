@@ -57,7 +57,8 @@ export class WinypayClient {
       ...req,
     };
     this.logger.log(
-      `[WinyPay payin] -> ${url} order_id=${req.order_id} amount=${req.amount} pay_type=${req.pay_type}`,
+      `[WinyPay payin] -> ${url} order_id=${req.order_id} amount=${req.amount} ` +
+        `pay_type=${req.pay_type} callback_url=${req.callback_url} jump_url=${req.jump_url}`,
     );
     try {
       const { data } = await axios.post<WinyPayinResponse>(url, payload, {
