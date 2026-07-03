@@ -10,8 +10,49 @@ import * as bcrypt from 'bcrypt';
 export interface AdminAccess {
   roles: string[];                         // role codes, e.g. ['CS']
   isSuperAdmin: boolean;
-  permissions: Record<string, string[]>;   // AWS-style: { users: ['view','update'] }
-  flat: Set<string>;                       // { 'users.view', 'users.update' }
+  permissions: Record<string, string[]>;   // { all_members: ['view','filter'] }
+  flat: Set<string>;                       // { 'all_members.view', … }
+}
+
+/** The shape the frontend consumes: [{ section, actions: [...] }, …] */
+export interface SectionPermission {
+  section: string;
+  actions: string[];
+}
+
+const KEY_RX = /^[a-z0-9_]+$/i;
+
+function toSectionArray(map: Record<string, string[]>): SectionPermission[] {
+  return Object.entries(map)
+    .filter(([section]) => !['roles', 'admins'].includes(section)) // internal
+    .map(([section, actions]) => ({ section, actions: [...actions].sort() }))
+    .sort((a, b) => a.section.localeCompare(b.section));
+}
+
+/**
+ * Normalize a permissions payload to flat (section, action) pairs. Accepts the
+ * frontend shape [{ section, actions: [...] }] and, for backward compat, flat
+ * [{ resource|section, action }] items.
+ */
+function toPairs(
+  permissions: Array<{ section?: string; resource?: string; actions?: string[]; action?: string }>,
+): Array<{ section: string; action: string }> {
+  const pairs: Array<{ section: string; action: string }> = [];
+  for (const p of permissions ?? []) {
+    const section = (p.section ?? p.resource ?? '').trim();
+    const actions = p.actions ?? (p.action ? [p.action] : []);
+    if (!section || !KEY_RX.test(section)) {
+      throw new BadRequestException(`Invalid section key: "${section}"`);
+    }
+    for (const raw of actions) {
+      const action = String(raw ?? '').trim();
+      if (!action || !KEY_RX.test(action)) {
+        throw new BadRequestException(`Invalid action "${raw}" for section "${section}"`);
+      }
+      pairs.push({ section, action });
+    }
+  }
+  return pairs;
 }
 
 @Injectable()
@@ -70,10 +111,25 @@ export class RbacService {
     return { roles, isSuperAdmin, permissions, flat };
   }
 
-  /** For GET /admin/rbac/me — the shape the frontend `can()` helper consumes. */
+  /** For GET /admin/rbac/me — mirrors the `admin` object of /auth/admin-login. */
   async getMyAccess(adminId: number) {
     const a = await this.getAccess(adminId);
-    return { roles: a.roles, isSuperAdmin: a.isSuperAdmin, permissions: a.permissions };
+    const [primary] = await this.dataSource.query(
+      `SELECT ar.id, ar.code, ar.name
+         FROM admin_user_roles aur
+         JOIN admin_roles ar ON ar.id = aur.role_id
+        WHERE aur.admin_id = $1
+        ORDER BY (ar.code = 'SUPER_ADMIN') DESC, aur.assigned_at ASC
+        LIMIT 1`,
+      [adminId],
+    );
+    return {
+      roles: a.roles,
+      role: primary ? { id: Number(primary.id), name: primary.name, code: primary.code } : null,
+      is_super_admin: a.isSuperAdmin,
+      isSuperAdmin: a.isSuperAdmin, // legacy key
+      permissions: toSectionArray(a.permissions),
+    };
   }
 
   // ════════════════════════════════════════════════════════════════════════
@@ -98,47 +154,71 @@ export class RbacService {
   // ROLES
   // ════════════════════════════════════════════════════════════════════════
   async listRoles() {
-    return this.dataSource.query(
+    const roles = await this.dataSource.query(
       `SELECT r.id, r.code, r.name, r.description, r.is_system, r.created_at,
-              (SELECT COUNT(*)::int FROM admin_user_roles aur WHERE aur.role_id = r.id) AS member_count,
-              COALESCE((
-                SELECT json_agg(json_build_object('resource', p.resource, 'action', p.action)
-                                ORDER BY p.resource, p.action)
-                FROM admin_role_permissions arp
-                JOIN admin_permissions p ON p.id = arp.permission_id
-                WHERE arp.role_id = r.id
-              ), '[]'::json) AS permissions
+              (SELECT COUNT(*)::int FROM admin_user_roles aur WHERE aur.role_id = r.id) AS assigned_admins
          FROM admin_roles r
          ORDER BY r.is_system DESC, r.name ASC`,
     );
+    const perms = await this.dataSource.query(
+      `SELECT arp.role_id, p.resource, p.action
+         FROM admin_role_permissions arp
+         JOIN admin_permissions p ON p.id = arp.permission_id
+        ORDER BY p.resource, p.action`,
+    );
+    const byRole = new Map<number, Record<string, string[]>>();
+    for (const r of perms) {
+      const map = byRole.get(Number(r.role_id)) ?? {};
+      (map[r.resource] ??= []).push(r.action);
+      byRole.set(Number(r.role_id), map);
+    }
+    return roles.map((r: any) => ({
+      ...r,
+      id: Number(r.id),
+      permissions: toSectionArray(byRole.get(Number(r.id)) ?? {}),
+    }));
   }
 
   async getRole(id: number) {
     const [role] = await this.dataSource.query(
-      `SELECT id, code, name, description, is_system, created_at FROM admin_roles WHERE id = $1`,
+      `SELECT id, code, name, description, is_system, created_at,
+              (SELECT COUNT(*)::int FROM admin_user_roles aur WHERE aur.role_id = admin_roles.id) AS assigned_admins
+         FROM admin_roles WHERE id = $1`,
       [id],
     );
     if (!role) throw new NotFoundException('Role not found');
-    role.permissions = await this.dataSource.query(
-      `SELECT p.id, p.resource, p.action
+    const rows = await this.dataSource.query(
+      `SELECT p.resource, p.action
          FROM admin_role_permissions arp
          JOIN admin_permissions p ON p.id = arp.permission_id
         WHERE arp.role_id = $1
         ORDER BY p.resource, p.action`,
       [id],
     );
-    return role;
+    const map: Record<string, string[]> = {};
+    for (const r of rows) (map[r.resource] ??= []).push(r.action);
+    return { ...role, id: Number(role.id), permissions: toSectionArray(map) };
+  }
+
+  /** GET /admin/rbac/roles/:id/permissions — the shape the RBAS config UI edits. */
+  async getRolePermissions(id: number) {
+    const role = await this.getRole(id);
+    return { roleId: role.id, roleName: role.name, permissions: role.permissions };
   }
 
   async createRole(
-    dto: { code: string; name: string; description?: string; permissions?: Array<{ resource: string; action: string }> },
+    dto: { code?: string; name: string; description?: string; permissions?: SectionPermission[] },
     adminId: number,
   ) {
-    const code = dto.code?.trim().toUpperCase();
+    if (!dto.name?.trim()) throw new BadRequestException('name is required');
+    // code is optional — derived from the name when omitted ("Finance Manager"
+    // → FINANCE_MANAGER) so the frontend can send just { name, description }.
+    const code = (dto.code?.trim() || dto.name.trim().replace(/[^a-zA-Z0-9]+/g, '_'))
+      .replace(/^_+|_+$/g, '')
+      .toUpperCase();
     if (!code || !/^[A-Z0-9_]+$/.test(code)) {
       throw new BadRequestException('code must be UPPER_SNAKE_CASE (A-Z, 0-9, _)');
     }
-    if (!dto.name?.trim()) throw new BadRequestException('name is required');
 
     try {
       const [role] = await this.dataSource.query(
@@ -197,10 +277,15 @@ export class RbacService {
     return { message: 'Role deleted' };
   }
 
-  /** Replace a role's permission set wholesale. */
+  /**
+   * Replace a role's permission set wholesale. Takes the frontend shape
+   * [{ section, actions: [...] }] (flat { resource|section, action } items
+   * also accepted). Unknown section/action keys are added to the catalog on
+   * the fly so a frontend registry update never silently drops a grant.
+   */
   async setRolePermissions(
     roleId: number,
-    permissions: Array<{ resource: string; action: string }>,
+    permissions: Array<{ section?: string; resource?: string; actions?: string[]; action?: string }>,
   ) {
     const [role] = await this.dataSource.query(
       `SELECT id, code, is_system FROM admin_roles WHERE id = $1`,
@@ -211,17 +296,24 @@ export class RbacService {
       throw new ForbiddenException('SUPER_ADMIN permissions cannot be edited (it has full access)');
     }
 
+    const pairs = toPairs(permissions);
+
     const qr = this.dataSource.createQueryRunner();
     await qr.connect();
     await qr.startTransaction();
     try {
       await qr.query(`DELETE FROM admin_role_permissions WHERE role_id = $1`, [roleId]);
-      for (const p of permissions ?? []) {
+      for (const p of pairs) {
+        await qr.query(
+          `INSERT INTO admin_permissions (resource, action)
+           VALUES ($1, $2) ON CONFLICT (resource, action) DO NOTHING`,
+          [p.section, p.action],
+        );
         await qr.query(
           `INSERT INTO admin_role_permissions (role_id, permission_id)
            SELECT $1, id FROM admin_permissions WHERE resource = $2 AND action = $3
            ON CONFLICT DO NOTHING`,
-          [roleId, p.resource, p.action],
+          [roleId, p.section, p.action],
         );
       }
       await qr.commitTransaction();
@@ -239,9 +331,10 @@ export class RbacService {
   // ADMIN ACCOUNTS + ROLE ASSIGNMENT
   // ════════════════════════════════════════════════════════════════════════
   async listAdmins() {
-    return this.dataSource.query(
+    const rows = await this.dataSource.query(
       `SELECT au.id, au.name, au.email, au.role AS legacy_role, au.status,
               au.created_at,
+              pr.role_id, pr.role_name, pr.role_code,
               COALESCE((
                 SELECT json_agg(ar.code ORDER BY ar.code)
                 FROM admin_user_roles aur
@@ -249,8 +342,21 @@ export class RbacService {
                 WHERE aur.admin_id = au.id
               ), '[]'::json) AS roles
          FROM admin_users au
+         LEFT JOIN LATERAL (
+           SELECT ar.id AS role_id, ar.name AS role_name, ar.code AS role_code
+             FROM admin_user_roles aur
+             JOIN admin_roles ar ON ar.id = aur.role_id
+            WHERE aur.admin_id = au.id
+            ORDER BY (ar.code = 'SUPER_ADMIN') DESC, aur.assigned_at ASC
+            LIMIT 1
+         ) pr ON TRUE
          ORDER BY au.created_at DESC`,
     );
+    return rows.map((r: any) => ({
+      ...r,
+      id: Number(r.id),
+      role_id: r.role_id === null ? null : Number(r.role_id),
+    }));
   }
 
   async createAdmin(
@@ -315,6 +421,38 @@ export class RbacService {
     } finally {
       await qr.release();
     }
+  }
+
+  /**
+   * PATCH /admin/rbac/admins/:id/role — the single-role model the admin panel
+   * uses: the given role replaces ALL of the admin's roles; null removes them
+   * (the admin keeps their account but loses every permission).
+   */
+  async setAdminRole(adminId: number, roleId: number | null, actorAdminId: number) {
+    if (adminId === actorAdminId) {
+      throw new ForbiddenException('You cannot change your own role');
+    }
+    const [admin] = await this.dataSource.query(
+      `SELECT id FROM admin_users WHERE id = $1`, [adminId],
+    );
+    if (!admin) throw new NotFoundException('Admin not found');
+
+    if (roleId === null || roleId === undefined) {
+      await this.dataSource.query(
+        `DELETE FROM admin_user_roles WHERE admin_id = $1`, [adminId],
+      );
+      this.invalidate(adminId);
+      return { adminId, role_id: null, role_name: null };
+    }
+    if (!Number.isInteger(roleId)) throw new BadRequestException('role_id must be a role id or null');
+
+    const [role] = await this.dataSource.query(
+      `SELECT id, code, name FROM admin_roles WHERE id = $1`, [roleId],
+    );
+    if (!role) throw new NotFoundException('Role not found');
+
+    await this.setAdminRoles(adminId, [role.code], actorAdminId);
+    return { adminId, role_id: Number(role.id), role_name: role.name };
   }
 
   /** Replace an admin's roles wholesale. */

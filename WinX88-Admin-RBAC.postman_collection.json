@@ -1,0 +1,1507 @@
+{
+  "info": {
+    "name": "WinX88 — Admin RBAC",
+    "description": "Role-Based Access System for the WinX88 Admin Panel (backend contract for `implementation_plan.md`).\n\n**Quick start**\n1. Set `baseUrl` (collection variable, default `http://localhost:3000`).\n2. Run **Auth → POST admin-login** — the access token is saved automatically.\n3. Every other request uses collection-level Bearer auth with that token.\n\n**Contract**: permissions travel as `[{ section, actions: string[] }]` where `section` is a sidebar page key (`all_members`, `deposit`, `withdraw`, …) and `actions` are UI capabilities (`view`, `filter`, `edit`, `adjust_wallet`, …). Every response is wrapped in `{ success: true, data }`. If `is_super_admin` is true in the login response, the frontend grants ALL permissions and ignores `permissions[]`.\n\nRBAC management endpoints themselves are guarded by internal `roles.*` / `admins.*` permissions — in practice SUPER_ADMIN only.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{accessToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:3000",
+      "type": "string"
+    },
+    {
+      "key": "accessToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "roleId",
+      "value": "14",
+      "type": "string"
+    },
+    {
+      "key": "adminId",
+      "value": "11",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "POST admin-login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const json = pm.response.json();",
+                  "if (json && json.data && json.data.accessToken) {",
+                  "  pm.collectionVariables.set('accessToken', json.data.accessToken);",
+                  "  pm.test('accessToken saved to collection variable', () => {",
+                  "    pm.expect(json.data.accessToken).to.be.a('string');",
+                  "  });",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/admin-login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "admin-login"
+              ]
+            },
+            "description": "Admin login. The response `data.admin` carries everything the frontend RBAS needs:\n- `role` — role CODE string (compare against \"SUPER_ADMIN\")\n- `role_id` / `role_name` — primary role as id + display name\n- `is_super_admin` — when true, frontend grants ALL permissions and ignores `permissions[]`\n- `permissions` — `[{ section, actions[] }]`, section = sidebar page key\n\nThe **Tests** tab auto-saves `data.accessToken` into the collection variable `accessToken`, so every other request works immediately after login.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"yourPassword\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "auth": {
+              "type": "noauth"
+            }
+          },
+          "response": [
+            {
+              "name": "200 — Super Admin",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/auth/admin-login",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "auth",
+                    "admin-login"
+                  ]
+                },
+                "description": "Admin login. The response `data.admin` carries everything the frontend RBAS needs:\n- `role` — role CODE string (compare against \"SUPER_ADMIN\")\n- `role_id` / `role_name` — primary role as id + display name\n- `is_super_admin` — when true, frontend grants ALL permissions and ignores `permissions[]`\n- `permissions` — `[{ section, actions[] }]`, section = sidebar page key\n\nThe **Tests** tab auto-saves `data.accessToken` into the collection variable `accessToken`, so every other request works immediately after login.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"yourPassword\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"code\": 200,\n  \"message\": \"Admin logged in successfully\",\n  \"data\": {\n    \"accessToken\": \"<jwt>\",\n    \"refreshToken\": \"<jwt>\",\n    \"admin\": {\n      \"id\": \"2\",\n      \"name\": \"Founder\",\n      \"email\": \"admin@example.com\",\n      \"role\": \"SUPER_ADMIN\",\n      \"role_id\": 1,\n      \"role_name\": \"Super Admin\",\n      \"is_super_admin\": true,\n      \"permissions\": [\n        {\n          \"section\": \"agents\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"all_members\",\n          \"actions\": [\n            \"adjust_coins\",\n            \"adjust_wallet\",\n            \"edit\",\n            \"filter\",\n            \"view\",\n            \"view_bets\",\n            \"view_compliance\",\n            \"view_transactions\"\n          ]\n        },\n        {\n          \"section\": \"announcements\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"banners\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"dashboard\",\n          \"actions\": [\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"deposit\",\n          \"actions\": [\n            \"approve\",\n            \"filter\",\n            \"reject\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"game_rounds\",\n          \"actions\": [\n            \"filter\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"games\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"hot_suggestions\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"jackpots\",\n          \"actions\": [\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"kyc_verification\",\n          \"actions\": [\n            \"approve\",\n            \"reject\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"member_group\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"promotion_cms\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"promotion_settings\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"promotion_statistic\",\n          \"actions\": [\n            \"export\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"referral_info\",\n          \"actions\": [\n            \"export\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"referral_search\",\n          \"actions\": [\n            \"filter\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"referral_settings\",\n          \"actions\": [\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"vip_level_group\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"vip_settings\",\n          \"actions\": [\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"withdraw\",\n          \"actions\": [\n            \"approve\",\n            \"filter\",\n            \"reject\",\n            \"view\"\n          ]\n        }\n      ]\n    },\n    \"roles\": [\n      \"SUPER_ADMIN\"\n    ],\n    \"permissions\": {\n      \"all_members\": [\n        \"view\",\n        \"filter\",\n        \"edit\"\n      ],\n      \"deposit\": [\n        \"view\",\n        \"approve\"\n      ]\n    }\n  }\n}"
+            },
+            {
+              "name": "200 — Restricted role (Finance Manager)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/auth/admin-login",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "auth",
+                    "admin-login"
+                  ]
+                },
+                "description": "Admin login. The response `data.admin` carries everything the frontend RBAS needs:\n- `role` — role CODE string (compare against \"SUPER_ADMIN\")\n- `role_id` / `role_name` — primary role as id + display name\n- `is_super_admin` — when true, frontend grants ALL permissions and ignores `permissions[]`\n- `permissions` — `[{ section, actions[] }]`, section = sidebar page key\n\nThe **Tests** tab auto-saves `data.accessToken` into the collection variable `accessToken`, so every other request works immediately after login.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"yourPassword\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"code\": 200,\n  \"message\": \"Admin logged in successfully\",\n  \"data\": {\n    \"accessToken\": \"<jwt>\",\n    \"refreshToken\": \"<jwt>\",\n    \"admin\": {\n      \"id\": \"11\",\n      \"name\": \"Jane\",\n      \"email\": \"jane.cs@winx-88.com\",\n      \"role\": \"FINANCE_MANAGER\",\n      \"role_id\": 14,\n      \"role_name\": \"Finance Manager\",\n      \"is_super_admin\": false,\n      \"permissions\": [\n        {\n          \"section\": \"all_members\",\n          \"actions\": [\n            \"filter\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"dashboard\",\n          \"actions\": [\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"deposit\",\n          \"actions\": [\n            \"approve\",\n            \"filter\",\n            \"reject\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"withdraw\",\n          \"actions\": [\n            \"approve\",\n            \"filter\",\n            \"reject\",\n            \"view\"\n          ]\n        }\n      ]\n    },\n    \"roles\": [\n      \"FINANCE_MANAGER\"\n    ],\n    \"permissions\": {\n      \"all_members\": [\n        \"filter\",\n        \"view\"\n      ],\n      \"dashboard\": [\n        \"view\"\n      ],\n      \"deposit\": [\n        \"approve\",\n        \"filter\",\n        \"reject\",\n        \"view\"\n      ],\n      \"withdraw\": [\n        \"approve\",\n        \"filter\",\n        \"reject\",\n        \"view\"\n      ]\n    }\n  }\n}"
+            },
+            {
+              "name": "401 — Invalid password",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/auth/admin-login",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "auth",
+                    "admin-login"
+                  ]
+                },
+                "description": "Admin login. The response `data.admin` carries everything the frontend RBAS needs:\n- `role` — role CODE string (compare against \"SUPER_ADMIN\")\n- `role_id` / `role_name` — primary role as id + display name\n- `is_super_admin` — when true, frontend grants ALL permissions and ignores `permissions[]`\n- `permissions` — `[{ section, actions[] }]`, section = sidebar page key\n\nThe **Tests** tab auto-saves `data.accessToken` into the collection variable `accessToken`, so every other request works immediately after login.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"email\": \"admin@example.com\",\n  \"password\": \"yourPassword\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                },
+                "auth": {
+                  "type": "noauth"
+                }
+              },
+              "status": "Unauthorized",
+              "code": 401,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": false,\n  \"message\": \"Invalid password\"\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Self",
+      "item": [
+        {
+          "name": "GET me",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "me"
+              ]
+            },
+            "description": "Current admin's role + permissions — same shape as the login `admin` object. Use to refresh Redux after a role/permission change without re-logging in. Any logged-in admin can call this."
+          },
+          "response": [
+            {
+              "name": "200 — Restricted role",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/me",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "me"
+                  ]
+                },
+                "description": "Current admin's role + permissions — same shape as the login `admin` object. Use to refresh Redux after a role/permission change without re-logging in. Any logged-in admin can call this."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"roles\": [\n      \"FINANCE_MANAGER\"\n    ],\n    \"role\": {\n      \"id\": 14,\n      \"name\": \"Finance Manager\",\n      \"code\": \"FINANCE_MANAGER\"\n    },\n    \"is_super_admin\": false,\n    \"isSuperAdmin\": false,\n    \"permissions\": [\n      {\n        \"section\": \"all_members\",\n        \"actions\": [\n          \"filter\",\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"dashboard\",\n        \"actions\": [\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"deposit\",\n        \"actions\": [\n          \"approve\",\n          \"filter\",\n          \"reject\",\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"withdraw\",\n        \"actions\": [\n          \"approve\",\n          \"filter\",\n          \"reject\",\n          \"view\"\n        ]\n      }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET permissions (catalog)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/permissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "permissions"
+              ]
+            },
+            "description": "Full permission catalog (every section/action pair the backend knows). Requires `roles.view`. The frontend normally uses its own static `permissionsRegistry.ts`; this endpoint is for verifying the two are in sync."
+          },
+          "response": [
+            {
+              "name": "200",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/permissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "permissions"
+                  ]
+                },
+                "description": "Full permission catalog (every section/action pair the backend knows). Requires `roles.view`. The frontend normally uses its own static `permissionsRegistry.ts`; this endpoint is for verifying the two are in sync."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"flat\": [\n      {\n        \"id\": 45,\n        \"resource\": \"dashboard\",\n        \"action\": \"view\",\n        \"description\": \"View dashboard\"\n      },\n      {\n        \"id\": 54,\n        \"resource\": \"all_members\",\n        \"action\": \"view\",\n        \"description\": \"View member list\"\n      },\n      {\n        \"id\": 55,\n        \"resource\": \"all_members\",\n        \"action\": \"filter\",\n        \"description\": \"Use filters & search\"\n      },\n      {\n        \"id\": 56,\n        \"resource\": \"all_members\",\n        \"action\": \"edit\",\n        \"description\": \"Edit member profile\"\n      },\n      {\n        \"id\": 57,\n        \"resource\": \"all_members\",\n        \"action\": \"adjust_wallet\",\n        \"description\": \"Adjust wallet balance\"\n      }\n    ],\n    \"grouped\": {\n      \"dashboard\": [\n        {\n          \"id\": 45,\n          \"action\": \"view\",\n          \"description\": \"View dashboard\"\n        }\n      ],\n      \"all_members\": [\n        {\n          \"id\": 54,\n          \"action\": \"view\",\n          \"description\": \"View member list\"\n        },\n        {\n          \"id\": 55,\n          \"action\": \"filter\",\n          \"description\": \"Use filters & search\"\n        },\n        {\n          \"id\": 56,\n          \"action\": \"edit\",\n          \"description\": \"Edit member profile\"\n        },\n        {\n          \"id\": 57,\n          \"action\": \"adjust_wallet\",\n          \"description\": \"Adjust wallet balance\"\n        }\n      ]\n    }\n  }\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Roles",
+      "item": [
+        {
+          "name": "GET roles",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/roles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "roles"
+              ]
+            },
+            "description": "All roles with their permissions (`[{section, actions[]}]`) and `assigned_admins` count. Requires `roles.view`. System roles (`is_system: true`) cannot be deleted; SUPER_ADMIN permissions cannot be edited."
+          },
+          "response": [
+            {
+              "name": "200",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/roles",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "roles"
+                  ]
+                },
+                "description": "All roles with their permissions (`[{section, actions[]}]`) and `assigned_admins` count. Requires `roles.view`. System roles (`is_system: true`) cannot be deleted; SUPER_ADMIN permissions cannot be edited."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": 1,\n      \"code\": \"SUPER_ADMIN\",\n      \"name\": \"Super Admin\",\n      \"description\": \"Full access to everything\",\n      \"is_system\": true,\n      \"created_at\": \"2026-06-27T08:00:00.000Z\",\n      \"assigned_admins\": 2,\n      \"permissions\": [\n        {\n          \"section\": \"agents\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"all_members\",\n          \"actions\": [\n            \"adjust_coins\",\n            \"adjust_wallet\",\n            \"edit\",\n            \"filter\",\n            \"view\",\n            \"view_bets\",\n            \"view_compliance\",\n            \"view_transactions\"\n          ]\n        },\n        {\n          \"section\": \"announcements\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"banners\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"dashboard\",\n          \"actions\": [\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"deposit\",\n          \"actions\": [\n            \"approve\",\n            \"filter\",\n            \"reject\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"game_rounds\",\n          \"actions\": [\n            \"filter\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"games\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"hot_suggestions\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"jackpots\",\n          \"actions\": [\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"kyc_verification\",\n          \"actions\": [\n            \"approve\",\n            \"reject\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"member_group\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"promotion_cms\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"promotion_settings\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"promotion_statistic\",\n          \"actions\": [\n            \"export\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"referral_info\",\n          \"actions\": [\n            \"export\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"referral_search\",\n          \"actions\": [\n            \"filter\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"referral_settings\",\n          \"actions\": [\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"vip_level_group\",\n          \"actions\": [\n            \"create\",\n            \"delete\",\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"vip_settings\",\n          \"actions\": [\n            \"edit\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"withdraw\",\n          \"actions\": [\n            \"approve\",\n            \"filter\",\n            \"reject\",\n            \"view\"\n          ]\n        }\n      ]\n    },\n    {\n      \"id\": 14,\n      \"code\": \"FINANCE_MANAGER\",\n      \"name\": \"Finance Manager\",\n      \"description\": \"Handles deposits & withdrawals\",\n      \"is_system\": false,\n      \"created_at\": \"2026-07-03T10:12:45.120Z\",\n      \"assigned_admins\": 1,\n      \"permissions\": [\n        {\n          \"section\": \"all_members\",\n          \"actions\": [\n            \"filter\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"dashboard\",\n          \"actions\": [\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"deposit\",\n          \"actions\": [\n            \"approve\",\n            \"filter\",\n            \"reject\",\n            \"view\"\n          ]\n        },\n        {\n          \"section\": \"withdraw\",\n          \"actions\": [\n            \"approve\",\n            \"filter\",\n            \"reject\",\n            \"view\"\n          ]\n        }\n      ]\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET roles/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "roles",
+                "{{roleId}}"
+              ]
+            },
+            "description": "One role with permissions. Requires `roles.view`."
+          },
+          "response": [
+            {
+              "name": "200",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "roles",
+                    "{{roleId}}"
+                  ]
+                },
+                "description": "One role with permissions. Requires `roles.view`."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": 14,\n    \"code\": \"FINANCE_MANAGER\",\n    \"name\": \"Finance Manager\",\n    \"description\": \"Handles deposits & withdrawals\",\n    \"is_system\": false,\n    \"created_at\": \"2026-07-03T10:12:45.120Z\",\n    \"assigned_admins\": 1,\n    \"permissions\": [\n      {\n        \"section\": \"all_members\",\n        \"actions\": [\n          \"filter\",\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"dashboard\",\n        \"actions\": [\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"deposit\",\n        \"actions\": [\n          \"approve\",\n          \"filter\",\n          \"reject\",\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"withdraw\",\n        \"actions\": [\n          \"approve\",\n          \"filter\",\n          \"reject\",\n          \"view\"\n        ]\n      }\n    ]\n  }\n}"
+            },
+            {
+              "name": "404 — Not found",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "roles",
+                    "{{roleId}}"
+                  ]
+                },
+                "description": "One role with permissions. Requires `roles.view`."
+              },
+              "status": "Not Found",
+              "code": 404,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"message\": \"Role not found\",\n  \"error\": \"Not Found\",\n  \"statusCode\": 404\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET roles/:id/permissions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}/permissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "roles",
+                "{{roleId}}",
+                "permissions"
+              ]
+            },
+            "description": "The shape the RBAS Role Permissions page edits. Requires `roles.view`."
+          },
+          "response": [
+            {
+              "name": "200",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}/permissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "roles",
+                    "{{roleId}}",
+                    "permissions"
+                  ]
+                },
+                "description": "The shape the RBAS Role Permissions page edits. Requires `roles.view`."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"roleId\": 14,\n    \"roleName\": \"Finance Manager\",\n    \"permissions\": [\n      {\n        \"section\": \"all_members\",\n        \"actions\": [\n          \"filter\",\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"deposit\",\n        \"actions\": [\n          \"approve\",\n          \"view\"\n        ]\n      }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST roles",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/roles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "roles"
+              ]
+            },
+            "description": "Create a role. Requires `roles.create`. `code` is optional (derived from name: \"Finance Manager\" → FINANCE_MANAGER). `permissions` is optional — can also be set later via PUT.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Finance Manager\",\n  \"description\": \"Handles deposits & withdrawals\",\n  \"permissions\": [\n    {\n      \"section\": \"all_members\",\n      \"actions\": [\n        \"view\",\n        \"filter\"\n      ]\n    },\n    {\n      \"section\": \"deposit\",\n      \"actions\": [\n        \"view\",\n        \"approve\",\n        \"reject\"\n      ]\n    },\n    {\n      \"section\": \"withdraw\",\n      \"actions\": [\n        \"view\",\n        \"approve\",\n        \"reject\"\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "201",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/roles",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "roles"
+                  ]
+                },
+                "description": "Create a role. Requires `roles.create`. `code` is optional (derived from name: \"Finance Manager\" → FINANCE_MANAGER). `permissions` is optional — can also be set later via PUT.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Finance Manager\",\n  \"description\": \"Handles deposits & withdrawals\",\n  \"permissions\": [\n    {\n      \"section\": \"all_members\",\n      \"actions\": [\n        \"view\",\n        \"filter\"\n      ]\n    },\n    {\n      \"section\": \"deposit\",\n      \"actions\": [\n        \"view\",\n        \"approve\",\n        \"reject\"\n      ]\n    },\n    {\n      \"section\": \"withdraw\",\n      \"actions\": [\n        \"view\",\n        \"approve\",\n        \"reject\"\n      ]\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": 14,\n    \"code\": \"FINANCE_MANAGER\",\n    \"name\": \"Finance Manager\",\n    \"description\": \"Handles deposits & withdrawals\",\n    \"is_system\": false,\n    \"created_at\": \"2026-07-03T10:12:45.120Z\",\n    \"assigned_admins\": 1,\n    \"permissions\": [\n      {\n        \"section\": \"all_members\",\n        \"actions\": [\n          \"filter\",\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"dashboard\",\n        \"actions\": [\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"deposit\",\n        \"actions\": [\n          \"approve\",\n          \"filter\",\n          \"reject\",\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"withdraw\",\n        \"actions\": [\n          \"approve\",\n          \"filter\",\n          \"reject\",\n          \"view\"\n        ]\n      }\n    ]\n  }\n}"
+            },
+            {
+              "name": "400 — Duplicate",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/roles",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "roles"
+                  ]
+                },
+                "description": "Create a role. Requires `roles.create`. `code` is optional (derived from name: \"Finance Manager\" → FINANCE_MANAGER). `permissions` is optional — can also be set later via PUT.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Finance Manager\",\n  \"description\": \"Handles deposits & withdrawals\",\n  \"permissions\": [\n    {\n      \"section\": \"all_members\",\n      \"actions\": [\n        \"view\",\n        \"filter\"\n      ]\n    },\n    {\n      \"section\": \"deposit\",\n      \"actions\": [\n        \"view\",\n        \"approve\",\n        \"reject\"\n      ]\n    },\n    {\n      \"section\": \"withdraw\",\n      \"actions\": [\n        \"view\",\n        \"approve\",\n        \"reject\"\n      ]\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"message\": \"Role \\\"FINANCE_MANAGER\\\" already exists\",\n  \"error\": \"Bad Request\",\n  \"statusCode\": 400\n}"
+            }
+          ]
+        },
+        {
+          "name": "PATCH roles/:id",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "roles",
+                "{{roleId}}"
+              ]
+            },
+            "description": "Rename / re-describe a role. Requires `roles.update`. Both fields optional.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Finance Manager\",\n  \"description\": \"Deposits, withdrawals & reports\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "roles",
+                    "{{roleId}}"
+                  ]
+                },
+                "description": "Rename / re-describe a role. Requires `roles.update`. Both fields optional.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"Finance Manager\",\n  \"description\": \"Deposits, withdrawals & reports\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": 14,\n    \"code\": \"FINANCE_MANAGER\",\n    \"name\": \"Finance Manager\",\n    \"description\": \"Deposits, withdrawals & reports\",\n    \"is_system\": false,\n    \"created_at\": \"2026-07-03T10:12:45.120Z\",\n    \"assigned_admins\": 1,\n    \"permissions\": [\n      {\n        \"section\": \"all_members\",\n        \"actions\": [\n          \"filter\",\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"dashboard\",\n        \"actions\": [\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"deposit\",\n        \"actions\": [\n          \"approve\",\n          \"filter\",\n          \"reject\",\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"withdraw\",\n        \"actions\": [\n          \"approve\",\n          \"filter\",\n          \"reject\",\n          \"view\"\n        ]\n      }\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "PUT roles/:id/permissions",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}/permissions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "roles",
+                "{{roleId}}",
+                "permissions"
+              ]
+            },
+            "description": "REPLACES the role's whole permission set (send the full payload, not a diff). Requires `roles.update`. Unknown section/action keys are added to the backend catalog automatically — a new action in the frontend registry never gets silently dropped. SUPER_ADMIN is rejected (403).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"permissions\": [\n    {\n      \"section\": \"all_members\",\n      \"actions\": [\n        \"view\",\n        \"filter\",\n        \"edit\"\n      ]\n    },\n    {\n      \"section\": \"deposit\",\n      \"actions\": [\n        \"view\"\n      ]\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 — Updated role returned",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}/permissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "roles",
+                    "{{roleId}}",
+                    "permissions"
+                  ]
+                },
+                "description": "REPLACES the role's whole permission set (send the full payload, not a diff). Requires `roles.update`. Unknown section/action keys are added to the backend catalog automatically — a new action in the frontend registry never gets silently dropped. SUPER_ADMIN is rejected (403).",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"permissions\": [\n    {\n      \"section\": \"all_members\",\n      \"actions\": [\n        \"view\",\n        \"filter\",\n        \"edit\"\n      ]\n    },\n    {\n      \"section\": \"deposit\",\n      \"actions\": [\n        \"view\"\n      ]\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": 14,\n    \"code\": \"FINANCE_MANAGER\",\n    \"name\": \"Finance Manager\",\n    \"description\": \"Handles deposits & withdrawals\",\n    \"is_system\": false,\n    \"created_at\": \"2026-07-03T10:12:45.120Z\",\n    \"assigned_admins\": 1,\n    \"permissions\": [\n      {\n        \"section\": \"all_members\",\n        \"actions\": [\n          \"edit\",\n          \"filter\",\n          \"view\"\n        ]\n      },\n      {\n        \"section\": \"deposit\",\n        \"actions\": [\n          \"view\"\n        ]\n      }\n    ]\n  }\n}"
+            },
+            {
+              "name": "403 — SUPER_ADMIN locked",
+              "originalRequest": {
+                "method": "PUT",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}/permissions",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "roles",
+                    "{{roleId}}",
+                    "permissions"
+                  ]
+                },
+                "description": "REPLACES the role's whole permission set (send the full payload, not a diff). Requires `roles.update`. Unknown section/action keys are added to the backend catalog automatically — a new action in the frontend registry never gets silently dropped. SUPER_ADMIN is rejected (403).",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"permissions\": [\n    {\n      \"section\": \"all_members\",\n      \"actions\": [\n        \"view\",\n        \"filter\",\n        \"edit\"\n      ]\n    },\n    {\n      \"section\": \"deposit\",\n      \"actions\": [\n        \"view\"\n      ]\n    }\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"message\": \"SUPER_ADMIN permissions cannot be edited (it has full access)\",\n  \"error\": \"Forbidden\",\n  \"statusCode\": 403\n}"
+            }
+          ]
+        },
+        {
+          "name": "DELETE roles/:id",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "roles",
+                "{{roleId}}"
+              ]
+            },
+            "description": "Delete a CUSTOM role. Requires `roles.delete`. Blocked while any admin still holds the role (unassign first) and always blocked for system roles."
+          },
+          "response": [
+            {
+              "name": "200",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "roles",
+                    "{{roleId}}"
+                  ]
+                },
+                "description": "Delete a CUSTOM role. Requires `roles.delete`. Blocked while any admin still holds the role (unassign first) and always blocked for system roles."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"message\": \"Role deleted\"\n  }\n}"
+            },
+            {
+              "name": "400 — Still assigned",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "roles",
+                    "{{roleId}}"
+                  ]
+                },
+                "description": "Delete a CUSTOM role. Requires `roles.delete`. Blocked while any admin still holds the role (unassign first) and always blocked for system roles."
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"message\": \"Cannot delete: 1 admin(s) still hold this role. Reassign them first.\",\n  \"error\": \"Bad Request\",\n  \"statusCode\": 400\n}"
+            },
+            {
+              "name": "403 — System role",
+              "originalRequest": {
+                "method": "DELETE",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/roles/{{roleId}}",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "roles",
+                    "{{roleId}}"
+                  ]
+                },
+                "description": "Delete a CUSTOM role. Requires `roles.delete`. Blocked while any admin still holds the role (unassign first) and always blocked for system roles."
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"message\": \"System role \\\"CS\\\" cannot be deleted\",\n  \"error\": \"Forbidden\",\n  \"statusCode\": 403\n}"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Admin Users",
+      "item": [
+        {
+          "name": "GET admins",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/admins",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "admins"
+              ]
+            },
+            "description": "All admin accounts with their primary role (`role_id`/`role_name`; SUPER_ADMIN wins, else earliest assigned) plus the full `roles[]` code list. Requires `admins.view`."
+          },
+          "response": [
+            {
+              "name": "200",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/admins",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "admins"
+                  ]
+                },
+                "description": "All admin accounts with their primary role (`role_id`/`role_name`; SUPER_ADMIN wins, else earliest assigned) plus the full `roles[]` code list. Requires `admins.view`."
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"id\": 11,\n      \"name\": \"Jane\",\n      \"email\": \"jane.cs@winx-88.com\",\n      \"legacy_role\": \"ADMIN\",\n      \"status\": \"ACTIVE\",\n      \"created_at\": \"2026-06-27T09:30:00.000Z\",\n      \"role_id\": 14,\n      \"role_name\": \"Finance Manager\",\n      \"role_code\": \"FINANCE_MANAGER\",\n      \"roles\": [\n        \"FINANCE_MANAGER\"\n      ]\n    },\n    {\n      \"id\": 2,\n      \"name\": \"Founder\",\n      \"email\": \"admin@example.com\",\n      \"legacy_role\": \"SUPER_ADMIN\",\n      \"status\": \"ACTIVE\",\n      \"created_at\": \"2026-05-01T00:00:00.000Z\",\n      \"role_id\": 1,\n      \"role_name\": \"Super Admin\",\n      \"role_code\": \"SUPER_ADMIN\",\n      \"roles\": [\n        \"SUPER_ADMIN\"\n      ]\n    },\n    {\n      \"id\": 9,\n      \"name\": \"New Hire\",\n      \"email\": \"new@winx-88.com\",\n      \"legacy_role\": \"ADMIN\",\n      \"status\": \"ACTIVE\",\n      \"created_at\": \"2026-07-01T00:00:00.000Z\",\n      \"role_id\": null,\n      \"role_name\": null,\n      \"role_code\": null,\n      \"roles\": []\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "POST admins",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/admins",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "admins"
+              ]
+            },
+            "description": "Create an admin account and assign role(s) by CODE. Requires `admins.create`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"New Support Agent\",\n  \"email\": \"agent@winx-88.com\",\n  \"password\": \"ChangeMe#123\",\n  \"roles\": [\n    \"CS\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "201",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/admins",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "admins"
+                  ]
+                },
+                "description": "Create an admin account and assign role(s) by CODE. Requires `admins.create`.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"New Support Agent\",\n  \"email\": \"agent@winx-88.com\",\n  \"password\": \"ChangeMe#123\",\n  \"roles\": [\n    \"CS\"\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Created",
+              "code": 201,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": 13,\n    \"name\": \"New Support Agent\",\n    \"email\": \"agent@winx-88.com\",\n    \"role\": \"ADMIN\",\n    \"status\": \"ACTIVE\",\n    \"roles\": [\n      \"CS\"\n    ]\n  }\n}"
+            },
+            {
+              "name": "400 — Email exists",
+              "originalRequest": {
+                "method": "POST",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/admins",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "admins"
+                  ]
+                },
+                "description": "Create an admin account and assign role(s) by CODE. Requires `admins.create`.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"name\": \"New Support Agent\",\n  \"email\": \"agent@winx-88.com\",\n  \"password\": \"ChangeMe#123\",\n  \"roles\": [\n    \"CS\"\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"message\": \"An admin with this email already exists\",\n  \"error\": \"Bad Request\",\n  \"statusCode\": 400\n}"
+            }
+          ]
+        },
+        {
+          "name": "PATCH admins/:id/role (single, frontend)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/admins/{{adminId}}/role",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "admins",
+                "{{adminId}}",
+                "role"
+              ]
+            },
+            "description": "THE endpoint for the Admin Users page dropdown: assigns ONE role by id, replacing whatever the admin had. Send `{ \"role_id\": null }` to remove the role (admin keeps the account, loses all permissions). Requires `admins.update`. You cannot change your OWN role (403).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"role_id\": 14\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200 — Assigned",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/admins/{{adminId}}/role",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "admins",
+                    "{{adminId}}",
+                    "role"
+                  ]
+                },
+                "description": "THE endpoint for the Admin Users page dropdown: assigns ONE role by id, replacing whatever the admin had. Send `{ \"role_id\": null }` to remove the role (admin keeps the account, loses all permissions). Requires `admins.update`. You cannot change your OWN role (403).",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"role_id\": 14\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"adminId\": 11,\n    \"role_id\": 14,\n    \"role_name\": \"Finance Manager\"\n  }\n}"
+            },
+            {
+              "name": "200 — Removed (role_id: null)",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/admins/{{adminId}}/role",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "admins",
+                    "{{adminId}}",
+                    "role"
+                  ]
+                },
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"role_id\": null\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"adminId\": 11,\n    \"role_id\": null,\n    \"role_name\": null\n  }\n}"
+            },
+            {
+              "name": "403 — Own role",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/admins/{{adminId}}/role",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "admins",
+                    "{{adminId}}",
+                    "role"
+                  ]
+                },
+                "description": "THE endpoint for the Admin Users page dropdown: assigns ONE role by id, replacing whatever the admin had. Send `{ \"role_id\": null }` to remove the role (admin keeps the account, loses all permissions). Requires `admins.update`. You cannot change your OWN role (403).",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"role_id\": 14\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "Forbidden",
+              "code": 403,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"message\": \"You cannot change your own role\",\n  \"error\": \"Forbidden\",\n  \"statusCode\": 403\n}"
+            }
+          ]
+        },
+        {
+          "name": "PATCH admins/:id/roles (multi)",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/admins/{{adminId}}/roles",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "admins",
+                "{{adminId}}",
+                "roles"
+              ]
+            },
+            "description": "Multi-role variant (an admin can hold several roles; effective permissions = union). The RBAS UI uses the single-role endpoint above; this one exists for advanced setups. Requires `admins.update`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"roles\": [\n    \"TL\",\n    \"CS\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/admins/{{adminId}}/roles",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "admins",
+                    "{{adminId}}",
+                    "roles"
+                  ]
+                },
+                "description": "Multi-role variant (an admin can hold several roles; effective permissions = union). The RBAS UI uses the single-role endpoint above; this one exists for advanced setups. Requires `admins.update`.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"roles\": [\n    \"TL\",\n    \"CS\"\n  ]\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"adminId\": 11,\n    \"roles\": [\n      \"TL\",\n      \"CS\"\n    ]\n  }\n}"
+            }
+          ]
+        },
+        {
+          "name": "PATCH admins/:id/status",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/admin/rbac/admins/{{adminId}}/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "admin",
+                "rbac",
+                "admins",
+                "{{adminId}}",
+                "status"
+              ]
+            },
+            "description": "Enable/disable an admin account (INACTIVE admins cannot log in). Requires `admins.update`.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"INACTIVE\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [
+            {
+              "name": "200",
+              "originalRequest": {
+                "method": "PATCH",
+                "header": [
+                  {
+                    "key": "Content-Type",
+                    "value": "application/json"
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/admin/rbac/admins/{{adminId}}/status",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "admin",
+                    "rbac",
+                    "admins",
+                    "{{adminId}}",
+                    "status"
+                  ]
+                },
+                "description": "Enable/disable an admin account (INACTIVE admins cannot log in). Requires `admins.update`.",
+                "body": {
+                  "mode": "raw",
+                  "raw": "{\n  \"status\": \"INACTIVE\"\n}",
+                  "options": {
+                    "raw": {
+                      "language": "json"
+                    }
+                  }
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": 11,\n    \"status\": \"INACTIVE\"\n  }\n}"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

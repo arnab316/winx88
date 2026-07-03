@@ -14,23 +14,31 @@ import {
 import { AdminGuard } from '../common/guards/admin.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
-import { RbacService } from './rbac.service';
+import { RbacService, SectionPermission } from './rbac.service';
+
+/** Response envelope the admin frontend expects on every RBAS endpoint. */
+const ok = <T>(data: T) => ({ success: true, data });
 
 /**
  * Admin RBAC management + self introspection.
  *
- *   GET   /admin/rbac/me                      → current admin's roles+permissions (for can())
+ *   GET   /admin/rbac/me                      → current admin's role+permissions
  *   GET   /admin/rbac/permissions             → permission catalog            [roles.view]
  *   GET   /admin/rbac/roles                   → list roles (+perms, members)  [roles.view]
  *   GET   /admin/rbac/roles/:id               → one role                      [roles.view]
- *   POST  /admin/rbac/roles                   → create custom role/group      [roles.create]
+ *   GET   /admin/rbac/roles/:id/permissions   → { roleId, roleName, permissions } [roles.view]
+ *   POST  /admin/rbac/roles                   → create role (code optional)   [roles.create]
  *   PATCH /admin/rbac/roles/:id               → rename / describe             [roles.update]
- *   PUT   /admin/rbac/roles/:id/permissions   → set a role's permissions      [roles.update]
+ *   PUT   /admin/rbac/roles/:id/permissions   → set [{section, actions[]}]    [roles.update]
  *   DELETE/admin/rbac/roles/:id               → delete custom role            [roles.delete]
- *   GET   /admin/rbac/admins                  → list admins (+roles)          [admins.view]
+ *   GET   /admin/rbac/admins                  → list admins (+role)           [admins.view]
  *   POST  /admin/rbac/admins                  → create admin + assign roles   [admins.create]
- *   PATCH /admin/rbac/admins/:id/roles        → replace an admin's roles      [admins.update]
+ *   PATCH /admin/rbac/admins/:id/role         → assign ONE role (null=remove) [admins.update]
+ *   PATCH /admin/rbac/admins/:id/roles        → replace role set (multi)      [admins.update]
  *   PATCH /admin/rbac/admins/:id/status       → ACTIVE / INACTIVE             [admins.update]
+ *
+ * Permissions travel as [{ section, actions: string[] }] — section = sidebar
+ * page key (all_members, deposit, …), actions = UI capabilities on that page.
  */
 @Controller('admin/rbac')
 @UseGuards(AdminGuard, PermissionsGuard)
@@ -39,95 +47,115 @@ export class RbacController {
 
   // ── self ──
   @Get('me')
-  me(@Req() req: any) {
-    return this.rbac.getMyAccess(Number(req.user.sub));
+  async me(@Req() req: any) {
+    return ok(await this.rbac.getMyAccess(Number(req.user.sub)));
   }
 
   // ── catalog ──
   @Get('permissions')
   @RequirePermissions('roles', 'view')
-  permissions() {
-    return this.rbac.listPermissions();
+  async permissions() {
+    return ok(await this.rbac.listPermissions());
   }
 
   // ── roles ──
   @Get('roles')
   @RequirePermissions('roles', 'view')
-  listRoles() {
-    return this.rbac.listRoles();
+  async listRoles() {
+    return ok(await this.rbac.listRoles());
   }
 
   @Get('roles/:id')
   @RequirePermissions('roles', 'view')
-  getRole(@Param('id', ParseIntPipe) id: number) {
-    return this.rbac.getRole(id);
+  async getRole(@Param('id', ParseIntPipe) id: number) {
+    return ok(await this.rbac.getRole(id));
+  }
+
+  @Get('roles/:id/permissions')
+  @RequirePermissions('roles', 'view')
+  async getRolePermissions(@Param('id', ParseIntPipe) id: number) {
+    return ok(await this.rbac.getRolePermissions(id));
   }
 
   @Post('roles')
   @RequirePermissions('roles', 'create')
-  createRole(
+  async createRole(
     @Req() req: any,
-    @Body() dto: { code: string; name: string; description?: string; permissions?: Array<{ resource: string; action: string }> },
+    @Body() dto: { name: string; code?: string; description?: string; permissions?: SectionPermission[] },
   ) {
-    return this.rbac.createRole(dto, Number(req.user.sub));
+    return ok(await this.rbac.createRole(dto, Number(req.user.sub)));
   }
 
   @Patch('roles/:id')
   @RequirePermissions('roles', 'update')
-  updateRole(
+  async updateRole(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: { name?: string; description?: string },
   ) {
-    return this.rbac.updateRole(id, dto);
+    return ok(await this.rbac.updateRole(id, dto));
   }
 
   @Put('roles/:id/permissions')
   @RequirePermissions('roles', 'update')
-  setRolePermissions(
+  async setRolePermissions(
     @Param('id', ParseIntPipe) id: number,
-    @Body() dto: { permissions: Array<{ resource: string; action: string }> },
+    @Body() dto: { permissions: SectionPermission[] },
   ) {
-    return this.rbac.setRolePermissions(id, dto?.permissions ?? []);
+    return ok(await this.rbac.setRolePermissions(id, dto?.permissions ?? []));
   }
 
   @Delete('roles/:id')
   @RequirePermissions('roles', 'delete')
-  deleteRole(@Param('id', ParseIntPipe) id: number) {
-    return this.rbac.deleteRole(id);
+  async deleteRole(@Param('id', ParseIntPipe) id: number) {
+    return ok(await this.rbac.deleteRole(id));
   }
 
   // ── admins ──
   @Get('admins')
   @RequirePermissions('admins', 'view')
-  listAdmins() {
-    return this.rbac.listAdmins();
+  async listAdmins() {
+    return ok(await this.rbac.listAdmins());
   }
 
   @Post('admins')
   @RequirePermissions('admins', 'create')
-  createAdmin(
+  async createAdmin(
     @Req() req: any,
     @Body() dto: { name: string; email: string; password: string; roles?: string[] },
   ) {
-    return this.rbac.createAdmin(dto, Number(req.user.sub));
+    return ok(await this.rbac.createAdmin(dto, Number(req.user.sub)));
+  }
+
+  @Patch('admins/:id/role')
+  @RequirePermissions('admins', 'update')
+  async setAdminRole(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { role_id: number | string | null },
+  ) {
+    const roleId =
+      dto?.role_id === null || dto?.role_id === undefined || dto?.role_id === ''
+        ? null
+        : Number(dto.role_id);
+    return ok(await this.rbac.setAdminRole(id, roleId, Number(req.user.sub)));
   }
 
   @Patch('admins/:id/roles')
   @RequirePermissions('admins', 'update')
-  setAdminRoles(
+  async setAdminRoles(
     @Req() req: any,
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: { roles: string[] },
   ) {
-    return this.rbac.setAdminRoles(id, dto?.roles ?? [], Number(req.user.sub));
+    return ok(await this.rbac.setAdminRoles(id, dto?.roles ?? [], Number(req.user.sub)));
   }
 
   @Patch('admins/:id/status')
   @RequirePermissions('admins', 'update')
-  setAdminStatus(
+  async setAdminStatus(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: { status: 'ACTIVE' | 'INACTIVE' },
   ) {
-    return this.rbac.setAdminStatus(id, dto?.status);
+    return ok(await this.rbac.setAdminStatus(id, dto?.status));
   }
 }

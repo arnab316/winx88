@@ -695,29 +695,53 @@ async register(dto: any) {
     return {
       accessToken,
       refreshToken,
-      admin: { id: a.id, name: a.name, email: a.email, role: a.role },
-      roles: access.roles,            // ['CS']
-      permissions: access.permissions, // { users: ['view','update'], … }
+      admin: {
+        id: a.id,
+        name: a.name,
+        email: a.email,
+        // role code string; the frontend's super-admin check compares this
+        // (and/or is_super_admin). Full object available via role_id/role_name.
+        role: access.primaryRole?.code ?? a.role,
+        role_id: access.primaryRole?.id ?? null,
+        role_name: access.primaryRole?.name ?? null,
+        is_super_admin: access.isSuperAdmin,
+        // [{ section: 'all_members', actions: ['view','filter'] }, …] —
+        // ignored by the frontend when is_super_admin is true.
+        permissions: access.sections,
+      },
+      roles: access.roles,            // ['CS'] (an admin can hold several)
+      permissions: access.permissions, // legacy map { all_members: ['view'], … }
     };
   }
 
-  // Roles + effective permissions for an admin, in the AWS-style shape the
-  // frontend `can(resource, action)` helper consumes. Resilient: if the RBAC
-  // tables don't exist yet (migration not run), fall back to the legacy role
-  // so admin login never breaks.
+  // Roles + effective permissions for an admin. `permissions` is the legacy
+  // map shape; `sections` is the [{ section, actions[] }] array the admin
+  // frontend consumes. Resilient: if the RBAC tables don't exist yet
+  // (migration not run), fall back to the legacy role so login never breaks.
   private async loadAdminAccess(
     adminId: number,
     legacyRole?: string,
-  ): Promise<{ roles: string[]; permissions: Record<string, string[]> }> {
+  ): Promise<{
+    roles: string[];
+    isSuperAdmin: boolean;
+    primaryRole: { id: number; code: string; name: string } | null;
+    permissions: Record<string, string[]>;
+    sections: Array<{ section: string; actions: string[] }>;
+  }> {
     try {
       const roleRows = await this.dataSource.query(
-        `SELECT ar.code
+        `SELECT ar.id, ar.code, ar.name
            FROM admin_user_roles aur
            JOIN admin_roles ar ON ar.id = aur.role_id
-          WHERE aur.admin_id = $1`,
+          WHERE aur.admin_id = $1
+          ORDER BY (ar.code = 'SUPER_ADMIN') DESC, aur.assigned_at ASC`,
         [adminId],
       );
       const roles: string[] = roleRows.map((r: any) => r.code);
+      const isSuperAdmin = roles.includes('SUPER_ADMIN') || legacyRole === 'SUPER_ADMIN';
+      const primaryRole = roleRows.length
+        ? { id: Number(roleRows[0].id), code: roleRows[0].code, name: roleRows[0].name }
+        : null;
 
       const permRows = await this.dataSource.query(
         `SELECT DISTINCT p.resource, p.action
@@ -729,10 +753,26 @@ async register(dto: any) {
       );
       const permissions: Record<string, string[]> = {};
       for (const r of permRows) (permissions[r.resource] ??= []).push(r.action);
+      const sections = Object.entries(permissions)
+        .filter(([section]) => !['roles', 'admins'].includes(section)) // internal
+        .map(([section, actions]) => ({ section, actions: [...actions].sort() }))
+        .sort((x, y) => x.section.localeCompare(y.section));
 
-      return { roles: roles.length ? roles : (legacyRole ? [legacyRole] : []), permissions };
+      return {
+        roles: roles.length ? roles : (legacyRole ? [legacyRole] : []),
+        isSuperAdmin,
+        primaryRole,
+        permissions,
+        sections,
+      };
     } catch {
-      return { roles: legacyRole ? [legacyRole] : [], permissions: {} };
+      return {
+        roles: legacyRole ? [legacyRole] : [],
+        isSuperAdmin: legacyRole === 'SUPER_ADMIN',
+        primaryRole: null,
+        permissions: {},
+        sections: [],
+      };
     }
   }
 
