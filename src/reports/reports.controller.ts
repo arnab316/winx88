@@ -4,20 +4,53 @@ import {
   Get,
   Param,
   Query,
+  Res,
   UseGuards,
   ParseIntPipe,
   UsePipes,
   ValidationPipe,
 } from '@nestjs/common';
+import type { Response } from 'express';
 import { ReportsService } from './reports.service';
 import { AdminGuard } from '../common/guards/admin.guard';
-import { PlayerReportQueryDto, PlayerDrillQueryDto } from './dto/reports.dto';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
+import {
+  PlayerReportQueryDto,
+  PlayerDrillQueryDto,
+  MemberSummaryQueryDto,
+} from './dto/reports.dto';
 
 @Controller('reports')
-@UseGuards(AdminGuard)
+@UseGuards(AdminGuard, PermissionsGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class ReportsController {
   constructor(private readonly reports: ReportsService) {}
+
+  // GET /reports/member-summary — the admin Report page table
+  //   ?dateFrom&dateTo&currency&memberGroup&username&page&limit
+  @Get('member-summary')
+  @RequirePermissions('reports', 'view')
+  memberSummary(@Query() q: MemberSummaryQueryDto) {
+    return this.reports.getMemberSummary(q);
+  }
+
+  // GET /reports/member-summary/export — CSV download (Export button)
+  @Get('member-summary/export')
+  @RequirePermissions('reports', 'export')
+  async memberSummaryExport(
+    @Query() q: MemberSummaryQueryDto,
+    @Res({ passthrough: true }) res: Response,
+  ) {
+    const csv = await this.reports.getMemberSummaryCsv(q);
+    const stamp = new Date().toISOString().slice(0, 10);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Disposition',
+      `attachment; filename="member-report-${stamp}.csv"`,
+    );
+    return csv;
+  }
 
   // GET /reports/players
   @Get('players')
