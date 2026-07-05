@@ -20,6 +20,7 @@ import {
   AdminDepositDecideDto,
   AdminWithdrawalDecideDto,
   DepositListQuery,
+  WithdrawalListQuery,
   DepositRequestDto,
   WithdrawalRequestDto,
 } from './dto';
@@ -1142,41 +1143,182 @@ async getPendingDeposits(q: DepositListQuery = {}) {
   // ═════════════════════════════════════════════════════════════
   // ADMIN: LIST WITHDRAWALS (status = PENDING | APPROVED | REJECTED | ALL)
   // ═════════════════════════════════════════════════════════════
-  async getPendingWithdrawals(
-    page = 1,
-    limit = 20,
-    status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL' = 'PENDING',
-  ) {
+  // Same multi-field search panel as getPendingDeposits — one endpoint backs
+  // the Withdraw page tabs + filters. wd_id is derived (WD00212 = id 212, not
+  // stored); "TRX ID" = withdrawal_code; no fee columns exist, so
+  // total_amount = amount.
+  async getPendingWithdrawals(q: WithdrawalListQuery = {}) {
+    const page   = q.page  && q.page  > 0 ? q.page  : 1;
+    const limit  = q.limit && q.limit > 0 ? Math.min(q.limit, 100) : 20;
     const offset = (page - 1) * limit;
+    const status = q.status ?? 'PENDING';
 
-    const statusWhere = status === 'ALL' ? '' : `WHERE w.status = $3`;
-    const params: any[] =
-      status === 'ALL' ? [limit, offset] : [limit, offset, status];
+    const where: string[] = [];
+    const params: any[] = [];
+    let i = 1;
+
+    if (status !== 'ALL') {
+      where.push(`w.status = $${i++}`);
+      params.push(status);
+    }
+
+    // Free-text search (legacy) — code, receive number, name, date strings
+    if (q.search?.trim()) {
+      const term = `%${q.search.trim()}%`;
+      where.push(
+        `(w.withdrawal_code ILIKE $${i}
+          OR w.receive_number ILIKE $${i}
+          OR u.username ILIKE $${i}
+          OR u.full_name ILIKE $${i}
+          OR TO_CHAR(w.requested_at, 'YYYY-MM-DD') ILIKE $${i}
+          OR TO_CHAR(w.requested_at, 'DD-MM-YYYY') ILIKE $${i})`,
+      );
+      params.push(term);
+      i++;
+    }
+
+    if (q.gatewayId) {
+      where.push(`w.gateway_id = $${i++}`);
+      params.push(q.gatewayId);
+    }
+
+    if (q.userId) {
+      where.push(`w.user_id = $${i++}`);
+      params.push(q.userId);
+    }
+
+    // Date range on requested_at (Created Time)
+    if (q.dateFrom) {
+      where.push(`w.requested_at >= $${i++}::date`);
+      params.push(q.dateFrom);
+    }
+    if (q.dateTo) {
+      where.push(`w.requested_at < ($${i++}::date + INTERVAL '1 day')`);
+      params.push(q.dateTo);
+    }
+
+    // Member Group = VIP tier name (same convention as deposit search)
+    if (q.memberGroup?.trim()) {
+      where.push(`(vlc.group_name ILIKE $${i} OR vlc.level_name ILIKE $${i})`);
+      params.push(q.memberGroup.trim());
+      i++;
+    }
+
+    // Member ID = users.user_code
+    if (q.memberId?.trim()) {
+      where.push(`u.user_code ILIKE $${i++}`);
+      params.push(`%${q.memberId.trim()}%`);
+    }
+
+    // Phone — digits-only compare against the payout receive_number AND every
+    // saved player number, so +880/880/0-prefixed input all match either.
+    if (q.phone?.trim()) {
+      const digits = q.phone.replace(/\D/g, '').replace(/^880/, '').replace(/^0/, '');
+      where.push(`(
+        regexp_replace(w.receive_number, '\\D', '', 'g') LIKE $${i}
+        OR EXISTS (
+          SELECT 1 FROM user_phone_numbers up
+           WHERE up.user_id = u.id
+             AND regexp_replace(up.phone_number, '\\D', '', 'g') LIKE $${i}))`);
+      params.push(`%${digits}%`);
+      i++;
+    }
+
+    // TRX ID = withdrawal_code (players don't enter a trx number on payout)
+    if (q.trxId?.trim()) {
+      where.push(`w.withdrawal_code ILIKE $${i++}`);
+      params.push(`%${q.trxId.trim()}%`);
+    }
+
+    // WD ID — "WD00212" (or bare digits) → withdrawals.id
+    if (q.wdId?.trim()) {
+      const idDigits = q.wdId.replace(/\D/g, '');
+      where.push(`w.id = $${i++}`);
+      params.push(idDigits ? parseInt(idDigits, 10) : -1);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     // Pending queue reads oldest-first (approval order); decided/mixed
     // listings read newest-first.
     const order = status === 'PENDING' ? 'ASC' : 'DESC';
 
     const rows = await this.dataSource.query(
-      `SELECT w.id, w.withdrawal_code, w.user_id, u.full_name,
-              w.amount, w.receive_number,
-              g.name AS gateway_name, w.requested_at,
-              w.status, w.decided_at, w.rejection_reason
+      `SELECT
+         w.id,
+         'WD' || LPAD(w.id::text, 5, '0') AS wd_id,
+         w.withdrawal_code,
+         w.user_id,
+         w.amount,
+         w.amount::numeric(18,2)                        AS total_amount,
+         w.receive_number,
+         w.status,
+         w.requested_at,
+         w.decided_at,
+         w.rejection_reason,
+         -- User info
+         u.full_name,
+         u.username,
+         u.email,
+         u.user_code                                    AS member_id,
+         u.vip_level,
+         COALESCE(vlc.group_name, vlc.level_name)       AS vip_level_name,
+         ph.phone_number                                AS player_number,
+         -- Withdrawals are always player-initiated (no admin-created flow)
+         u.username                                     AS created_by,
+         -- Gateway
+         g.id   AS gateway_id,
+         g.name AS gateway_name,
+         -- Deciding admin (Approve/Reject By)
+         adm.name  AS decided_by_name,
+         adm.email AS decided_by_email
+       FROM withdrawals w
+       JOIN users u            ON u.id = w.user_id
+       LEFT JOIN vip_level_config vlc ON vlc.level = u.vip_level
+       JOIN payment_gateways g ON g.id = w.gateway_id
+       LEFT JOIN admin_users adm ON adm.id = w.approved_by_admin_id
+       LEFT JOIN LATERAL (
+         SELECT up.phone_number
+           FROM user_phone_numbers up
+          WHERE up.user_id = u.id
+          ORDER BY up.is_primary DESC, up.id ASC
+          LIMIT 1
+       ) ph ON TRUE
+       ${whereSql}
+       ORDER BY w.requested_at ${order}
+       LIMIT $${i} OFFSET $${i + 1}`,
+      [...params, limit, offset],
+    );
+
+    const countRows = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total
        FROM withdrawals w
        JOIN users u ON u.id = w.user_id
-       JOIN payment_gateways g ON g.id = w.gateway_id
-       ${statusWhere}
-       ORDER BY w.requested_at ${order}
-       LIMIT $1 OFFSET $2`,
+       LEFT JOIN vip_level_config vlc ON vlc.level = u.vip_level
+       ${whereSql}`,
       params,
     );
-    const count = await this.dataSource.query(
-      status === 'ALL'
-        ? `SELECT COUNT(*)::int AS total FROM withdrawals`
-        : `SELECT COUNT(*)::int AS total FROM withdrawals WHERE status = $1`,
-      status === 'ALL' ? [] : [status],
-    );
-    return { data: rows, total: count[0].total, page, limit, status };
+
+    return {
+      data:  rows,
+      total: countRows[0].total,
+      page,
+      limit,
+      status, // kept for backward compat with the old response shape
+      filters: {
+        status,
+        search:      q.search      ?? null,
+        gatewayId:   q.gatewayId   ?? null,
+        userId:      q.userId      ?? null,
+        dateFrom:    q.dateFrom    ?? null,
+        dateTo:      q.dateTo      ?? null,
+        memberGroup: q.memberGroup ?? null,
+        memberId:    q.memberId    ?? null,
+        phone:       q.phone       ?? null,
+        trxId:       q.trxId       ?? null,
+        wdId:        q.wdId        ?? null,
+      },
+    };
   }
 
   // ═════════════════════════════════════════════════════════════
