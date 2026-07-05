@@ -211,12 +211,17 @@ export class WalletController {
   @UseGuards(AdminGuard)
   @Get('admin/deposits')
   getDeposits(
-    @Query('status')    status?:    string,
-    @Query('search')    search?:    string,
-    @Query('gatewayId') gatewayId?: string,
-    @Query('userId')    userId?:    string,
-    @Query('dateFrom')  dateFrom?:  string,
-    @Query('dateTo')    dateTo?:    string,
+    @Query('status')      status?:      string,
+    @Query('search')      search?:      string,
+    @Query('gatewayId')   gatewayId?:   string,
+    @Query('userId')      userId?:      string,
+    @Query('dateFrom')    dateFrom?:    string,
+    @Query('dateTo')      dateTo?:      string,
+    @Query('memberGroup') memberGroup?: string,
+    @Query('memberId')    memberId?:    string,
+    @Query('phone')       phone?:       string,
+    @Query('trxId')       trxId?:       string,
+    @Query('dpId')        dpId?:        string,
     @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number = 1,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number = 20,
   ) {
@@ -224,14 +229,19 @@ export class WalletController {
     const safeStatus = validStatuses.includes(status?.toUpperCase() ?? '')
       ? (status!.toUpperCase() as any)
       : 'PENDING';
- 
+
     return this.walletService.getPendingDeposits({
-      status:    safeStatus,
-      search:    search?.trim()           || undefined,
-      gatewayId: gatewayId ? parseInt(gatewayId, 10) : undefined,
-      userId:    userId    ? parseInt(userId,    10) : undefined,
-      dateFrom:  dateFrom  || undefined,
-      dateTo:    dateTo    || undefined,
+      status:      safeStatus,
+      search:      search?.trim()      || undefined,
+      gatewayId:   gatewayId ? parseInt(gatewayId, 10) : undefined,
+      userId:      userId    ? parseInt(userId,    10) : undefined,
+      dateFrom:    dateFrom  || undefined,
+      dateTo:      dateTo    || undefined,
+      memberGroup: memberGroup?.trim() || undefined,
+      memberId:    memberId?.trim()    || undefined,
+      phone:       phone?.trim()       || undefined,
+      trxId:       trxId?.trim()       || undefined,
+      dpId:        dpId?.trim()        || undefined,
       page,
       limit,
     });

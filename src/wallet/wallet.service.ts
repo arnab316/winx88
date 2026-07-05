@@ -903,13 +903,13 @@ async getPendingDeposits(q: DepositListQuery = {}) {
       where.push(`d.gateway_id = $${i++}`);
       params.push(q.gatewayId);
     }
- 
+
     // Single user filter (admin viewing one user's deposits)
     if (q.userId) {
       where.push(`d.user_id = $${i++}`);
       params.push(q.userId);
     }
- 
+
     // Date range on requested_at
     if (q.dateFrom) {
       where.push(`d.requested_at >= $${i++}::date`);
@@ -919,12 +919,50 @@ async getPendingDeposits(q: DepositListQuery = {}) {
       where.push(`d.requested_at < ($${i++}::date + INTERVAL '1 day')`);
       params.push(q.dateTo);
     }
- 
+
+    // Member Group = VIP tier name (same convention as member search)
+    if (q.memberGroup?.trim()) {
+      where.push(`(vlc.group_name ILIKE $${i} OR vlc.level_name ILIKE $${i})`);
+      params.push(q.memberGroup.trim());
+      i++;
+    }
+
+    // Member ID = users.user_code
+    if (q.memberId?.trim()) {
+      where.push(`u.user_code ILIKE $${i++}`);
+      params.push(`%${q.memberId.trim()}%`);
+    }
+
+    // Player phone — compare digits only, so +8801302…, 8801302… and
+    // 01302… all hit the same stored number (any of the user's numbers).
+    if (q.phone?.trim()) {
+      const digits = q.phone.replace(/\D/g, '').replace(/^880/, '').replace(/^0/, '');
+      where.push(`EXISTS (
+        SELECT 1 FROM user_phone_numbers up
+         WHERE up.user_id = u.id
+           AND regexp_replace(up.phone_number, '\\D', '', 'g') LIKE $${i++})`);
+      params.push(`%${digits}%`);
+    }
+
+    // TRX ID the player entered
+    if (q.trxId?.trim()) {
+      where.push(`d.transaction_number ILIKE $${i++}`);
+      params.push(`%${q.trxId.trim()}%`);
+    }
+
+    // DP ID — "DP00123" (or bare digits) → deposits.id
+    if (q.dpId?.trim()) {
+      const idDigits = q.dpId.replace(/\D/g, '');
+      where.push(`d.id = $${i++}`);
+      params.push(idDigits ? parseInt(idDigits, 10) : -1);
+    }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
  
     const rows = await this.dataSource.query(
       `SELECT
          d.id,
+         'DP' || LPAD(d.id::text, 5, '0') AS dp_id,
          d.deposit_code,
          d.user_id,
          d.amount,
@@ -935,10 +973,25 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          d.decided_at,
          d.rejection_reason,
          d.promotion_id,
+         d.provider,
+         d.pay_type,
+         d.provider_txn_id,
          -- User info
          u.full_name,
          u.username,
          u.email,
+         u.user_code                                    AS member_id,
+         u.vip_level,
+         COALESCE(vlc.group_name, vlc.level_name)       AS vip_level_name,
+         ph.phone_number                                AS player_number,
+         -- Deposits are always player-initiated (no admin-created flow)
+         u.username                                     AS created_by,
+         -- Bonus: real claim once approved; engine-math preview while pending
+         bx.bonus_amount,
+         (cl.claimed_bonus IS NULL
+          AND d.status = 'PENDING'
+          AND d.promotion_id IS NOT NULL)               AS bonus_is_preview,
+         (d.amount + bx.bonus_amount)::numeric(18,2)    AS total_amount,
          -- Gateway
          g.id   AS gateway_id,
          g.name AS gateway_name,
@@ -956,24 +1009,54 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          adm.email AS decided_by_email
        FROM deposits d
        JOIN users u           ON u.id   = d.user_id
+       LEFT JOIN vip_level_config vlc ON vlc.level = u.vip_level
        JOIN payment_gateways g ON g.id  = d.gateway_id
        LEFT JOIN agents a      ON a.id  = d.agent_id
        LEFT JOIN promotions p  ON p.id  = d.promotion_id
        LEFT JOIN admin_users adm ON adm.id = d.approved_by_admin_id
+       LEFT JOIN LATERAL (
+         SELECT up.phone_number
+           FROM user_phone_numbers up
+          WHERE up.user_id = u.id
+          ORDER BY up.is_primary DESC, up.id ASC
+          LIMIT 1
+       ) ph ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT c.bonus_amount AS claimed_bonus
+           FROM user_promotion_claims c
+          WHERE c.deposit_id = d.id AND c.status <> 'CANCELLED'
+          ORDER BY c.id DESC
+          LIMIT 1
+       ) cl ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT (CASE
+                  WHEN cl.claimed_bonus IS NOT NULL THEN cl.claimed_bonus
+                  -- Preview mirrors PromotionEngine.computeBonus: PERCENT is
+                  -- floored to 2 decimals, then capped by max_bonus.
+                  WHEN d.status = 'PENDING' AND p.id IS NOT NULL THEN
+                    LEAST(
+                      CASE WHEN p.bonus_type = 'PERCENT'
+                           THEN FLOOR(d.amount * p.bonus_value) / 100
+                           ELSE p.bonus_value::numeric END,
+                      p.max_bonus::numeric)
+                  ELSE 0
+                END)::numeric(18,2) AS bonus_amount
+       ) bx ON TRUE
        ${whereSql}
        ORDER BY d.requested_at DESC
        LIMIT $${i} OFFSET $${i + 1}`,
       [...params, limit, offset],
     );
- 
+
     const countRows = await this.dataSource.query(
       `SELECT COUNT(*)::int AS total
        FROM deposits d
        JOIN users u ON u.id = d.user_id
+       LEFT JOIN vip_level_config vlc ON vlc.level = u.vip_level
        ${whereSql}`,
       params,
     );
- 
+
     return {
       data:  rows,
       total: countRows[0].total,
@@ -981,11 +1064,16 @@ async getPendingDeposits(q: DepositListQuery = {}) {
       limit,
       filters: {
         status,
-        search:    q.search    ?? null,
-        gatewayId: q.gatewayId ?? null,
-        userId:    q.userId    ?? null,
-        dateFrom:  q.dateFrom  ?? null,
-        dateTo:    q.dateTo    ?? null,
+        search:      q.search      ?? null,
+        gatewayId:   q.gatewayId   ?? null,
+        userId:      q.userId      ?? null,
+        dateFrom:    q.dateFrom    ?? null,
+        dateTo:      q.dateTo      ?? null,
+        memberGroup: q.memberGroup ?? null,
+        memberId:    q.memberId    ?? null,
+        phone:       q.phone       ?? null,
+        trxId:       q.trxId       ?? null,
+        dpId:        q.dpId        ?? null,
       },
     };
   }
@@ -995,17 +1083,55 @@ async getPendingDeposits(q: DepositListQuery = {}) {
     const rows = await this.dataSource.query(
       `SELECT
          d.*,
+         'DP' || LPAD(d.id::text, 5, '0') AS dp_id,
          u.full_name, u.username, u.email,
+         u.user_code                              AS member_id,
+         u.vip_level,
+         COALESCE(vlc.group_name, vlc.level_name) AS vip_level_name,
+         ph.phone_number                          AS player_number,
+         u.username                               AS created_by,
+         bx.bonus_amount,
+         (cl.claimed_bonus IS NULL
+          AND d.status = 'PENDING'
+          AND d.promotion_id IS NOT NULL)         AS bonus_is_preview,
+         (d.amount + bx.bonus_amount)::numeric(18,2) AS total_amount,
          g.name AS gateway_name,
          a.agent_number, a.agent_code, a.wallet_type,
          p.title AS promotion_title, p.code AS promotion_code,
          adm.name AS decided_by_name
        FROM deposits d
        JOIN users u            ON u.id  = d.user_id
+       LEFT JOIN vip_level_config vlc ON vlc.level = u.vip_level
        JOIN payment_gateways g ON g.id  = d.gateway_id
        LEFT JOIN agents a      ON a.id  = d.agent_id
        LEFT JOIN promotions p  ON p.id  = d.promotion_id
        LEFT JOIN admin_users adm ON adm.id = d.approved_by_admin_id
+       LEFT JOIN LATERAL (
+         SELECT up.phone_number
+           FROM user_phone_numbers up
+          WHERE up.user_id = u.id
+          ORDER BY up.is_primary DESC, up.id ASC
+          LIMIT 1
+       ) ph ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT c.bonus_amount AS claimed_bonus
+           FROM user_promotion_claims c
+          WHERE c.deposit_id = d.id AND c.status <> 'CANCELLED'
+          ORDER BY c.id DESC
+          LIMIT 1
+       ) cl ON TRUE
+       LEFT JOIN LATERAL (
+         SELECT (CASE
+                  WHEN cl.claimed_bonus IS NOT NULL THEN cl.claimed_bonus
+                  WHEN d.status = 'PENDING' AND p.id IS NOT NULL THEN
+                    LEAST(
+                      CASE WHEN p.bonus_type = 'PERCENT'
+                           THEN FLOOR(d.amount * p.bonus_value) / 100
+                           ELSE p.bonus_value::numeric END,
+                      p.max_bonus::numeric)
+                  ELSE 0
+                END)::numeric(18,2) AS bonus_amount
+       ) bx ON TRUE
        WHERE d.id = $1`,
       [depositId],
     );
