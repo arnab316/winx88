@@ -54,7 +54,7 @@ async function bootstrap() {
   );
   const allowedOrigins = (
     process.env.CORS_ORIGINS ??
-    'https://winx-88.com,https://www.winx-88.com,https://test.safurion.online,https://winx88.net'
+    'https://winx-88.com,https://www.winx-88.com,https://test.safurion.online,https://winx88.net,http://localhost:5173'
   )
     .split(',')
     .map((o) => o.trim())
