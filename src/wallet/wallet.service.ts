@@ -189,7 +189,7 @@ export class WalletService {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'PENDING',NOW(),NOW(),NOW())
          RETURNING id`,
         [
-          generateCode('DEP'),
+          generateCode('DP'),
           dto.userId,
           dto.gatewayId,
           dto.agentId ?? null,
@@ -570,7 +570,7 @@ export class WalletService {
          VALUES ($1,$2,$3,$4,$5,'PENDING',NOW(),NOW(),NOW())
          RETURNING id`,
         [
-          generateCode('WDR'),
+          generateCode('WD'),
           dto.userId,
           dto.gatewayId,
           dto.amount,
