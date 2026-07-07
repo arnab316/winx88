@@ -262,10 +262,22 @@ async register(dto: any) {
         [referrerId, refereeUserId],
       );
 
+      // The referrer's deposit minimum is a LIFETIME total (business rule
+      // 2026-07-07): every approved deposit they have EVER made counts, so the
+      // counter does NOT restart per referee. Seed the row with their lifetime
+      // total; onDeposit() keeps adding new approvals on top.
+      const [dep] = await qr.query(
+        `SELECT COALESCE(SUM(amount), 0) AS total
+           FROM deposits WHERE user_id = $1 AND status = 'APPROVED'`,
+        [referrerId],
+      );
+      const referrerDepositTotal = Number(dep.total);
+
       // A 0 (or negative) minimum is satisfied at creation — there is no
       // deposit/bet event that would otherwise ever flip its `*_met` flag, so
       // without this a "0 turnover/deposit" rule would never complete.
-      const referrerDepMet  = cfg.referrer_deposit_min <= 0;
+      const referrerDepMet  = cfg.referrer_deposit_min <= 0
+        || referrerDepositTotal >= cfg.referrer_deposit_min;
       const refereeDepMet   = cfg.referee_deposit_min <= 0;
       const referrerTurnMet = referrerWasUnlocked || cfg.referrer_turnover_min <= 0;
       const refereeTurnMet  = cfg.referee_turnover_min <= 0;
@@ -276,6 +288,7 @@ async register(dto: any) {
         `INSERT INTO friend_referrals (
            referrer_user_id, referee_user_id, started_at, expires_at,
            referrer_was_unlocked,
+           referrer_deposit_total,
            referrer_deposit_met, referee_deposit_met,
            referrer_turnover_met, referee_turnover_met,
            config_bonus_amount, config_wagering_mult,
@@ -284,7 +297,7 @@ async register(dto: any) {
            config_window_hours, status
          ) VALUES (
            $1, $2, NOW(), NOW() + make_interval(hours => $3::int),
-           $4, $11, $12, $13, $14, $5, $6, $7, $8, $9, $10, $3::int, 'PENDING'
+           $4, $15, $11, $12, $13, $14, $5, $6, $7, $8, $9, $10, $3::int, 'PENDING'
          )
          ON CONFLICT (referee_user_id) DO NOTHING`,
         [
@@ -293,6 +306,7 @@ async register(dto: any) {
           cfg.referrer_deposit_min, cfg.referee_deposit_min,
           cfg.referrer_turnover_min, cfg.referee_turnover_min,
           referrerDepMet, refereeDepMet, referrerTurnMet, refereeTurnMet,
+          referrerDepositTotal,
         ],
       );
 
