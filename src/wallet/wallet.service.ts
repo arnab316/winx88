@@ -1396,6 +1396,7 @@ async getLedgerHistory(
     WIN_CREDIT:             'WIN',
     BET_PLACED:             'BET',
     BET_CANCELLED:          'BET',
+    AFFILIATE_COMMISSION_CREDIT: 'AFFILIATE COMMISSION',
   };
 
   const ADMIN_LABELS: Record<string, string> = {
@@ -1412,6 +1413,7 @@ async getLedgerHistory(
     WIN_CREDIT:             'WIN',
     BET_PLACED:             'BET',
     BET_CANCELLED:          'BET',
+    AFFILIATE_COMMISSION_CREDIT: 'AFFILIATE COMMISSION',
   };
 
   const labelMap = role === 'ADMIN' ? ADMIN_LABELS : USER_LABELS;
@@ -1429,9 +1431,12 @@ async getLedgerHistory(
   // Manual admin adjustments (credit "Weekly Loss Bonus", debit claw-back).
   // These must appear in the statement with their description + amount.
   const ADJUSTMENT_TYPES = ['MANUAL_ADJUSTMENT'];
+  // Approved affiliate → player commission transfers.
+  const AFFILIATE_TYPES = ['AFFILIATE_COMMISSION_CREDIT'];
 
-  // Optional ?type=DEPOSIT | WITHDRAWAL | ADJUSTMENT narrows the feed; anything
-  // else (or no filter) returns all three. Bet/win/bonus filters return nothing.
+  // Optional ?type=DEPOSIT | WITHDRAWAL | ADJUSTMENT | AFFILIATE narrows the
+  // feed; anything else (or no filter) returns all four. Bet/win/bonus
+  // filters return nothing.
   const filter = typeFilter?.trim().toUpperCase();
   let effectiveTypes: string[];
   if (filter === 'DEPOSIT') {
@@ -1440,8 +1445,10 @@ async getLedgerHistory(
     effectiveTypes = WITHDRAWAL_TYPES;
   } else if (filter === 'ADJUSTMENT') {
     effectiveTypes = ADJUSTMENT_TYPES;
+  } else if (filter === 'AFFILIATE') {
+    effectiveTypes = AFFILIATE_TYPES;
   } else {
-    effectiveTypes = [...DEPOSIT_TYPES, ...WITHDRAWAL_TYPES, ...ADJUSTMENT_TYPES];
+    effectiveTypes = [...DEPOSIT_TYPES, ...WITHDRAWAL_TYPES, ...ADJUSTMENT_TYPES, ...AFFILIATE_TYPES];
   }
 
   const params: any[] = [userId, ...effectiveTypes];

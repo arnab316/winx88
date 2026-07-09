@@ -1,16 +1,29 @@
 import { Module } from '@nestjs/common';
 import { AffiliateService } from './affiliate.service';
 import { AffiliateRevShareService } from './affiliate-revshare.service';
+import { AffiliateWeeklyService } from './affiliate-weekly.service';
+import { AffiliateTransferService } from './affiliate-transfer.service';
+import { AffiliateAdminService } from './affiliate-admin.service';
 import { AffiliateController } from './affiliate.controller';
 import { AffiliatePublicController } from './affiliate-public.controller';
 import { AuthModule } from 'src/auth/auth.module';
+import { WalletModule } from 'src/wallet/wallet.module';
+import { VerificationModule } from 'src/verification/verification.module';
 import { AdminGuard } from 'src/common/guards/admin.guard';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 
 @Module({
-  imports: [AuthModule],
-  providers: [AffiliateService, AffiliateRevShareService, JwtAuthGuard, AdminGuard],
+  imports: [AuthModule, WalletModule, VerificationModule],
+  providers: [
+    AffiliateService,
+    AffiliateRevShareService,
+    AffiliateWeeklyService,
+    AffiliateTransferService,
+    AffiliateAdminService,
+    JwtAuthGuard,
+    AdminGuard,
+  ],
   controllers: [AffiliateController, AffiliatePublicController],
-  exports: [AffiliateService, AffiliateRevShareService],
+  exports: [AffiliateService, AffiliateRevShareService, AffiliateWeeklyService],
 })
 export class AffiliateModule {}

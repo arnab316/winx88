@@ -378,21 +378,31 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
           [dto.adminId, dto.applicationId],
         );
 
-        // 2. Insert into affiliate_users. RevShare tier/rate is normally
-        //    auto-derived monthly by active-player count; an optional
-        //    revshareRate here sets a per-affiliate override at approval time
-        //    (the winX88partners "assign group on approval" step).
+        // Optional group assigned at approval time must exist.
+        if (dto.groupId != null) {
+          const g = await queryRunner.query(
+            `SELECT id FROM affiliate_groups WHERE id = $1`,
+            [dto.groupId],
+          );
+          if (!g.length) throw new NotFoundException('Group not found');
+        }
+
+        // 2. Insert into affiliate_users. The weekly engine resolves the rate
+        //    as: revshare_rate override → assigned group → bracket-matched
+        //    group → legacy ladder. "Assign group & approve" sets group_id.
         await queryRunner.query(
           `INSERT INTO affiliate_users
-             (user_id, commission_pct, revshare_rate, is_active, approved_at, approved_by_admin_id, created_at, updated_at)
-           VALUES ($1, $2, $3, true, NOW(), $4, NOW(), NOW())
+             (user_id, commission_pct, revshare_rate, group_id, is_active, status, approved_at, approved_by_admin_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, true, 'ACTIVE', NOW(), $5, NOW(), NOW())
            ON CONFLICT (user_id) DO UPDATE
            SET is_active = true,
+               status = 'ACTIVE',
                commission_pct = EXCLUDED.commission_pct,
                revshare_rate = COALESCE(EXCLUDED.revshare_rate, affiliate_users.revshare_rate),
+               group_id = COALESCE(EXCLUDED.group_id, affiliate_users.group_id),
                approved_by_admin_id = EXCLUDED.approved_by_admin_id,
                updated_at = NOW()`,
-          [app.user_id, dto.commissionPct ?? 0, dto.revshareRate ?? null, dto.adminId],
+          [app.user_id, dto.commissionPct ?? 0, dto.revshareRate ?? null, dto.groupId ?? null, dto.adminId],
         );
 
         await queryRunner.commitTransaction();
@@ -480,6 +490,13 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
            au.revshare_tier,
            au.revshare_rate,
            au.is_active,
+           au.status,
+           au.remark,
+           au.group_id,
+           g.name AS group_name,
+           g.rev_share_pct AS group_rate,
+           au.commission_balance,
+           au.lifetime_commission,
            au.approved_at,
            u.full_name,
            u.username,
@@ -489,13 +506,28 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
            u.vip_level,
            w.total_deposited,
            w.balance,
+           p.phone_number,
            (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = au.user_id)      AS downline_count,
+           (SELECT COUNT(DISTINCT r.referee_user_id) FROM referrals r
+             WHERE r.referrer_user_id = au.user_id
+               AND EXISTS (SELECT 1 FROM deposits d
+                            WHERE d.user_id = r.referee_user_id AND d.status = 'APPROVED'
+                              AND d.decided_at >= (CURRENT_DATE - ((EXTRACT(DOW FROM CURRENT_DATE)::int + 2) % 7))))
+                                                                                     AS active_players_week,
+           (SELECT COALESCE(SUM(w2.total_deposited),0) FROM referrals r2
+             JOIN wallets w2 ON w2.user_id = r2.referee_user_id
+            WHERE r2.referrer_user_id = au.user_id)                                  AS downline_deposits,
            (SELECT COUNT(*) FROM affiliate_clicks WHERE referrer_user_id = au.user_id) AS click_count,
            (SELECT COALESCE(SUM(amount),0) FROM referral_bonus
             WHERE referrer_user_id = au.user_id AND status = 'APPROVED')             AS total_bonus_paid
          FROM affiliate_users au
          JOIN users   u ON u.id = au.user_id
          JOIN wallets w ON w.user_id = au.user_id
+         LEFT JOIN affiliate_groups g ON g.id = au.group_id
+         LEFT JOIN LATERAL (
+           SELECT phone_number FROM user_phone_numbers
+            WHERE user_id = u.id ORDER BY is_primary DESC, id ASC LIMIT 1
+         ) p ON TRUE
          ${whereSql}
          ORDER BY au.approved_at DESC
          LIMIT $${i} OFFSET $${i + 1}`,

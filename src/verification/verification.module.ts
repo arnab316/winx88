@@ -8,7 +8,8 @@ import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 @Module({
   imports: [AuthModule],
   controllers: [VerificationController],
-  providers: [VerificationService]
+  providers: [VerificationService],
+  exports: [VerificationService],
 })
 export class VerificationModule {}
   
