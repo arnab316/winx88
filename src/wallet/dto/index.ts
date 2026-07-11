@@ -97,6 +97,7 @@ export interface DepositListQuery {
   status?:     'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL';
   search?:     string;    // matches username, full_name, deposit_code, transaction_number
   gatewayId?:  number;
+  provider?:   string;    // 'WINYPAY' = automated online; 'MANUAL'/'NONE' = agent deposits
   userId?:     number;    // filter to one user's deposits
   dateFrom?:   string;    // ISO date e.g. "2026-05-01"
   dateTo?:     string;    // ISO date e.g. "2026-05-10"

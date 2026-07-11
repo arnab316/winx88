@@ -905,6 +905,18 @@ async getPendingDeposits(q: DepositListQuery = {}) {
       params.push(q.gatewayId);
     }
 
+    // Provider filter — e.g. ?provider=WINYPAY (automated), or ?provider=MANUAL
+    // for agent deposits (provider IS NULL).
+    if (q.provider?.trim()) {
+      const prov = q.provider.trim().toUpperCase();
+      if (prov === 'MANUAL' || prov === 'NONE') {
+        where.push(`d.provider IS NULL`);
+      } else {
+        where.push(`d.provider = $${i++}`);
+        params.push(prov);
+      }
+    }
+
     // Single user filter (admin viewing one user's deposits)
     if (q.userId) {
       where.push(`d.user_id = $${i++}`);
@@ -1067,6 +1079,7 @@ async getPendingDeposits(q: DepositListQuery = {}) {
         status,
         search:      q.search      ?? null,
         gatewayId:   q.gatewayId   ?? null,
+        provider:    q.provider    ?? null,
         userId:      q.userId      ?? null,
         dateFrom:    q.dateFrom    ?? null,
         dateTo:      q.dateTo      ?? null,

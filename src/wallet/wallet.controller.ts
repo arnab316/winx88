@@ -222,6 +222,7 @@ export class WalletController {
     @Query('status')      status?:      string,
     @Query('search')      search?:      string,
     @Query('gatewayId')   gatewayId?:   string,
+    @Query('provider')    provider?:    string,
     @Query('userId')      userId?:      string,
     @Query('dateFrom')    dateFrom?:    string,
     @Query('dateTo')      dateTo?:      string,
@@ -241,7 +242,7 @@ export class WalletController {
     // Search fields need deposit.filter on top of deposit.view (status tabs
     // and paging stay view-level). req.rbac is set by PermissionsGuard.
     const usesFilters = [
-      search, gatewayId, userId, dateFrom, dateTo,
+      search, gatewayId, provider, userId, dateFrom, dateTo,
       memberGroup, memberId, phone, trxId, dpId,
     ].some((v) => v?.toString().trim());
     if (usesFilters && req.rbac && !req.rbac.isSuperAdmin
@@ -253,6 +254,7 @@ export class WalletController {
       status:      safeStatus,
       search:      search?.trim()      || undefined,
       gatewayId:   gatewayId ? parseInt(gatewayId, 10) : undefined,
+      provider:    provider?.trim()    || undefined,
       userId:      userId    ? parseInt(userId,    10) : undefined,
       dateFrom:    dateFrom  || undefined,
       dateTo:      dateTo    || undefined,
