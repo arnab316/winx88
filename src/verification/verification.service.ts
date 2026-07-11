@@ -275,10 +275,14 @@ export class VerificationService {
               uv.rejection_reason,
               uv.submission_count,
               uv.reviewed_at,
+              -- Reviewing admin (same convention as deposit/withdrawal lists)
+              adm.name  AS decided_by_name,
+              adm.email AS decided_by_email,
               uv.created_at,
               uv.updated_at
        FROM user_verifications uv
        JOIN users u ON u.id = uv.user_id
+       LEFT JOIN admin_users adm ON adm.id = uv.reviewed_by_admin_id
        ${where}
        ORDER BY uv.created_at DESC
        LIMIT $1 OFFSET $2`,
@@ -320,9 +324,12 @@ export class VerificationService {
       `SELECT uv.*,
               u.username,
               u.full_name,
-              u.email
+              u.email,
+              adm.name  AS decided_by_name,
+              adm.email AS decided_by_email
        FROM user_verifications uv
        JOIN users u ON u.id = uv.user_id
+       LEFT JOIN admin_users adm ON adm.id = uv.reviewed_by_admin_id
        WHERE uv.id = $1
        LIMIT 1`,
       [id],
@@ -342,13 +349,17 @@ export class VerificationService {
 
   async getVerificationByUserId(userId: number) {
     const rows = await this.dataSource.query(
-      `SELECT id, document_type, document_number, expiry_date,
-              front_image_url, back_image_url, selfie_image_url,
-              status, rejection_reason, submission_count,
-              reviewed_at, created_at, updated_at
-       FROM user_verifications
-       WHERE user_id = $1
-       ORDER BY created_at DESC`,
+      `SELECT uv.id, uv.document_type, uv.document_number, uv.expiry_date,
+              uv.front_image_url, uv.back_image_url, uv.selfie_image_url,
+              uv.status, uv.rejection_reason, uv.submission_count,
+              uv.reviewed_at,
+              adm.name  AS decided_by_name,
+              adm.email AS decided_by_email,
+              uv.created_at, uv.updated_at
+       FROM user_verifications uv
+       LEFT JOIN admin_users adm ON adm.id = uv.reviewed_by_admin_id
+       WHERE uv.user_id = $1
+       ORDER BY uv.created_at DESC`,
       [userId],
     );
 

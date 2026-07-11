@@ -321,10 +321,14 @@ export class AffiliateAdminService {
                 uv.document_type, uv.document_number, uv.expiry_date,
                 uv.front_image_url, uv.back_image_url, uv.selfie_image_url,
                 uv.status, uv.rejection_reason, uv.submission_count,
-                uv.reviewed_at, uv.created_at, uv.updated_at
+                uv.reviewed_at,
+                adm.name  AS decided_by_name,
+                adm.email AS decided_by_email,
+                uv.created_at, uv.updated_at
            FROM user_verifications uv
            JOIN affiliate_users au ON au.user_id = uv.user_id
            JOIN users u ON u.id = uv.user_id
+           LEFT JOIN admin_users adm ON adm.id = uv.reviewed_by_admin_id
            ${where}
            ORDER BY (uv.status = 'PENDING') DESC, uv.created_at DESC
            LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
