@@ -101,6 +101,11 @@ export interface DepositListQuery {
   userId?:     number;    // filter to one user's deposits
   dateFrom?:   string;    // ISO date e.g. "2026-05-01"
   dateTo?:     string;    // ISO date e.g. "2026-05-10"
+  memberGroup?: string;   // VIP tier name (vip_level_config group_name / level_name)
+  memberId?:   string;    // users.user_code (partial match)
+  phone?:      string;    // player phone; +880 / 880 / leading-0 forms all match
+  trxId?:      string;    // transaction_number (partial match)
+  dpId?:       string;    // display deposit id, e.g. "DP00123" (digits → deposits.id)
   page?:       number;
   limit?:      number;
 }
