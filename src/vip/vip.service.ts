@@ -817,9 +817,119 @@ export class VipService {
   // GET /tiers/admin/:level/banks — allowed payment channels
   async getTierBanks(level: number) {
     return this.dataSource.query(
-      `SELECT id, level, channel, enabled FROM tier_banks WHERE level = $1 ORDER BY channel`,
+      `SELECT id, level, channel, enabled, deposit_enabled, withdrawal_enabled
+         FROM tier_banks WHERE level = $1 ORDER BY channel`,
       [level],
     );
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // TIER BANKING TOGGLES — the "10 toggle buttons" per member group:
+  //   2 master switches (deposit / withdrawal for the whole tier) +
+  //   deposit/withdrawal per payment channel (bKash, Nagad, Rocket, Upay).
+  //   Channels come from payment_gateways names (WinyPay excluded), so a
+  //   newly added gateway shows up automatically defaulting to enabled.
+  // ═════════════════════════════════════════════════════════════
+
+  // GET /tiers/admin/:level/banking
+  async getBankingToggles(level: number) {
+    const tierRows = await this.dataSource.query(
+      `SELECT level, level_name, group_name, deposit_enabled, withdrawal_enabled
+         FROM vip_level_config WHERE level = $1`,
+      [level],
+    );
+    if (!tierRows.length) throw new NotFoundException(`Tier ${level} not configured`);
+    const tier = tierRows[0];
+
+    const channels = await this.dataSource.query(
+      `SELECT g.name AS channel,
+              COALESCE(tb.enabled, TRUE)            AS enabled,
+              COALESCE(tb.deposit_enabled, TRUE)    AS deposit_enabled,
+              COALESCE(tb.withdrawal_enabled, TRUE) AS withdrawal_enabled
+         FROM (SELECT DISTINCT name FROM payment_gateways
+                WHERE LOWER(name) <> 'winypay') g
+         LEFT JOIN tier_banks tb ON tb.level = $1 AND tb.channel = g.name
+        ORDER BY g.name`,
+      [level],
+    );
+
+    return {
+      level: tier.level,
+      levelName: tier.level_name,
+      groupName: tier.group_name,
+      depositEnabled: tier.deposit_enabled,
+      withdrawalEnabled: tier.withdrawal_enabled,
+      channels: channels.map((c: any) => ({
+        channel: c.channel,
+        depositEnabled: c.enabled && c.deposit_enabled,
+        withdrawalEnabled: c.enabled && c.withdrawal_enabled,
+      })),
+    };
+  }
+
+  // PATCH /tiers/admin/:level/banking
+  async updateBankingToggles(
+    level: number,
+    dto: {
+      depositEnabled?: boolean;
+      withdrawalEnabled?: boolean;
+      channels?: { channel: string; depositEnabled?: boolean; withdrawalEnabled?: boolean }[];
+    },
+  ) {
+    const tier = await this.dataSource.query(
+      `SELECT level FROM vip_level_config WHERE level = $1`,
+      [level],
+    );
+    if (!tier.length) throw new NotFoundException(`Tier ${level} not configured`);
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      if (dto.depositEnabled !== undefined || dto.withdrawalEnabled !== undefined) {
+        await qr.query(
+          `UPDATE vip_level_config
+              SET deposit_enabled    = COALESCE($1, deposit_enabled),
+                  withdrawal_enabled = COALESCE($2, withdrawal_enabled),
+                  updated_at = NOW()
+            WHERE level = $3`,
+          [dto.depositEnabled ?? null, dto.withdrawalEnabled ?? null, level],
+        );
+      }
+
+      for (const ch of dto.channels ?? []) {
+        // Upsert per channel; flipping a direction re-enables the legacy
+        // overall `enabled` flag so the new pair is the single source of truth.
+        await qr.query(
+          `INSERT INTO tier_banks (level, channel, enabled, deposit_enabled, withdrawal_enabled)
+           VALUES ($1, $2, TRUE, COALESCE($3, TRUE), COALESCE($4, TRUE))
+           ON CONFLICT (level, channel) DO UPDATE SET
+             enabled            = TRUE,
+             deposit_enabled    = COALESCE($3, tier_banks.deposit_enabled),
+             withdrawal_enabled = COALESCE($4, tier_banks.withdrawal_enabled)`,
+          [level, ch.channel, ch.depositEnabled ?? null, ch.withdrawalEnabled ?? null],
+        );
+      }
+
+      await qr.commitTransaction();
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+
+    return this.getBankingToggles(level);
+  }
+
+  // Effective toggles for a specific user (deposit page / withdraw page).
+  async getMyBankingToggles(userId: number) {
+    const rows = await this.dataSource.query(
+      `SELECT vip_level FROM users WHERE id = $1`,
+      [userId],
+    );
+    if (!rows.length) throw new NotFoundException('User not found');
+    return this.getBankingToggles(rows[0].vip_level);
   }
 
   // PUT /tiers/admin/:level/banks — replace the full channel set

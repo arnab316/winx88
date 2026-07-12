@@ -76,14 +76,55 @@ export class WalletService {
     return rows.length ? rows[0] : null;
   }
 
+  // ─── Helper: VIP-tier banking toggles ─────────────────────────
+  //   Each member group has two master switches (deposit_enabled /
+  //   withdrawal_enabled on vip_level_config) plus per-channel toggles
+  //   (tier_banks, keyed by gateway NAME). Missing rows default to
+  //   enabled, so new tiers/gateways stay open until an admin flips them.
+  private async assertTierChannelAllowed(
+    qr: QueryRunner,
+    userId: number,
+    gatewayId: number,
+    direction: 'DEPOSIT' | 'WITHDRAWAL',
+  ): Promise<void> {
+    const col = direction === 'DEPOSIT' ? 'deposit_enabled' : 'withdrawal_enabled';
+    const rows = await qr.query(
+      `SELECT vlc.${col}                    AS tier_enabled,
+              tb.enabled                    AS channel_master,
+              tb.${col}                     AS channel_enabled,
+              g.name                        AS gateway_name
+         FROM users u
+         LEFT JOIN vip_level_config vlc ON vlc.level = u.vip_level
+         JOIN payment_gateways g ON g.id = $2
+         LEFT JOIN tier_banks tb ON tb.level = u.vip_level AND tb.channel = g.name
+        WHERE u.id = $1
+        LIMIT 1`,
+      [userId, gatewayId],
+    );
+    if (!rows.length) return; // no user row — later checks will handle it
+    const r = rows[0];
+    const label = direction === 'DEPOSIT' ? 'Deposits' : 'Withdrawals';
+
+    if (r.tier_enabled === false) {
+      throw new ForbiddenException(
+        `${label} are currently disabled for your VIP level`,
+      );
+    }
+    if (r.channel_master === false || r.channel_enabled === false) {
+      throw new ForbiddenException(
+        `${r.gateway_name} ${label.toLowerCase()} are not available for your VIP level`,
+      );
+    }
+  }
+
   // ─── Shared deposit gate ──────────────────────────────────────
   //   The single source of truth for "is this deposit allowed?".
   //   Runs against the supplied query runner (read-only — no writes)
   //   so it can be used both by the pre-flight validateDeposit() and
   //   inside the requestDeposit() transaction. Throws a descriptive
   //   exception on the first failed rule; returns nothing on success.
-  //   Rules: phone verified → gateway active → tier min/max → promo
-  //   eligibility (full gate: verification, frequency, amount bounds).
+  //   Rules: phone verified → gateway active → tier toggles → tier
+  //   min/max → promo eligibility (verification, frequency, bounds).
   private async assertDepositGate(
     qr: QueryRunner,
     args: { userId: number; gatewayId: number; amount: number; promotionId?: number },
@@ -109,6 +150,9 @@ export class WalletService {
     if (!gateway.length) {
       throw new BadRequestException('Payment gateway not found or inactive');
     }
+
+    // VIP-tier banking toggles: tier master switch + per-channel toggle.
+    await this.assertTierChannelAllowed(qr, args.userId, args.gatewayId, 'DEPOSIT');
 
     // Tier deposit limits (min/max) — enforced only when configured.
     const limits = await this.getTierLimits(qr, args.userId);
@@ -448,6 +492,9 @@ export class WalletService {
       );
       if (!gateway.length)
         throw new BadRequestException('Payment gateway not found or inactive');
+
+      // VIP-tier banking toggles: tier master switch + per-channel toggle.
+      await this.assertTierChannelAllowed(qr, dto.userId, dto.gatewayId, 'WITHDRAWAL');
 
       // Must have funded the account at least once before withdrawing.
       // Blocks no-deposit bonus/winnings extraction. total_deposited is

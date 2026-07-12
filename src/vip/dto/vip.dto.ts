@@ -218,3 +218,24 @@ export class SetTierBanksDto {
   @Type(() => TierBankChannelDto)
   channels!: TierBankChannelDto[];
 }
+
+// ─── TIER: banking toggles (2 master + per-channel deposit/withdrawal) ──
+export class BankingChannelToggleDto {
+  @IsString() @Length(1, 30) channel!: string;
+  @IsOptional() @IsBoolean() depositEnabled?: boolean;
+  @IsOptional() @IsBoolean() withdrawalEnabled?: boolean;
+}
+
+export class UpdateBankingTogglesDto {
+  /** Master switch: all deposits for the tier. */
+  @IsOptional() @IsBoolean() depositEnabled?: boolean;
+  /** Master switch: all withdrawals for the tier. */
+  @IsOptional() @IsBoolean() withdrawalEnabled?: boolean;
+  /** Per-gateway-name toggles (bKash / Nagad / Rocket / Upay …). */
+  @IsOptional()
+  @IsArray()
+  @ArrayMaxSize(50)
+  @ValidateNested({ each: true })
+  @Type(() => BankingChannelToggleDto)
+  channels?: BankingChannelToggleDto[];
+}
