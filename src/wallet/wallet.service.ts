@@ -1539,14 +1539,34 @@ async getLedgerHistory(
           fl.balance_before, fl.balance_after,
           fl.reference_type, fl.reference_id,
           fl.status, fl.description, fl.created_by_type, fl.created_at,
+          -- Human transaction id — same formats the admin already sees on the
+          -- deposit/withdrawal lists (DP00292 / WD00033) and affiliate
+          -- transfers (TR-1001). Rows with no external reference (manual
+          -- adjustments) keep their FIN ledger code.
+          CASE
+            WHEN fl.reference_type = 'DEPOSIT'            AND fl.reference_id IS NOT NULL
+              THEN 'DP' || LPAD(fl.reference_id::text, 5, '0')
+            WHEN fl.reference_type = 'WITHDRAWAL'         AND fl.reference_id IS NOT NULL
+              THEN 'WD' || LPAD(fl.reference_id::text, 5, '0')
+            WHEN fl.reference_type = 'AFFILIATE_TRANSFER' AND fl.reference_id IS NOT NULL
+              THEN 'TR-' || (1000 + fl.reference_id)::text
+            ELSE fl.ledger_code
+          END             AS transaction_id,
+          d.transaction_number,
+          d.provider      AS deposit_provider,
+          COALESCE(d.transaction_number, d.provider_txn_id) AS deposit_trx_id,
+          w.withdrawal_code,
           a.wallet_type   AS agent_wallet_type,
           a.agent_number  AS agent_number,
-          g.name          AS gateway_name
+          COALESCE(g.name, wg.name) AS gateway_name
        FROM financial_ledger fl
        LEFT JOIN deposits d
               ON fl.reference_type = 'DEPOSIT' AND fl.reference_id = d.id
        LEFT JOIN agents a            ON a.id = d.agent_id
        LEFT JOIN payment_gateways g  ON g.id = d.gateway_id
+       LEFT JOIN withdrawals w
+              ON fl.reference_type = 'WITHDRAWAL' AND fl.reference_id = w.id
+       LEFT JOIN payment_gateways wg ON wg.id = w.gateway_id
        ${whereClause}
        ORDER BY ${groupKey}, fl.created_at DESC, fl.id DESC
      ) sub
@@ -1566,9 +1586,23 @@ async getLedgerHistory(
 
   return {
     data: rows.map((row) => {
-      const { agent_wallet_type, agent_number, gateway_name, ...rest } = row;
+      const {
+        agent_wallet_type, agent_number, gateway_name,
+        transaction_id, deposit_trx_id, withdrawal_code, deposit_provider,
+        ...rest
+      } = row;
       return {
         ...rest,
+        // Deposit-table transaction number exactly as the player typed it
+        // during deposit (null for withdrawals/adjustments) — same key as
+        // the admin deposit list. Kept in `rest` via d.transaction_number.
+        transactionId: transaction_id,
+        // Gateway-side TRX reference: the trx id the user submitted with the
+        // deposit, or the withdrawal's payout code. Null for adjustments.
+        trxId: deposit_trx_id ?? withdrawal_code ?? null,
+        // 'WINYPAY' = automated PSP (transaction_number is system-generated);
+        // null = manual agent deposit (transaction_number is player-typed).
+        provider: deposit_provider ?? null,
         typeLabel: labelMap[row.entry_type] ?? row.entry_type,
         // Where the money went/came from — populated for deposits only.
         walletType:  agent_wallet_type ?? null,
