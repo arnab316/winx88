@@ -495,6 +495,9 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
            au.group_id,
            g.name AS group_name,
            g.rev_share_pct AS group_rate,
+           -- The REVSHARE column as displayed: per-affiliate override wins,
+           -- else the assigned group's rate, else 0 (no group, no override).
+           COALESCE(au.revshare_rate, g.rev_share_pct, 0) AS effective_revshare,
            au.commission_balance,
            au.lifetime_commission,
            au.approved_at,
