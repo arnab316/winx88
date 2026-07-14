@@ -66,20 +66,45 @@ export class AffiliateAdminService {
       `,
       [weekStart],
     );
-    return rows.map((g: any) => ({
-      id: Number(g.id),
-      name: g.name,
-      revSharePct: parseFloat(g.rev_share_pct),
-      minActivePlayers: g.min_active_players,
-      maxActivePlayers: g.max_active_players,
-      isActive: g.is_active,
-      affiliates: g.affiliates,
-      players: g.players,
-      activePlayers: g.active_players,
-      playerDeposits: parseFloat(g.player_deposits),
-      createdAt: g.created_at,
-      updatedAt: g.updated_at,
-    }));
+    // Page-level KPI cards ("Affiliate groups" screen header). Counts span
+    // ALL affiliates — including ones with no group assigned — so the summary
+    // can exceed the sum of the group cards.
+    const [s] = await this.dataSource.query(
+      `SELECT
+         (SELECT COUNT(*) FROM affiliate_groups)::int                          AS total_groups,
+         (SELECT COUNT(*) FROM affiliate_users)::int                           AS total_affiliates,
+         (SELECT COUNT(*) FROM affiliate_applications
+           WHERE status = 'PENDING')::int                                      AS pending_applications,
+         (SELECT COUNT(*) FROM referrals r
+           JOIN affiliate_users au ON au.user_id = r.referrer_user_id)::int    AS total_players,
+         (SELECT COALESCE(SUM(w.total_deposited), 0) FROM referrals r
+           JOIN affiliate_users au ON au.user_id = r.referrer_user_id
+           JOIN wallets w ON w.user_id = r.referee_user_id)                    AS total_deposits`,
+    );
+
+    return {
+      summary: {
+        totalGroups:         s.total_groups,
+        totalAffiliates:     s.total_affiliates,
+        pendingApplications: s.pending_applications,
+        totalPlayers:        s.total_players,
+        totalDeposits:       parseFloat(s.total_deposits),
+      },
+      groups: rows.map((g: any) => ({
+        id: Number(g.id),
+        name: g.name,
+        revSharePct: parseFloat(g.rev_share_pct),
+        minActivePlayers: g.min_active_players,
+        maxActivePlayers: g.max_active_players,
+        isActive: g.is_active,
+        affiliates: g.affiliates,
+        players: g.players,
+        activePlayers: g.active_players,
+        playerDeposits: parseFloat(g.player_deposits),
+        createdAt: g.created_at,
+        updatedAt: g.updated_at,
+      })),
+    };
   }
 
   private validateGroupFields(dto: {
