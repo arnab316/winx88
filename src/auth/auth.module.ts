@@ -15,6 +15,6 @@ import { LaafficService } from 'src/laaffic/laaffic.service';
     secret: 'your-secret-key',}), PromotionModule, LoggerModule],
   controllers: [AuthController],
   providers: [AuthService, AuthGateway, TwilioService, JwtAuthGuard, OtpCleanupService, LaafficService],
-  exports: [JwtModule],
+  exports: [JwtModule, AuthService],
 })
 export class AuthModule {}

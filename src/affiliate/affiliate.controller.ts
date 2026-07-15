@@ -8,10 +8,13 @@ import {
   Param,
   Query,
   Req,
+  Res,
   UseGuards,
   ParseIntPipe,
   DefaultValuePipe,
+  BadRequestException,
 } from '@nestjs/common';
+import { AuthService } from '../auth/auth.service';
 import { AffiliateService } from './affiliate.service';
 import { AffiliateRevShareService } from './affiliate-revshare.service';
 import { AffiliateWeeklyService } from './affiliate-weekly.service';
@@ -30,7 +33,106 @@ export class AffiliateController {
     private readonly transfers: AffiliateTransferService,
     private readonly affiliateAdmin: AffiliateAdminService,
     private readonly verification: VerificationService,
+    private readonly authService: AuthService,
   ) {}
+
+  // ─────────────────────────────────────────────────────────────
+  // PARTNERS PORTAL: signup + login (public)
+  // ─────────────────────────────────────────────────────────────
+
+  // POST /affiliate/register — the "Create your account" screen.
+  // body: { username, phoneNumber (or phone_number), email, password, fullName? }
+  // Creates the user account through the normal register flow (auto-login)
+  // AND files the affiliate application in one step.
+  @Post('register')
+  async registerAffiliate(
+    @Body() body: any,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    const phone = body.phoneNumber ?? body.phone_number;
+    if (!body.email?.trim()) throw new BadRequestException('email is required');
+
+    const result = await this.authService.register({
+      full_name:    body.fullName?.trim() || body.username,
+      username:     body.username,
+      phone_number: phone,
+      email:        body.email.trim(),
+      password:     body.password,
+    });
+
+    await this.affiliateService.applyAffiliate({
+      userId: result.userId,
+      notes:  'Signed up via partners portal',
+    });
+
+    res.cookie('accessToken', result.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    res.cookie('refreshToken', result.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    await this.authService.recordLoginEvent(
+      result.userId,
+      'REGISTER',
+      req.ip,
+      (req.headers['x-device-fingerprint'] as string) || undefined,
+    );
+
+    return {
+      success: true,
+      code: 201,
+      message: 'Account created. Affiliate application submitted for review.',
+      data: { ...result, affiliate: { status: 'PENDING' } },
+    };
+  }
+
+  // POST /affiliate/login — the "Already a partner? Sign in" screen.
+  // body: { identifier (username | email | phone), password }
+  // Same credentials as the main site; the response adds the affiliate
+  // state so the portal can route: application PENDING/REJECTED, active
+  // affiliate, or NONE (registered player who never applied).
+  @Post('login')
+  async loginAffiliate(
+    @Body() body: any,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    const result = await this.authService.login(body);
+    const affiliate = await this.affiliateService.getMyAffiliateStatus(result.user.id);
+
+    res.cookie('accessToken', result.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    res.cookie('refreshToken', result.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    await this.authService.recordLoginEvent(
+      result.user.id,
+      'LOGIN',
+      req.ip,
+      (req.headers['x-device-fingerprint'] as string) || undefined,
+    );
+
+    return {
+      success: true,
+      code: 200,
+      message: 'Logged in successfully',
+      data: { ...result, affiliate },
+    };
+  }
 
   // ─────────────────────────────────────────────────────────────
   // USER ROUTES
