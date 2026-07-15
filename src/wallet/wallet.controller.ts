@@ -384,6 +384,40 @@ export class WalletController {
     });
   }
  
+  // POST /wallet/admin/manual-deposit
+  // body: { usernameOrPhone, amount, gatewayId, playerNumber?, trxNumber?,
+  //         promotionId?, turnoverMultiplier?, description? }
+  //   Creates an already-APPROVED deposit row and runs the full approval
+  //   side-effects (credit, coins, promo bonus, turnover, referral progress).
+  //   turnoverMultiplier: omit = default 1×, 0 = none; ignored when a
+  //   promotion is attached (the promo defines its own turnover).
+  @UseGuards(AdminGuard)
+  @Post('admin/manual-deposit')
+  adminManualDeposit(@Body() body: any, @Req() req: any) {
+    return this.walletService.adminManualDeposit({
+      adminId:         req.user.sub,
+      usernameOrPhone: body.usernameOrPhone,
+      amount:          Number(body.amount),
+      gatewayId:       Number(body.gatewayId),
+      playerNumber:    body.playerNumber,
+      trxNumber:       body.trxNumber,
+      promotionId:
+        body.promotionId !== undefined && body.promotionId !== null && body.promotionId !== ''
+          ? Number(body.promotionId) : undefined,
+      turnoverMultiplier:
+        body.turnoverMultiplier !== undefined && body.turnoverMultiplier !== null && body.turnoverMultiplier !== ''
+          ? Number(body.turnoverMultiplier) : undefined,
+      description:     body.description,
+    });
+  }
+
+  // GET /wallet/admin/gateways — the "Wallet" dropdown (bKash, Nagad, …)
+  @UseGuards(AdminGuard)
+  @Get('admin/gateways')
+  listGateways() {
+    return this.walletService.listGatewaysAdmin();
+  }
+
   // POST /wallet/admin/adjust
   // body: { userId, amount (signed: + credit, - debit), adjustmentType,
   //         description, meta?, turnoverMultiplier? }

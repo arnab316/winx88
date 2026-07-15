@@ -87,14 +87,23 @@ export class AffiliateController {
   // ADMIN ROUTES
   // ─────────────────────────────────────────────────────────────
 
-  // GET /affiliate/admin/applications?page=1&limit=20
+  // GET /affiliate/admin/applications?page=1&limit=20&q=&from=&to=
+  //   q matches username / email / full name / user code, or user id when
+  //   numeric; from/to filter applied_at (Pending approvals screen).
   @UseGuards(AdminGuard)
   @Get('admin/applications')
   getPendingApplications(
     @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('q')    q?: string,
+    @Query('from') from?: string,
+    @Query('to')   to?: string,
   ) {
-    return this.affiliateService.getPendingApplications(page, limit);
+    return this.affiliateService.getPendingApplications(page, limit, {
+      q:    q?.trim() || undefined,
+      from: from || undefined,
+      to:   to || undefined,
+    });
   }
 
   // POST /affiliate/admin/applications/:id/decide

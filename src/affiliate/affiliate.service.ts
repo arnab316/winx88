@@ -316,8 +316,41 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
   // ADMIN: list all pending applications
   // ─────────────────────────────────────────────────────────────
 
-  async getPendingApplications(page = 1, limit = 20) {
+  async getPendingApplications(
+    page = 1,
+    limit = 20,
+    filters: { q?: string; from?: string; to?: string } = {},
+  ) {
     const offset = (page - 1) * limit;
+
+    // Search matches username / email / full name / user code, or — when the
+    // term is purely numeric — the user id itself ("USERNAME / USER ID" box).
+    const where: string[] = [`aa.status = 'PENDING'`];
+    const params: any[] = [];
+    let i = 1;
+    if (filters.q) {
+      const idClause = /^\d+$/.test(filters.q.trim())
+        ? ` OR aa.user_id = ${Number(filters.q.trim())}`
+        : '';
+      where.push(
+        `(u.username ILIKE $${i} OR u.email ILIKE $${i} OR u.full_name ILIKE $${i} OR u.user_code ILIKE $${i}${idClause})`,
+      );
+      params.push(`%${filters.q}%`);
+      i++;
+    }
+    if (filters.from) {
+      where.push(`aa.applied_at >= $${i}::timestamptz`);
+      params.push(filters.from);
+      i++;
+    }
+    if (filters.to) {
+      // inclusive end-of-day for a YYYY-MM-DD bound
+      where.push(`aa.applied_at < ($${i}::date + INTERVAL '1 day')`);
+      params.push(filters.to);
+      i++;
+    }
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
     const [rows, count] = await Promise.all([
       this.dataSource.query(
         `SELECT
@@ -332,17 +365,26 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
            u.vip_level,
            u.created_at AS user_joined_at,
            w.total_deposited,
-           w.balance
+           w.balance,
+           p.phone_number
          FROM affiliate_applications aa
          JOIN users   u ON u.id = aa.user_id
          JOIN wallets w ON w.user_id = aa.user_id
-         WHERE aa.status = 'PENDING'
+         LEFT JOIN LATERAL (
+           SELECT phone_number FROM user_phone_numbers
+            WHERE user_id = u.id ORDER BY is_primary DESC, id ASC LIMIT 1
+         ) p ON TRUE
+         ${whereSql}
          ORDER BY aa.applied_at ASC
-         LIMIT $1 OFFSET $2`,
-        [limit, offset],
+         LIMIT $${i} OFFSET $${i + 1}`,
+        [...params, limit, offset],
       ),
       this.dataSource.query(
-        `SELECT COUNT(*) AS total FROM affiliate_applications WHERE status = 'PENDING'`,
+        `SELECT COUNT(*) AS total
+           FROM affiliate_applications aa
+           JOIN users u ON u.id = aa.user_id
+           ${whereSql}`,
+        params,
       ),
     ]);
     return { data: rows, total: parseInt(count[0].total), page, limit };

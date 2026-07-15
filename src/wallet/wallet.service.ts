@@ -912,6 +912,193 @@ export class WalletService {
 }
 
   // ═════════════════════════════════════════════════════════════
+  // ADMIN: MANUAL DEPOSIT
+  //   Creates a REAL deposits row (already APPROVED) and runs the same
+  //   side-effects as an ordinary approval: wallet credit, total_deposited,
+  //   coins, promotion bonus, turnover requirement, refer-a-friend progress.
+  //   So the deposit shows on the deposit list (with DP id, gateway, TRX,
+  //   promotion) and in transaction history as "MANUAL DEPOSIT".
+  // ═════════════════════════════════════════════════════════════
+  async adminManualDeposit(dto: {
+    adminId: number;
+    usernameOrPhone: string;
+    amount: number;
+    gatewayId: number;          // the "Wallet" dropdown (bKash / Nagad / …)
+    playerNumber?: string;      // player's cashout (sender) number
+    trxNumber?: string;         // gateway TRX id, as reported by the player
+    promotionId?: number;       // optional promo — applied like a real deposit
+    turnoverMultiplier?: number; // omit = default 1× (like normal deposits),
+                                 // 0 = no requirement; ignored when promo set
+    description?: string;
+  }) {
+    if (!Number.isFinite(dto.amount) || dto.amount <= 0)
+      throw new BadRequestException('amount must be a positive number');
+    if (!dto.usernameOrPhone?.trim())
+      throw new BadRequestException('usernameOrPhone is required');
+    if (!Number.isInteger(dto.gatewayId))
+      throw new BadRequestException('gatewayId is required (the wallet/channel)');
+    if (dto.turnoverMultiplier !== undefined &&
+        (!Number.isFinite(dto.turnoverMultiplier) || dto.turnoverMultiplier < 0))
+      throw new BadRequestException('turnoverMultiplier must be 0 or greater');
+
+    // Resolve the player: exact username → phone number digits → numeric id.
+    const term = dto.usernameOrPhone.trim();
+    const digits = term.replace(/\D/g, '');
+    const users = await this.dataSource.query(
+      `SELECT u.id, u.username FROM users u
+        WHERE LOWER(u.username) = LOWER($1)
+           OR ($2 <> '' AND EXISTS (
+                SELECT 1 FROM user_phone_numbers up
+                 WHERE up.user_id = u.id
+                   AND regexp_replace(up.phone_number, '\\D', '', 'g') LIKE '%' || $2))
+           OR ($3 AND u.id = $4)
+        LIMIT 2`,
+      [term, digits.length >= 6 ? digits : '', /^\d+$/.test(term), /^\d+$/.test(term) ? Number(term) : 0],
+    );
+    if (!users.length) throw new NotFoundException(`No user matches "${term}"`);
+    if (users.length > 1)
+      throw new BadRequestException(`"${term}" matches more than one user — use the exact username or user id`);
+    const userId = Number(users[0].id);
+
+    const gws = await this.dataSource.query(
+      `SELECT id, name FROM payment_gateways WHERE id = $1 LIMIT 1`,
+      [dto.gatewayId],
+    );
+    if (!gws.length) throw new NotFoundException('Gateway (wallet) not found');
+    const gateway = gws[0];
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      const depositCode = generateCode('DP');
+      const dep = await qr.query(
+        `INSERT INTO deposits
+           (deposit_code, user_id, gateway_id, agent_id, promotion_id,
+            amount, transaction_number, player_number, screenshot_url,
+            status, requested_at, decided_at, approved_by_admin_id,
+            created_at, updated_at)
+         VALUES ($1,$2,$3,NULL,$4,$5,$6,$7,'','APPROVED',NOW(),NOW(),$8,NOW(),NOW())
+         RETURNING id`,
+        [
+          depositCode,
+          userId,
+          dto.gatewayId,
+          dto.promotionId ?? null,
+          dto.amount,
+          dto.trxNumber?.trim() || depositCode,
+          dto.playerNumber?.trim() || null,
+          dto.adminId,
+        ],
+      );
+      const depositId = Number(dep[0].id);
+
+      const wallet = await this.getWalletForUpdate(qr, userId);
+      const bal = parseFloat(wallet.balance);
+      const bon = parseFloat(wallet.bonus_balance);
+      const lck = parseFloat(wallet.locked_balance);
+      const newBal = bal + dto.amount;
+
+      await qr.query(
+        `UPDATE wallets
+         SET balance = $1, total_deposited = total_deposited + $2, updated_at = NOW()
+         WHERE id = $3`,
+        [newBal, dto.amount, wallet.id],
+      );
+
+      await this.financialLedger.write({
+        qr,
+        walletId:      wallet.id,
+        userId,
+        entryType:     'MANUAL_DEPOSIT',
+        flow:          'CREDIT',
+        amount:        dto.amount,
+        balanceBefore: bal,
+        balanceAfter:  newBal,
+        bonusBefore:   bon,
+        bonusAfter:    bon,
+        lockedBefore:  lck,
+        lockedAfter:   lck,
+        // Reference the deposits row so the transaction statement resolves
+        // DP id / gateway / TRX exactly like player-initiated deposits.
+        referenceType: 'DEPOSIT',
+        referenceId:   depositId,
+        status:        'SUCCESS',
+        description:   dto.description ?? `Manual deposit via ${gateway.name} by admin`,
+        createdByType: 'ADMIN',
+        createdById:   dto.adminId,
+      });
+
+      const coinResult = await this.coinService.awardForDeposit(
+        qr, userId, dto.amount, depositId,
+      );
+
+      // Promotion — admin picked it deliberately, so unlike deposit approval
+      // (which skips a stale promo) any failure here fails the whole call.
+      let promoResult: any = null;
+      let turnover: { requirementId: number; targetAmount: number } | null = null;
+      if (dto.promotionId) {
+        try {
+          promoResult = await this.promotionEngine.apply(qr, userId, Number(dto.promotionId), {
+            kind: 'DEPOSIT',
+            depositId,
+            depositAmount: dto.amount,
+            adminId: dto.adminId,
+          });
+        } catch (e: any) {
+          throw new BadRequestException(`Promotion could not be applied: ${e.message}`);
+        }
+      } else if (dto.turnoverMultiplier === undefined) {
+        // No promo, no explicit multiplier → same default 1× as a normal deposit.
+        await this.turnoverService.createFromDeposit(qr, userId, depositId, dto.amount, null);
+      } else if (dto.turnoverMultiplier > 0) {
+        turnover = await this.turnoverService.insertRequirement(qr, {
+          userId,
+          sourceType: 'MANUAL',
+          sourceId:   depositId,
+          baseAmount: dto.amount,
+          multiplier: dto.turnoverMultiplier,
+          targetAmount: dto.amount * dto.turnoverMultiplier,
+          adminId:    dto.adminId,
+          label:      dto.description ?? `Manual deposit via ${gateway.name}`,
+        });
+      } // multiplier 0 → no requirement
+
+      await this.referralEngine.onDeposit(qr, userId, dto.amount);
+
+      await qr.commitTransaction();
+      await this.walletGateway.pushBalanceUpdate(userId);
+      return {
+        message: 'Manual deposit credited.',
+        depositId,
+        dpId: `DP${String(depositId).padStart(5, '0')}`,
+        userId,
+        username: users[0].username,
+        gateway: gateway.name,
+        trxNumber: dto.trxNumber?.trim() || depositCode,
+        amount: dto.amount,
+        newBalance: newBal,
+        coinsEarned: coinResult?.awarded ?? 0,
+        promotion: promoResult,
+        turnover,
+      };
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+  }
+
+  // Wallet dropdown for the manual-deposit form (and anywhere else the
+  // admin panel needs the raw channel list).
+  async listGatewaysAdmin() {
+    return this.dataSource.query(
+      `SELECT id, name, is_active FROM payment_gateways ORDER BY id ASC`,
+    );
+  }
+
+  // ═════════════════════════════════════════════════════════════
   // ADMIN: LIST PENDING DEPOSITS (with agent + promo info)
   // ═════════════════════════════════════════════════════════════
 async getPendingDeposits(q: DepositListQuery = {}) {
@@ -1043,7 +1230,9 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          u.user_code                                    AS member_id,
          u.vip_level,
          COALESCE(vlc.group_name, vlc.level_name)       AS vip_level_name,
-         ph.phone_number                                AS player_number,
+         -- Cashout number typed on the manual-deposit form wins; otherwise
+         -- the player's primary phone number.
+         COALESCE(d.player_number, ph.phone_number)     AS player_number,
          -- Deposits are always player-initiated (no admin-created flow)
          u.username                                     AS created_by,
          -- Bonus: real claim once approved; engine-math preview while pending
@@ -1149,7 +1338,7 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          u.user_code                              AS member_id,
          u.vip_level,
          COALESCE(vlc.group_name, vlc.level_name) AS vip_level_name,
-         ph.phone_number                          AS player_number,
+         COALESCE(d.player_number, ph.phone_number) AS player_number,
          u.username                               AS created_by,
          bx.bonus_amount,
          (cl.claimed_bonus IS NULL
