@@ -365,6 +365,102 @@ export class AffiliateWeeklyService {
   }
 
   /**
+   * GET /affiliate/me/overview — the partner-panel "Overview" dashboard,
+   * with ALL-TIME totals (vs getWeeklyOverview's current-cycle figures):
+   * balance, member list, active players, lifetime downline deposits +
+   * wagered, earnings (available + pending review), lifetime earnings,
+   * commission rate and the affiliate link/code.
+   */
+  async getMyOverview(userId: number) {
+    const af = await this.requireAffiliate(userId);
+    const { weekStart, weekEnd } = this.currentWeekBounds();
+
+    const [calc, groups, ladderRows, totalsRows, pendingRows, userRows] = await Promise.all([
+      // Reused only for the current-cycle active-player count ("now depositing").
+      this.computeWeek(Number(af.user_id), weekStart, weekEnd),
+      this.loadGroups(),
+      this.dataSource.query(
+        `SELECT tier1_max, tier2_max, tier3_max, rate1, rate2, rate3, rate4
+           FROM affiliate_revshare_config WHERE id = 1`,
+      ),
+      // One pass over the downline for member count, all-time deposits and
+      // all-time wagered (turnover) across every game source.
+      this.dataSource.query(
+        `WITH downline AS (
+           SELECT referee_user_id AS uid FROM referrals WHERE referrer_user_id = $1
+         )
+         SELECT
+           (SELECT COUNT(*) FROM downline)::int AS member_total,
+           (SELECT COALESCE(SUM(w.total_deposited), 0)
+              FROM wallets w WHERE w.user_id IN (SELECT uid FROM downline)) AS deposits_total,
+           (SELECT COALESCE(SUM(b.bet_amount), 0)
+              FROM bets b WHERE b.user_id IN (SELECT uid FROM downline)) AS wagered_lottery,
+           (SELECT COALESCE(SUM(st.amount), 0)
+              FROM slot_transactions st
+             WHERE st.type = 'bet' AND st.user_id IN (SELECT uid FROM downline)) AS wagered_slot,
+           (SELECT COALESCE(SUM(-ot.amount), 0)
+              FROM oroplay_transactions ot
+             WHERE ot.amount < 0 AND ot.is_canceled = FALSE
+               AND ot.user_id IN (SELECT uid FROM downline)) AS wagered_oroplay,
+           (SELECT COALESCE(SUM(sb.amount), 0)
+              FROM sports_bet_logs sb WHERE sb.user_id IN (SELECT uid FROM downline)) AS wagered_sports`,
+        [Number(af.user_id)],
+      ),
+      this.dataSource.query(
+        `SELECT COALESCE(SUM(amount),0) AS total, COUNT(*)::int AS cnt
+           FROM affiliate_transfers WHERE affiliate_user_id = $1 AND status = 'PENDING'`,
+        [af.id],
+      ),
+      this.dataSource.query(
+        `SELECT referral_code, user_code FROM users WHERE id = $1`,
+        [Number(af.user_id)],
+      ),
+    ]);
+
+    const ladder = ladderRows.length ? ladderRows[0] : null;
+    const { rate } = this.resolveRate(af, calc.activePlayerCount, groups, ladder);
+
+    const t = totalsRows[0];
+    const wagered =
+      parseFloat(t.wagered_lottery) +
+      parseFloat(t.wagered_slot) +
+      parseFloat(t.wagered_oroplay) +
+      parseFloat(t.wagered_sports);
+
+    const code = userRows.length
+      ? (userRows[0].referral_code ?? userRows[0].user_code)
+      : null;
+    const base = process.env.PUBLIC_SITE_URL ?? process.env.APP_BASE_URL ?? 'https://winx-88.com';
+
+    const balance = parseFloat(af.commission_balance);
+    const lifetime = parseFloat(af.lifetime_commission);
+
+    return {
+      balance,
+      members: {
+        total: t.member_total,
+        activePlayers: calc.activePlayerCount, // deposited in the current cycle
+      },
+      deposits: {
+        total: Math.round(parseFloat(t.deposits_total) * 100) / 100,
+        wagered: Math.round(wagered * 100) / 100,
+      },
+      earnings: {
+        available: balance,
+        pendingReview: parseFloat(pendingRows[0].total),
+        pendingReviewCount: pendingRows[0].cnt,
+      },
+      lifetimeEarnings: lifetime,
+      affiliate: {
+        code,
+        commissionRate: rate,
+        lifetimePaid: lifetime,
+        trackingLink: code ? `${base}/r/${code}` : null,
+      },
+    };
+  }
+
+  /**
    * GET /affiliate/me/weekly/overview — the user-panel Overview KPIs:
    * member list, active players, week deposits/withdrawals, projected
    * commission, commission balance ("Earnings") and lifetime earnings.

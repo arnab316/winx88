@@ -458,8 +458,20 @@ getDownlineUser(
   // WEEKLY COMMISSION — affiliate-facing (Figma user panel)
   // ─────────────────────────────────────────────────────────────
 
-  // GET /affiliate/me/weekly/overview — KPIs: members, active players,
-  // week deposits/withdrawals, projected commission, balance, lifetime.
+  // GET /affiliate/me/dashboard — the partners-portal "Overview" screen with
+  // ALL-TIME totals: balance, member list, active players, lifetime deposits +
+  // wagered, earnings (available + pending review), lifetime earnings,
+  // commission rate and the affiliate link/code.
+  //   (`me/overview` is the legacy monthly-NGR view; this is the new one.)
+  @UseGuards(JwtAuthGuard)
+  @Get('me/dashboard')
+  dashboard(@Req() req: any) {
+    return this.weekly.getMyOverview(req.user.sub);
+  }
+
+  // GET /affiliate/me/weekly/overview — the CURRENT-CYCLE view: members,
+  // active players, THIS week's deposits/withdrawals, projected commission,
+  // balance, lifetime. (Use me/overview for all-time totals.)
   @UseGuards(JwtAuthGuard)
   @Get('me/weekly/overview')
   weeklyOverview(@Req() req: any) {
