@@ -509,6 +509,25 @@ getDownlineUser(
     });
   }
 
+  // GET /affiliate/me/players/activity?q&page&limit
+  //   "Recent player activity" table: one row per referred player with
+  //   ALL-TIME deposits + wagered and a deposited/active status, newest
+  //   joined first. (country is always null — not captured yet.)
+  @UseGuards(JwtAuthGuard)
+  @Get('me/players/activity')
+  myPlayerActivity(
+    @Req() req: any,
+    @Query('q')     q?: string,
+    @Query('page')  page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.weekly.getRecentPlayerActivity(req.user.sub, {
+      q,
+      page:  page  ? parseInt(page)  : undefined,
+      limit: limit ? parseInt(limit) : undefined,
+    });
+  }
+
   // GET /affiliate/me/commission-ledger?page&limit — balance statement
   @UseGuards(JwtAuthGuard)
   @Get('me/commission-ledger')

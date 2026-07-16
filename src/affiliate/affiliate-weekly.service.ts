@@ -673,6 +673,91 @@ export class AffiliateWeeklyService {
     return this.getPlayerReport(userId, opts);
   }
 
+  /**
+   * GET /affiliate/me/players/activity — the "Recent player activity" table:
+   * one row per referred player with ALL-TIME deposits + wagered and a
+   * deposited/active status, newest-joined first.
+   *
+   *   status: 'active'    = deposited in the current Friday-week cycle
+   *           'deposited' = has lifetime deposits but not this cycle
+   *           'inactive'  = never deposited
+   *
+   * NOTE: `country` is always null — the platform does not capture player
+   * country today (no column exists). Kept in the shape so the frontend can
+   * bind to it once country capture is added.
+   */
+  async getRecentPlayerActivity(
+    userId: number,
+    opts: { q?: string; page?: number; limit?: number } = {},
+  ) {
+    await this.requireAffiliate(userId);
+    const page = Math.max(1, opts.page ?? 1);
+    const limit = Math.min(100, Math.max(1, opts.limit ?? 20));
+    const offset = (page - 1) * limit;
+    const { weekStart, weekEnd } = this.currentWeekBounds();
+
+    const params: any[] = [userId, weekStart, weekEnd];
+    let qFilter = '';
+    if (opts.q?.trim()) {
+      params.push(`%${opts.q.trim()}%`);
+      qFilter = `AND (u.username ILIKE $4 OR u.user_code ILIKE $4 OR u.full_name ILIKE $4)`;
+    }
+
+    const [rows, count] = await Promise.all([
+      this.dataSource.query(
+        `
+        SELECT u.id, u.user_code, u.username, u.full_name,
+               u.created_at AS joined_at,
+               COALESCE(w.total_deposited, 0)::numeric AS deposits_total,
+               EXISTS (
+                 SELECT 1 FROM deposits d
+                  WHERE d.user_id = u.id AND d.status = 'APPROVED'
+                    AND d.decided_at >= $2::date AND d.decided_at < $3::date
+               ) AS active_this_cycle,
+               ( COALESCE((SELECT SUM(b.bet_amount) FROM bets b WHERE b.user_id = u.id), 0)
+               + COALESCE((SELECT SUM(st.amount) FROM slot_transactions st
+                            WHERE st.type = 'bet' AND st.user_id = u.id), 0)
+               + COALESCE((SELECT SUM(-ot.amount) FROM oroplay_transactions ot
+                            WHERE ot.amount < 0 AND ot.is_canceled = FALSE AND ot.user_id = u.id), 0)
+               + COALESCE((SELECT SUM(sb.amount) FROM sports_bet_logs sb WHERE sb.user_id = u.id), 0)
+               )::numeric AS wagered
+          FROM referrals r
+          JOIN users u ON u.id = r.referee_user_id
+          LEFT JOIN wallets w ON w.user_id = u.id
+         WHERE r.referrer_user_id = $1
+         ${qFilter}
+         ORDER BY u.created_at DESC
+         LIMIT ${limit} OFFSET ${offset}
+        `,
+        params,
+      ),
+      this.dataSource.query(
+        `SELECT COUNT(*)::int AS total
+           FROM referrals r JOIN users u ON u.id = r.referee_user_id
+          WHERE r.referrer_user_id = $1 ${qFilter}`,
+        opts.q?.trim() ? [userId, `%${opts.q.trim()}%`] : [userId],
+      ),
+    ]);
+
+    const data = rows.map((r: any) => {
+      const deposits = Math.round(parseFloat(r.deposits_total) * 100) / 100;
+      const status = r.active_this_cycle ? 'active' : deposits > 0 ? 'deposited' : 'inactive';
+      return {
+        userId: Number(r.id),
+        userCode: r.user_code,
+        username: r.username,
+        fullName: r.full_name,
+        country: null, // not captured yet — see method note
+        status,
+        deposits,
+        wagered: Math.round(parseFloat(r.wagered) * 100) / 100,
+        joinedAt: r.joined_at,
+      };
+    });
+
+    return { data, total: count[0].total, page, limit };
+  }
+
   /** Commission-balance ledger (affiliate-facing statement). */
   async getMyCommissionLedger(userId: number, page = 1, limit = 20) {
     const af = await this.requireAffiliate(userId);
