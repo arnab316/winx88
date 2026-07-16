@@ -412,7 +412,7 @@ export class AffiliateWeeklyService {
         [af.id],
       ),
       this.dataSource.query(
-        `SELECT referral_code, user_code FROM users WHERE id = $1`,
+        `SELECT user_code FROM users WHERE id = $1`,
         [Number(af.user_id)],
       ),
     ]);
@@ -427,9 +427,9 @@ export class AffiliateWeeklyService {
       parseFloat(t.wagered_oroplay) +
       parseFloat(t.wagered_sports);
 
-    const code = userRows.length
-      ? (userRows[0].referral_code ?? userRows[0].user_code)
-      : null;
+    // Affiliate attribution is keyed by user_code (NOT referral_code — that's
+    // the refer-a-friend system). Link lands on register with ?affiliateCode=.
+    const code = userRows.length ? userRows[0].user_code : null;
     const base = process.env.PUBLIC_SITE_URL ?? process.env.APP_BASE_URL ?? 'https://winx-88.com';
 
     const balance = parseFloat(af.commission_balance);
@@ -455,7 +455,9 @@ export class AffiliateWeeklyService {
         code,
         commissionRate: rate,
         lifetimePaid: lifetime,
-        trackingLink: code ? `${base}/r/${code}` : null,
+        trackingLink: code
+          ? `${base}/register?affiliateCode=${encodeURIComponent(code)}`
+          : null,
       },
     };
   }
@@ -732,9 +734,11 @@ export class AffiliateWeeklyService {
         params,
       ),
       this.dataSource.query(
+        // Separate placeholder numbering — the main query's filter uses $4.
         `SELECT COUNT(*)::int AS total
            FROM referrals r JOIN users u ON u.id = r.referee_user_id
-          WHERE r.referrer_user_id = $1 ${qFilter}`,
+          WHERE r.referrer_user_id = $1
+          ${opts.q?.trim() ? `AND (u.username ILIKE $2 OR u.user_code ILIKE $2 OR u.full_name ILIKE $2)` : ''}`,
         opts.q?.trim() ? [userId, `%${opts.q.trim()}%`] : [userId],
       ),
     ]);

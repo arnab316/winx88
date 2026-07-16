@@ -93,12 +93,17 @@ export class VerificationService {
       );
     }
 
-    // ── Validate expiry date ───────────────────────────────────
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(body.expiryDate)) {
-      throw new BadRequestException('expiryDate must be in YYYY-MM-DD format');
-    }
-    if (new Date(body.expiryDate) < new Date()) {
-      throw new BadRequestException('Document has already expired');
+    // ── Validate expiry date (optional) ────────────────────────
+    // Blank / whitespace / missing → stored as NULL (no expiry). Only when a
+    // value is supplied do we enforce the format and the not-expired rule.
+    const expiryDate = body.expiryDate?.trim() || null;
+    if (expiryDate) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(expiryDate)) {
+        throw new BadRequestException('expiryDate must be in YYYY-MM-DD format');
+      }
+      if (new Date(expiryDate) < new Date()) {
+        throw new BadRequestException('Document has already expired');
+      }
     }
 
     // ── Check existing record ──────────────────────────────────
@@ -150,7 +155,7 @@ export class VerificationService {
           userId,
           body.documentType,
           body.documentNumber.trim(),
-          body.expiryDate,
+          expiryDate,
           frontUrl,
           backUrl,
           selfieUrl,
@@ -191,7 +196,7 @@ export class VerificationService {
       [
         body.documentType,
         body.documentNumber.trim(),
-        body.expiryDate,
+        expiryDate,
         frontUrl,
         backUrl,
         selfieUrl,
@@ -199,9 +204,13 @@ export class VerificationService {
       ],
     );
 
+    // TypeORM returns [rows, affectedCount] for UPDATE…RETURNING (unlike
+    // INSERT…RETURNING which returns plain rows), so result[0] is the rows
+    // array. Unwrap to a single object so re-submission matches first-submit.
+    const updated = Array.isArray(result[0]) ? result[0][0] : result[0];
     return {
       message: 'Verification re-submitted successfully. Awaiting review.',
-      data: result[0],
+      data: updated,
     };
   }
 

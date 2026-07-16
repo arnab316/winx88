@@ -76,7 +76,7 @@ export class VerificationController {
 
     if (!body.documentType)   throw new BadRequestException('documentType is required');
     if (!body.documentNumber) throw new BadRequestException('documentNumber is required');
-    if (!body.expiryDate)     throw new BadRequestException('expiryDate is required (YYYY-MM-DD)');
+    // expiryDate is optional — validated only when provided (see service).
     if (!frontFile)           throw new BadRequestException('frontImage file is required');
     if (!backFile)            throw new BadRequestException('backImage file is required');
     if (!selfieFile)          throw new BadRequestException('selfieImage (selfie holding document) is required');

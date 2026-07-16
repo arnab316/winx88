@@ -544,15 +544,20 @@ export class AffiliateRevShareService {
   // GET /affiliate/me/link — tracking link / referral code
   async getMyLink(userId: number) {
     const rows = await this.dataSource.query(
-      `SELECT referral_code, user_code FROM users WHERE id = $1`,
+      `SELECT user_code FROM users WHERE id = $1`,
       [userId],
     );
     if (!rows.length) throw new NotFoundException('User not found');
-    const code = rows[0].referral_code ?? rows[0].user_code;
-    const base = process.env.PUBLIC_SITE_URL ?? 'https://winx88.example';
+    // AFFILIATE attribution is keyed by user_code (attachAffiliateOnSignup
+    // matches u.user_code) — NOT referral_code, which belongs to the separate
+    // refer-a-friend system (?ref=). The link lands directly on the register
+    // page carrying ?affiliateCode=, which the signup form forwards in the
+    // register body.
+    const code = rows[0].user_code;
+    const base = process.env.PUBLIC_SITE_URL ?? process.env.APP_BASE_URL ?? 'https://winx-88.com';
     return {
-      referralCode: code,
-      trackingLink: `${base}/r/${code}`,
+      affiliateCode: code,
+      trackingLink: `${base}/register?affiliateCode=${encodeURIComponent(code)}`,
     };
   }
 }
