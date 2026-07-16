@@ -66,6 +66,11 @@ export class WalletGateway implements OnGatewayConnection, OnGatewayDisconnect {
       // Immediately send current balance on connect
       const wallet = await this.walletService.getWallet(userId);
       client.emit('wallet:balance', wallet);
+
+      // Join the VIP-tier room so admin banking-toggle changes can be pushed
+      // to everyone at that level ('banking:toggles' events). A user who
+      // levels up mid-session re-joins the right room on their next connect.
+      client.join(`tier:${Number(wallet?.vipLevel ?? 0)}`);
     } catch (err: any) {
       this.logger.warn(`WS rejected: ${err.message} socketId=${client.id}`);
       client.emit('wallet:error', { message: 'Unauthorized' });
@@ -121,6 +126,21 @@ export class WalletGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.log(`wallet:balance pushed to userId=${userId}`);
     } catch (err: any) {
       this.logger.error(`pushBalanceUpdate failed for userId=${userId}: ${err.message}`);
+    }
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // PUBLIC METHOD — called by VipService after an admin flips the
+  //   per-tier banking toggles. Pushes the fresh effective toggle
+  //   state to every connected user of that VIP level, so open
+  //   deposit/withdraw pages re-render without a refresh.
+  // ═════════════════════════════════════════════════════════════
+  pushBankingToggles(level: number, toggles: unknown) {
+    try {
+      this.server.to(`tier:${level}`).emit('banking:toggles', toggles);
+      this.logger.log(`banking:toggles pushed to tier:${level}`);
+    } catch (err: any) {
+      this.logger.error(`pushBankingToggles failed for level=${level}: ${err.message}`);
     }
   }
 }

@@ -3,10 +3,13 @@ import {
   Injectable,
   BadRequestException,
   NotFoundException,
+  Inject,
+  forwardRef,
 } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
 import { Cron, CronExpression } from '@nestjs/schedule';
 import { CoinLedgerService } from '../ledger/coin-ledger.service';
+import { WalletGateway } from '../wallet/wallet.gateway';
 import {
   CreateVipLevelConfigDto,
   UpdateVipLevelConfigDto,
@@ -40,6 +43,9 @@ export class VipService {
   constructor(
     private dataSource: DataSource,
     private coinLedger: CoinLedgerService,
+    // forwardRef: VipModule → WalletModule → CoinsModule → VipModule cycle.
+    @Inject(forwardRef(() => WalletGateway))
+    private readonly walletGateway: WalletGateway,
   ) {}
 
   // ═════════════════════════════════════════════════════════════
@@ -919,7 +925,11 @@ export class VipService {
       await qr.release();
     }
 
-    return this.getBankingToggles(level);
+    // Push the fresh effective state to every connected user of this tier so
+    // open deposit/withdraw pages re-render live ('banking:toggles' on /wallet).
+    const fresh = await this.getBankingToggles(level);
+    this.walletGateway.pushBankingToggles(level, fresh);
+    return fresh;
   }
 
   // Effective toggles for a specific user (deposit page / withdraw page).

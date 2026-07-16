@@ -38,7 +38,9 @@ import { PromotionModule } from 'src/promotion/promotion.module';
   imports: [
     MulterModule.register({}),
     AuthModule,
-    CoinsModule,
+    // forwardRef: part of the Vip→Wallet→Coins→Vip module cycle
+    // (VipModule imports WalletModule for banking-toggle socket pushes).
+    forwardRef(() => CoinsModule),
     TurnoverModule,
     GameModule,
     PromotionModule,
