@@ -425,11 +425,14 @@ async register(dto: any) {
     }
 
     const otp = this.generateOtp();
-    const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
 
+    // Expiry computed by the DB: a JS UTC ISO string written into the
+    // timestamp-without-tz column reads as local clock time, so on any
+    // non-UTC database the OTP would look hours expired immediately.
     await this.dataSource.query(
-      `INSERT INTO user_otps (phone_number, otp, expires_at) VALUES ($1,$2,$3)`,
-      [phone_number, otp, expiresAt.toISOString()],
+      `INSERT INTO user_otps (phone_number, otp, expires_at)
+       VALUES ($1, $2, NOW() + INTERVAL '5 minutes')`,
+      [phone_number, otp],
     );
 
     // if (process.env.NODE_ENV !== 'production') {
@@ -885,14 +888,15 @@ async forgotPassword(dto: { phone_number: string }) {
   }
  
   // 4. Generate + store OTP (stored under the original form, e.g. "+8801712...").
+  //    Expiry computed by the DB — see the phone-verify insert above for why
+  //    (JS UTC ISO string vs timestamp-without-tz breaks on non-UTC DBs).
   const otp = this.generateOtp();
-  const expiresAt = new Date(Date.now() + 5 * 60 * 1000);
- 
+
   const inserted = await this.dataSource.query(
     `INSERT INTO user_otps (phone_number, otp, expires_at, purpose)
-     VALUES ($1, $2, $3, 'PASSWORD_RESET')
+     VALUES ($1, $2, NOW() + INTERVAL '5 minutes', 'PASSWORD_RESET')
      RETURNING id`,
-    [phone_number, otp, expiresAt.toISOString()],
+    [phone_number, otp],
   );
   const otpRowId: number = inserted[0].id;
  

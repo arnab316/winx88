@@ -134,6 +134,58 @@ export class AffiliateController {
     };
   }
 
+  // POST /affiliate/logout — revoke the partner's sessions + clear cookies.
+  // body: { refreshToken? } — falls back to the refreshToken cookie.
+  @Post('logout')
+  async logoutAffiliate(
+    @Body() body: any,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    const refreshToken = body?.refreshToken ?? req.cookies?.refreshToken;
+    const result = await this.authService.logout({ refreshToken });
+    res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
+    return { success: true, ...result };
+  }
+
+  // ─── Forgot password: same 3-step phone-OTP flow as the main site ───
+  //   (in non-production the OTP is logged to the server console instead
+  //   of sent by SMS; resetting revokes every existing session)
+
+  // Step 1 — POST /affiliate/forgot-password { phoneNumber }
+  //   Sends a 5-minute OTP to the account's primary phone (60s cooldown).
+  @Post('forgot-password')
+  async forgotPasswordAffiliate(@Body() body: any) {
+    const result = await this.authService.forgotPassword({
+      phone_number: body.phoneNumber ?? body.phone_number,
+    });
+    return { success: true, message: result.message };
+  }
+
+  // Step 2 — POST /affiliate/verify-reset-otp { phoneNumber, otp }
+  //   Returns the short-lived resetToken for step 3.
+  @Post('verify-reset-otp')
+  async verifyResetOtpAffiliate(@Body() body: any) {
+    const result = await this.authService.verifyResetOtp({
+      phone_number: body.phoneNumber ?? body.phone_number,
+      otp: body.otp,
+    });
+    return { success: true, message: result.message, resetToken: result.resetToken };
+  }
+
+  // Step 3 — POST /affiliate/reset-password { resetToken, newPassword }
+  //   NOTE: reset requires min 8 characters (signup allows 6) —
+  //   pre-existing rule shared with the main site's reset flow.
+  @Post('reset-password')
+  async resetPasswordAffiliate(@Body() body: any) {
+    const result = await this.authService.resetPassword({
+      resetToken: body.resetToken,
+      new_password: body.newPassword ?? body.new_password,
+    });
+    return { success: true, message: result.message };
+  }
+
   // ─────────────────────────────────────────────────────────────
   // USER ROUTES
   // ─────────────────────────────────────────────────────────────
