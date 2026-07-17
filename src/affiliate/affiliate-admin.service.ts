@@ -331,13 +331,22 @@ export class AffiliateAdminService {
   // ═════════════════════════════════════════════════════════════
   // AFFILIATE-SCOPED KYC (reuses user_verifications / verification module)
   // ═════════════════════════════════════════════════════════════
+  // Affiliate-side KYC = approved affiliates PLUS pending partner applicants
+  // (someone who signed up on the portal and submitted KYC before approval).
+  // Exact mirror of the NOT-affiliate exclusion on /verification/admin/list,
+  // so every verification appears in exactly ONE of the two admin views.
+  private static readonly IS_AFFILIATE_SQL = `
+    (EXISTS (SELECT 1 FROM affiliate_users au WHERE au.user_id = uv.user_id)
+     OR EXISTS (SELECT 1 FROM affiliate_applications aa
+                 WHERE aa.user_id = uv.user_id AND aa.status = 'PENDING'))`;
+
   async listAffiliateVerifications(page = 1, limit = 20, status?: string) {
     const offset = (page - 1) * limit;
     const params: any[] = [];
-    let where = '';
+    let where = `WHERE ${AffiliateAdminService.IS_AFFILIATE_SQL}`;
     if (status) {
       params.push(status.toUpperCase());
-      where = `WHERE uv.status = $1`;
+      where += ` AND uv.status = $1`;
     }
 
     const [rows, count, stats] = await Promise.all([
@@ -351,7 +360,6 @@ export class AffiliateAdminService {
                 adm.email AS decided_by_email,
                 uv.created_at, uv.updated_at
            FROM user_verifications uv
-           JOIN affiliate_users au ON au.user_id = uv.user_id
            JOIN users u ON u.id = uv.user_id
            LEFT JOIN admin_users adm ON adm.id = uv.reviewed_by_admin_id
            ${where}
@@ -362,7 +370,6 @@ export class AffiliateAdminService {
       this.dataSource.query(
         `SELECT COUNT(*)::int AS total
            FROM user_verifications uv
-           JOIN affiliate_users au ON au.user_id = uv.user_id
            ${where}`,
         params,
       ),
@@ -372,7 +379,7 @@ export class AffiliateAdminService {
            COUNT(*) FILTER (WHERE uv.status = 'APPROVED')::int AS approved,
            COUNT(*) FILTER (WHERE uv.status = 'REJECTED')::int AS rejected
          FROM user_verifications uv
-         JOIN affiliate_users au ON au.user_id = uv.user_id`,
+         WHERE ${AffiliateAdminService.IS_AFFILIATE_SQL}`,
       ),
     ]);
 

@@ -259,14 +259,24 @@ export class VerificationService {
   // GET /verification/admin/list?page=1&limit=20&status=PENDING
   // ══════════════════════════════════════════════════════════════
 
+  // Player-side KYC only: anything belonging to the affiliate program —
+  // approved affiliates AND pending partner applicants — is reviewed on
+  // GET /affiliate/admin/verifications instead, never mixed in here.
+  private static readonly NOT_AFFILIATE_SQL = `
+    NOT (
+      EXISTS (SELECT 1 FROM affiliate_users au WHERE au.user_id = uv.user_id)
+      OR EXISTS (SELECT 1 FROM affiliate_applications aa
+                  WHERE aa.user_id = uv.user_id AND aa.status = 'PENDING')
+    )`;
+
   async listVerifications(page: number, limit: number, status?: string) {
     const offset = (page - 1) * limit;
     const params: any[] = [limit, offset];
 
-    let where = '';
+    let where = `WHERE ${VerificationService.NOT_AFFILIATE_SQL}`;
     if (status) {
       params.push(status);
-      where = `WHERE uv.status = $${params.length}`;
+      where += ` AND uv.status = $${params.length}`;
     }
 
     const rows = await this.dataSource.query(
@@ -299,14 +309,14 @@ export class VerificationService {
     );
 
     const countParams: any[] = [];
-    let countWhere = '';
+    let countWhere = `WHERE ${VerificationService.NOT_AFFILIATE_SQL}`;
     if (status) {
       countParams.push(status);
-      countWhere = `WHERE status = $1`;
+      countWhere += ` AND uv.status = $1`;
     }
 
     const countResult = await this.dataSource.query(
-      `SELECT COUNT(*)::int AS total FROM user_verifications ${countWhere}`,
+      `SELECT COUNT(*)::int AS total FROM user_verifications uv ${countWhere}`,
       countParams,
     );
 
@@ -479,14 +489,17 @@ async reviewVerification(
   // ══════════════════════════════════════════════════════════════
 
   async getStats() {
+    // Player-side counts only — affiliate-program KYC is counted on the
+    // affiliate verifications view (same partition as listVerifications).
     const rows = await this.dataSource.query(
       `SELECT
-         COUNT(*) FILTER (WHERE status = 'PENDING')      AS pending,
-         COUNT(*) FILTER (WHERE status = 'UNDER_REVIEW') AS under_review,
-         COUNT(*) FILTER (WHERE status = 'APPROVED')     AS approved,
-         COUNT(*) FILTER (WHERE status = 'REJECTED')     AS rejected,
-         COUNT(*)                                         AS total
-       FROM user_verifications`,
+         COUNT(*) FILTER (WHERE uv.status = 'PENDING')      AS pending,
+         COUNT(*) FILTER (WHERE uv.status = 'UNDER_REVIEW') AS under_review,
+         COUNT(*) FILTER (WHERE uv.status = 'APPROVED')     AS approved,
+         COUNT(*) FILTER (WHERE uv.status = 'REJECTED')     AS rejected,
+         COUNT(*)                                            AS total
+       FROM user_verifications uv
+       WHERE ${VerificationService.NOT_AFFILIATE_SQL}`,
     );
 
     return { data: rows[0] };
