@@ -273,12 +273,56 @@ export class WalletService {
       });
 
       await qr.commitTransaction();
+
+      // Realtime ping for open admin panels (sound + pending-queue refresh).
+      // Fire-and-forget: a socket problem must never fail the request.
+      void this.notifyAdminsPendingRequest('DEPOSIT', depositId, dto.userId, dto.amount, dto.gatewayId, dto.transactionNumber);
+
       return { message: 'Deposit submitted. Awaiting admin approval.', depositId };
     } catch (e) {
       await qr.rollbackTransaction();
       throw e;
     } finally {
       await qr.release();
+    }
+  }
+
+  // Push 'admin:deposit-pending' / 'admin:withdrawal-pending' to the admins
+  // room with enough context for a toast ("DP00340 — arnab123 ৳500 bKash").
+  private async notifyAdminsPendingRequest(
+    kind: 'DEPOSIT' | 'WITHDRAWAL',
+    id: number,
+    userId: number,
+    amount: number,
+    gatewayId: number,
+    reference?: string,
+  ): Promise<void> {
+    try {
+      const [info] = await this.dataSource.query(
+        `SELECT u.username, u.user_code, g.name AS gateway_name
+           FROM users u
+           LEFT JOIN payment_gateways g ON g.id = $2
+          WHERE u.id = $1`,
+        [userId, gatewayId],
+      );
+      const prefix = kind === 'DEPOSIT' ? 'DP' : 'WD';
+      this.walletGateway.pushAdminEvent(
+        kind === 'DEPOSIT' ? 'admin:deposit-pending' : 'admin:withdrawal-pending',
+        {
+          kind,
+          id,
+          refId: `${prefix}${String(id).padStart(5, '0')}`,
+          userId,
+          username: info?.username ?? null,
+          userCode: info?.user_code ?? null,
+          amount,
+          gateway: info?.gateway_name ?? null,
+          reference: reference ?? null, // deposit trx number / withdrawal receive number
+          requestedAt: new Date().toISOString(),
+        },
+      );
+    } catch (e: any) {
+      this.logger.warn(`notifyAdminsPendingRequest(${kind} ${id}) failed: ${e.message}`);
     }
   }
 
@@ -648,6 +692,10 @@ export class WalletService {
       });
 
       await qr.commitTransaction();
+
+      // Realtime ping for open admin panels (sound + pending-queue refresh).
+      void this.notifyAdminsPendingRequest('WITHDRAWAL', withdrawalId, dto.userId, dto.amount, dto.gatewayId, dto.receiveNumber);
+
       return {
         message: 'Withdrawal requested. Awaiting admin approval.',
         withdrawalId,

@@ -46,7 +46,28 @@ export class WalletGateway implements OnGatewayConnection, OnGatewayDisconnect {
       if (!raw) throw new Error('No token');
 
       const token = raw.startsWith('Bearer ') ? raw.slice(7) : raw;
-      const payload = this.jwtService.verify(token) as { sub: number };
+      const payload = this.jwtService.verify(token) as {
+        sub: number;
+        type?: string;
+        role?: string;
+      };
+
+      // ── ADMIN connection ───────────────────────────────────────
+      // Same detection as AdminGuard: type='ADMIN' (new tokens) or a
+      // non-USER role (legacy). Admin ids live in admin_users, NOT users,
+      // so they must never fall through to the wallet/user path below.
+      const isAdmin =
+        payload.type === 'ADMIN' || (payload.role && payload.role !== 'USER');
+      if (isAdmin) {
+        (client as any).adminId = Number(payload.sub);
+        client.join('admins');
+        this.logger.log(
+          `WS admin connected: adminId=${payload.sub} socketId=${client.id}`,
+        );
+        client.emit('admin:connected', { ok: true });
+        return;
+      }
+
       const userId = Number(payload.sub);
 
       // Store userId on socket for later use
@@ -141,6 +162,20 @@ export class WalletGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.log(`banking:toggles pushed to tier:${level}`);
     } catch (err: any) {
       this.logger.error(`pushBankingToggles failed for level=${level}: ${err.message}`);
+    }
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // PUBLIC METHOD — push an event to every connected ADMIN panel
+  //   ('admins' room). Used for new pending deposit/withdrawal
+  //   requests so open panels can play a sound + refresh the queue.
+  // ═════════════════════════════════════════════════════════════
+  pushAdminEvent(event: string, payload: unknown) {
+    try {
+      this.server.to('admins').emit(event, payload);
+      this.logger.log(`${event} pushed to admins`);
+    } catch (err: any) {
+      this.logger.error(`pushAdminEvent(${event}) failed: ${err.message}`);
     }
   }
 }
