@@ -319,13 +319,18 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
   async getPendingApplications(
     page = 1,
     limit = 20,
-    filters: { q?: string; from?: string; to?: string } = {},
+    filters: { q?: string; from?: string; to?: string; status?: string } = {},
   ) {
     const offset = (page - 1) * limit;
 
+    // Status tab: PENDING (default — the approval queue), APPROVED,
+    // REJECTED, or ALL.
+    const status = (filters.status ?? 'PENDING').toUpperCase();
+
     // Search matches username / email / full name / user code, or — when the
     // term is purely numeric — the user id itself ("USERNAME / USER ID" box).
-    const where: string[] = [`aa.status = 'PENDING'`];
+    const where: string[] = [];
+    if (status !== 'ALL') where.push(`aa.status = '${status === 'APPROVED' ? 'APPROVED' : status === 'REJECTED' ? 'REJECTED' : 'PENDING'}'`);
     const params: any[] = [];
     let i = 1;
     if (filters.q) {
@@ -349,15 +354,24 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
       params.push(filters.to);
       i++;
     }
-    const whereSql = `WHERE ${where.join(' AND ')}`;
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    // The pending queue reads oldest-first (approval order); decided/ALL
+    // views read newest-first — same convention as the deposit lists.
+    const order = status === 'PENDING' ? 'ASC' : 'DESC';
 
     const [rows, count] = await Promise.all([
       this.dataSource.query(
         `SELECT
            aa.id,
            aa.user_id,
+           aa.status,
            aa.notes,
            aa.applied_at,
+           aa.decided_at,
+           aa.rejection_reason,
+           adm.name  AS decided_by_name,
+           adm.email AS decided_by_email,
            u.full_name,
            u.username,
            u.email,
@@ -370,12 +384,13 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
          FROM affiliate_applications aa
          JOIN users   u ON u.id = aa.user_id
          JOIN wallets w ON w.user_id = aa.user_id
+         LEFT JOIN admin_users adm ON adm.id = aa.decided_by_admin_id
          LEFT JOIN LATERAL (
            SELECT phone_number FROM user_phone_numbers
             WHERE user_id = u.id ORDER BY is_primary DESC, id ASC LIMIT 1
          ) p ON TRUE
          ${whereSql}
-         ORDER BY aa.applied_at ASC
+         ORDER BY aa.applied_at ${order}
          LIMIT $${i} OFFSET $${i + 1}`,
         [...params, limit, offset],
       ),
@@ -387,7 +402,7 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
         params,
       ),
     ]);
-    return { data: rows, total: parseInt(count[0].total), page, limit };
+    return { status, data: rows, total: parseInt(count[0].total), page, limit };
   }
 
   // ─────────────────────────────────────────────────────────────

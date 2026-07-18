@@ -241,19 +241,27 @@ export class AffiliateController {
   // ADMIN ROUTES
   // ─────────────────────────────────────────────────────────────
 
-  // GET /affiliate/admin/applications?page=1&limit=20&q=&from=&to=
+  // GET /affiliate/admin/applications?page=1&limit=20&status=&q=&from=&to=
+  //   status: PENDING (default) | APPROVED | REJECTED | ALL — the tabs.
   //   q matches username / email / full name / user code, or user id when
   //   numeric; from/to filter applied_at (Pending approvals screen).
+  //   Decided rows carry decided_at / decided_by_name / rejection_reason.
   @UseGuards(AdminGuard)
   @Get('admin/applications')
   getPendingApplications(
     @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('status') status?: string,
     @Query('q')    q?: string,
     @Query('from') from?: string,
     @Query('to')   to?: string,
   ) {
+    const validStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'ALL'];
+    const safeStatus = validStatuses.includes(status?.toUpperCase() ?? '')
+      ? status!.toUpperCase()
+      : 'PENDING';
     return this.affiliateService.getPendingApplications(page, limit, {
+      status: safeStatus,
       q:    q?.trim() || undefined,
       from: from || undefined,
       to:   to || undefined,
