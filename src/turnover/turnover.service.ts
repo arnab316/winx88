@@ -899,6 +899,10 @@ export class TurnoverService {
         sourceId: r.source_id === null ? null : Number(r.source_id),
         promotionName: r.promotion_name,
         promoCode: r.promo_code,
+        // The actual deposit/bonus amount the requirement was created from;
+        // target = actualAmount × multiplier.
+        actualAmount: Number(r.base_amount),
+        multiplier: Number(r.multiplier),
         target: Number(r.target_amount),
         completed: Number(r.completed),
         remaining: Number(r.remaining),
