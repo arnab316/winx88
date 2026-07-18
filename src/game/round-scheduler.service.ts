@@ -53,6 +53,7 @@ export class RoundSchedulerService {
          FROM game_schedules gs
          JOIN games g ON g.id = gs.game_id
          WHERE gs.is_active = TRUE
+           AND gs.pause_after_round = FALSE
            AND gs.next_run_at <= NOW()
            AND g.round_mode != 'MANUAL'
          ORDER BY gs.next_run_at ASC
@@ -95,7 +96,8 @@ export class RoundSchedulerService {
       //    instance grabbed it, we move on safely.
       const locked = await qr.query(
         `SELECT id FROM game_schedules
-         WHERE id = $1 AND is_active = TRUE AND next_run_at <= NOW()
+         WHERE id = $1 AND is_active = TRUE AND pause_after_round = FALSE
+           AND next_run_at <= NOW()
          FOR UPDATE SKIP LOCKED`,
         [sched.schedule_id],
       );

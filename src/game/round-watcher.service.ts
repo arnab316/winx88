@@ -89,6 +89,26 @@ export class RoundWatcherService {
         this.warnedRounds.add(id);
       }
 
+      // 2b. Graceful "pause after current round": schedules flagged with
+      //     pause_after_round flip to paused as soon as their game has no
+      //     OPEN round left. Checking the flag here (not only on auto-close)
+      //     also covers rounds an admin closed or settled manually.
+      const [pausedRows] = await this.dataSource.query(
+        `UPDATE game_schedules gs
+            SET is_active = FALSE, pause_after_round = FALSE, updated_at = NOW()
+          WHERE gs.pause_after_round = TRUE
+            AND gs.is_active = TRUE
+            AND NOT EXISTS (SELECT 1 FROM game_rounds gr
+                             WHERE gr.game_id = gs.game_id AND gr.status = 'OPEN')
+          RETURNING gs.game_id`,
+      );
+      for (const p of pausedRows || []) {
+        this.gateway.emitGameUnlisted({ gameId: Number(p.game_id) });
+        this.logger.log(
+          `Graceful pause completed: game ${p.game_id} schedule paused after its round finished`,
+        );
+      }
+
       // 3. Cleanup memory: remove warned-IDs that are no longer OPEN
       //    (covers admins manually closing rounds early)
       if (this.warnedRounds.size > 0) {
