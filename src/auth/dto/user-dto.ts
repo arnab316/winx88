@@ -49,7 +49,7 @@ export class CreateUserDto {
 
   @IsOptional()
   @IsString()
-  @IsIn(['ACTIVE', 'BLOCKED', 'SUSPENDED'])
+  @IsIn(['ACTIVE', 'INACTIVE', 'SUSPENDED', 'LOCKED', 'BLOCKED'])
   account_status?: string = 'ACTIVE';
 
   @IsOptional()

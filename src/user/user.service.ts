@@ -695,7 +695,7 @@ export class UserService {
     username?:       string;
     dob?:            string;
     vip_level?:      number;
-    account_status?: 'ACTIVE' | 'BLOCKED' | 'SUSPENDED';
+    account_status?: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED' | 'LOCKED' | 'BLOCKED';
     password?:       string;   // plain text — will be hashed
   }) {
     const existing = await this.dataSource.query(
@@ -743,7 +743,10 @@ export class UserService {
       values.push(dto.vip_level);
     }
     if (dto.account_status !== undefined) {
-      const valid = ['ACTIVE', 'BLOCKED', 'SUSPENDED'];
+      // BLOCKED is legacy (kept valid for old rows); the admin UI offers
+      // ACTIVE / INACTIVE / SUSPENDED / LOCKED. Any non-ACTIVE value blocks
+      // login and money movement with "Account is <STATUS>".
+      const valid = ['ACTIVE', 'INACTIVE', 'SUSPENDED', 'LOCKED', 'BLOCKED'];
       if (!valid.includes(dto.account_status)) {
         throw new BadRequestException(`account_status must be one of: ${valid.join(', ')}`);
       }
