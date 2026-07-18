@@ -487,6 +487,87 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
   }
 
   // ─────────────────────────────────────────────────────────────
+  // ADMIN: manually make an (already-created) user into an affiliate.
+  //   Used by POST /affiliate/admin/create AFTER the user account is
+  //   created — inserts an ACTIVE affiliate_users row (same shape the
+  //   approve flow uses) and records an APPROVED application for the
+  //   audit trail, so the new partner shows consistently everywhere.
+  // ─────────────────────────────────────────────────────────────
+  // Cheap pre-check so the controller can validate the group BEFORE it
+  // creates the user account (avoids an orphan user if the group is bad).
+  async assertGroupExists(groupId: number): Promise<void> {
+    const g = await this.dataSource.query(
+      `SELECT id FROM affiliate_groups WHERE id = $1`,
+      [groupId],
+    );
+    if (!g.length) throw new NotFoundException('Group not found');
+  }
+
+  async adminCreateAffiliate(dto: {
+    userId: number;
+    adminId: number;
+    groupId?: number;
+    revshareRate?: number;
+    commissionPct?: number;
+    remark?: string;
+  }) {
+    // Already an active affiliate? Don't silently overwrite.
+    const existing = await this.dataSource.query(
+      `SELECT id, is_active FROM affiliate_users WHERE user_id = $1 LIMIT 1`,
+      [dto.userId],
+    );
+    if (existing.length && existing[0].is_active) {
+      throw new BadRequestException('This user is already an affiliate');
+    }
+
+    if (dto.groupId != null) await this.assertGroupExists(dto.groupId);
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      await qr.query(
+        `INSERT INTO affiliate_users
+           (user_id, commission_pct, revshare_rate, group_id, remark, is_active, status,
+            approved_at, approved_by_admin_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, true, 'ACTIVE', NOW(), $6, NOW(), NOW())
+         ON CONFLICT (user_id) DO UPDATE
+         SET is_active = true, status = 'ACTIVE',
+             commission_pct = EXCLUDED.commission_pct,
+             revshare_rate  = COALESCE(EXCLUDED.revshare_rate, affiliate_users.revshare_rate),
+             group_id       = COALESCE(EXCLUDED.group_id, affiliate_users.group_id),
+             remark         = COALESCE(EXCLUDED.remark, affiliate_users.remark),
+             approved_by_admin_id = EXCLUDED.approved_by_admin_id,
+             updated_at = NOW()`,
+        [dto.userId, dto.commissionPct ?? 0, dto.revshareRate ?? null,
+         dto.groupId ?? null, dto.remark ?? 'Created by admin', dto.adminId],
+      );
+
+      // Audit-trail application row (APPROVED). ON CONFLICT keeps it safe if
+      // the user had a prior application (e.g. a previous rejection).
+      await qr.query(
+        `INSERT INTO affiliate_applications
+           (user_id, status, notes, applied_at, decided_at, decided_by_admin_id, created_at, updated_at)
+         VALUES ($1, 'APPROVED', 'Created by admin', NOW(), NOW(), $2, NOW(), NOW())
+         ON CONFLICT (user_id) DO UPDATE
+         SET status = 'APPROVED', decided_at = NOW(),
+             decided_by_admin_id = EXCLUDED.decided_by_admin_id,
+             rejection_reason = NULL, updated_at = NOW()`,
+        [dto.userId, dto.adminId],
+      );
+
+      await qr.commitTransaction();
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+
+    return this.getMyAffiliateStatus(dto.userId);
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // ADMIN: list all affiliates
   // ─────────────────────────────────────────────────────────────
 

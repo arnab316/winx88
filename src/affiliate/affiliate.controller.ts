@@ -289,6 +289,56 @@ export class AffiliateController {
     });
   }
 
+  // POST /affiliate/admin/create — admin manually creates a brand-new
+  // affiliate: creates the user account AND the ACTIVE affiliate row in one
+  // step (no application/approval needed).
+  //   body: { username, fullName, phoneNumber, password, email?,
+  //           groupId?, revshareRate?, commissionPct?, remark? }
+  @UseGuards(AdminGuard)
+  @Post('admin/create')
+  async adminCreateAffiliate(@Req() req: any, @Body() body: any) {
+    if (!body.username?.trim())    throw new BadRequestException('username is required');
+    if (!body.phoneNumber && !body.phone_number)
+      throw new BadRequestException('phoneNumber is required');
+    if (!body.password)            throw new BadRequestException('password is required');
+
+    const groupId = body.groupId !== undefined && body.groupId !== null && body.groupId !== ''
+      ? parseInt(body.groupId) : undefined;
+    // Validate the group BEFORE creating the account so a bad groupId can't
+    // leave an orphan user with no affiliate row.
+    if (groupId !== undefined) await this.affiliateService.assertGroupExists(groupId);
+
+    // 1. Create the user account (uniqueness checks, wallet, referral code).
+    const created = await this.authService.register({
+      full_name:    body.fullName?.trim() || body.username,
+      username:     body.username,
+      phone_number: body.phoneNumber ?? body.phone_number,
+      email:        body.email?.trim() || null,
+      password:     body.password,
+    });
+
+    // 2. Turn them into an ACTIVE affiliate.
+    const affiliate = await this.affiliateService.adminCreateAffiliate({
+      userId:    Number(created.userId),
+      adminId:   req.user.sub,
+      groupId,
+      revshareRate:  body.revshareRate  !== undefined && body.revshareRate  !== '' ? parseFloat(body.revshareRate)  : undefined,
+      commissionPct: body.commissionPct !== undefined && body.commissionPct !== '' ? parseFloat(body.commissionPct) : undefined,
+      remark:    body.remark?.trim() || undefined,
+    });
+
+    return {
+      success: true,
+      message: 'Affiliate account created.',
+      user: {
+        userId:   Number(created.userId),
+        username: created.username,
+        userCode: created.userCode,
+      },
+      affiliate,
+    };
+  }
+
   // GET /affiliate/admin/list?page=1&limit=20&q=&code=&tier=&status=&from=&to=
   //     &groupId=&applicationStatus=
   //   q = username / email / full name, or user id when numeric.
