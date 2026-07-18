@@ -500,16 +500,32 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
       status?: 'active' | 'inactive';
       from?: string;
       to?: string;
+      groupId?: number;
+      applicationStatus?: string;
     } = {},
   ) {
     const offset = (page - 1) * limit;
 
+    // Application-status dropdown: APPROVED (default — the real affiliates,
+    // same rows as before), PENDING / REJECTED (applicants), ALL.
+    const appStatus = (filters.applicationStatus ?? 'APPROVED').toUpperCase();
+
     // Build the shared WHERE (applies to both the page query and the count).
     const where: string[] = [];
+    if (appStatus === 'PENDING') where.push(`aa.status = 'PENDING'`);
+    else if (appStatus === 'REJECTED') where.push(`aa.status = 'REJECTED'`);
+    else if (appStatus === 'ALL') where.push(`(au.id IS NOT NULL OR aa.id IS NOT NULL)`);
+    else where.push(`au.id IS NOT NULL`); // APPROVED
+
     const params: any[] = [];
     let i = 1;
     if (filters.q) {
-      where.push(`(u.username ILIKE $${i} OR u.email ILIKE $${i} OR u.full_name ILIKE $${i})`);
+      // "USERNAME / USER ID" box — a purely numeric term also matches the
+      // user id itself.
+      const idClause = /^\d+$/.test(filters.q.trim())
+        ? ` OR u.id = ${Number(filters.q.trim())}`
+        : '';
+      where.push(`(u.username ILIKE $${i} OR u.email ILIKE $${i} OR u.full_name ILIKE $${i}${idClause})`);
       params.push(`%${filters.q}%`);
       i++;
     }
@@ -523,20 +539,27 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
       params.push(filters.tier);
       i++;
     }
+    if (filters.groupId !== undefined) {
+      where.push(`au.group_id = $${i}`);
+      params.push(filters.groupId);
+      i++;
+    }
     if (filters.status === 'active') where.push(`au.is_active = true`);
     else if (filters.status === 'inactive') where.push(`au.is_active = false`);
+    // FROM/TO filter the "joined" date: approved_at for affiliates,
+    // applied_at for not-yet-approved applicants.
     if (filters.from) {
-      where.push(`au.approved_at >= $${i}::timestamptz`);
+      where.push(`COALESCE(au.approved_at, aa.applied_at) >= $${i}::timestamptz`);
       params.push(filters.from);
       i++;
     }
     if (filters.to) {
       // inclusive end-of-day for a YYYY-MM-DD bound
-      where.push(`au.approved_at < ($${i}::date + INTERVAL '1 day')`);
+      where.push(`COALESCE(au.approved_at, aa.applied_at) < ($${i}::date + INTERVAL '1 day')`);
       params.push(filters.to);
       i++;
     }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const [rows, count] = await Promise.all([
       this.dataSource.query(
@@ -567,41 +590,48 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
            w.total_deposited,
            w.balance,
            p.phone_number,
-           (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = au.user_id)      AS downline_count,
+           -- Application state (drives the pending/approved/rejected tabs)
+           aa.status        AS application_status,
+           aa.applied_at,
+           aa.decided_at    AS application_decided_at,
+           aa.rejection_reason,
+           (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = u.id)            AS downline_count,
            (SELECT COUNT(DISTINCT r.referee_user_id) FROM referrals r
-             WHERE r.referrer_user_id = au.user_id
+             WHERE r.referrer_user_id = u.id
                AND EXISTS (SELECT 1 FROM deposits d
                             WHERE d.user_id = r.referee_user_id AND d.status = 'APPROVED'
                               AND d.decided_at >= (CURRENT_DATE - ((EXTRACT(DOW FROM CURRENT_DATE)::int + 2) % 7))))
                                                                                      AS active_players_week,
            (SELECT COALESCE(SUM(w2.total_deposited),0) FROM referrals r2
              JOIN wallets w2 ON w2.user_id = r2.referee_user_id
-            WHERE r2.referrer_user_id = au.user_id)                                  AS downline_deposits,
-           (SELECT COUNT(*) FROM affiliate_clicks WHERE referrer_user_id = au.user_id) AS click_count,
+            WHERE r2.referrer_user_id = u.id)                                        AS downline_deposits,
+           (SELECT COUNT(*) FROM affiliate_clicks WHERE referrer_user_id = u.id)     AS click_count,
            (SELECT COALESCE(SUM(amount),0) FROM referral_bonus
-            WHERE referrer_user_id = au.user_id AND status = 'APPROVED')             AS total_bonus_paid
-         FROM affiliate_users au
-         JOIN users   u ON u.id = au.user_id
-         JOIN wallets w ON w.user_id = au.user_id
+            WHERE referrer_user_id = u.id AND status = 'APPROVED')                   AS total_bonus_paid
+         FROM users u
+         LEFT JOIN affiliate_users au        ON au.user_id = u.id
+         LEFT JOIN affiliate_applications aa ON aa.user_id = u.id
+         JOIN wallets w ON w.user_id = u.id
          LEFT JOIN affiliate_groups g ON g.id = au.group_id
          LEFT JOIN LATERAL (
            SELECT phone_number FROM user_phone_numbers
             WHERE user_id = u.id ORDER BY is_primary DESC, id ASC LIMIT 1
          ) p ON TRUE
          ${whereSql}
-         ORDER BY au.approved_at DESC
+         ORDER BY COALESCE(au.approved_at, aa.applied_at) DESC NULLS LAST
          LIMIT $${i} OFFSET $${i + 1}`,
         [...params, limit, offset],
       ),
       this.dataSource.query(
         `SELECT COUNT(*) AS total
-           FROM affiliate_users au
-           JOIN users u ON u.id = au.user_id
+           FROM users u
+           LEFT JOIN affiliate_users au        ON au.user_id = u.id
+           LEFT JOIN affiliate_applications aa ON aa.user_id = u.id
            ${whereSql}`,
         params,
       ),
     ]);
-    return { data: rows, total: parseInt(count[0].total), page, limit };
+    return { applicationStatus: appStatus, data: rows, total: parseInt(count[0].total), page, limit };
   }
 
   // ─────────────────────────────────────────────────────────────

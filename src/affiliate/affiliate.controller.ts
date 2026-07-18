@@ -290,6 +290,11 @@ export class AffiliateController {
   }
 
   // GET /affiliate/admin/list?page=1&limit=20&q=&code=&tier=&status=&from=&to=
+  //     &groupId=&applicationStatus=
+  //   q = username / email / full name, or user id when numeric.
+  //   groupId = affiliate group filter.
+  //   applicationStatus = APPROVED (default, real affiliates) | PENDING |
+  //   REJECTED (applicants) | ALL — the dropdown tabs.
   @UseGuards(AdminGuard)
   @Get('admin/list')
   getAllAffiliates(
@@ -301,7 +306,13 @@ export class AffiliateController {
     @Query('status') status?: string,
     @Query('from')   from?: string,
     @Query('to')     to?: string,
+    @Query('groupId') groupId?: string,
+    @Query('applicationStatus') applicationStatus?: string,
   ) {
+    const validAppStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'ALL'];
+    const safeAppStatus = validAppStatuses.includes(applicationStatus?.toUpperCase() ?? '')
+      ? applicationStatus!.toUpperCase()
+      : 'APPROVED';
     return this.affiliateService.getAllAffiliates(page, limit, {
       q:      q?.trim() || undefined,
       code:   code?.trim() || undefined,
@@ -309,6 +320,9 @@ export class AffiliateController {
       status: status === 'active' || status === 'inactive' ? status : undefined,
       from:   from || undefined,
       to:     to || undefined,
+      groupId: groupId !== undefined && groupId !== '' && !isNaN(Number(groupId))
+        ? Number(groupId) : undefined,
+      applicationStatus: safeAppStatus,
     });
   }
 
