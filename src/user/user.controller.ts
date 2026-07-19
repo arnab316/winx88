@@ -670,6 +670,9 @@ export class UserController {
       vip_level?:      number;
       account_status?: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED' | 'LOCKED' | 'BLOCKED';
       password?:       string;
+      // Affiliate's user_code — places this user under that affiliate's
+      // downline. '' removes the attribution. (referrals table only.)
+      affiliateCode?:  string;
     },
   ) {
     // Never log the password — log other field names only
