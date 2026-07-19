@@ -18,7 +18,10 @@ import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { VerificationService } from '../verification/verification.service';
 
-const AFFILIATE_STATUSES = ['ACTIVE', 'INACTIVE', 'SUSPENDED', 'LOCKED'] as const;
+// Mirrors the affiliate "Change Status" modal (ACTIVE = the only working
+// state; every other value makes is_active FALSE, pausing commission/weekly
+// processing). BLOCKED added to match users.account_status's full set.
+const AFFILIATE_STATUSES = ['ACTIVE', 'INACTIVE', 'SUSPENDED', 'LOCKED', 'BLOCKED'] as const;
 
 @Injectable()
 export class AffiliateAdminService {
