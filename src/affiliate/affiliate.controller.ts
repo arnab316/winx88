@@ -601,6 +601,7 @@ getDownlineUser(
   }
 
   // GET /affiliate/me/commission-ledger?page&limit — balance statement
+  //   (the affiliate's own "transaction history" — includes admin credits/debits)
   @UseGuards(JwtAuthGuard)
   @Get('me/commission-ledger')
   myCommissionLedger(
@@ -609,6 +610,37 @@ getDownlineUser(
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
   ) {
     return this.weekly.getMyCommissionLedger(req.user.sub, page, limit);
+  }
+
+  // GET /affiliate/admin/:userId/commission-ledger?page&limit
+  //   Admin view of an affiliate's commission-balance transaction history
+  //   (weekly commission, transfers, admin adjustments) + current balances.
+  @UseGuards(AdminGuard)
+  @Get('admin/:userId/commission-ledger')
+  adminCommissionLedger(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.weekly.getCommissionLedgerForUser(userId, page, limit);
+  }
+
+  // POST /affiliate/admin/:userId/commission-adjust
+  //   body: { amount (signed: + credit, - debit), description? }
+  //   Credits/debits the affiliate's commission balance; the entry shows in
+  //   both this admin ledger and the affiliate's own commission history.
+  @UseGuards(AdminGuard)
+  @Post('admin/:userId/commission-adjust')
+  adminAdjustCommission(
+    @Req() req: any,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() body: any,
+  ) {
+    return this.weekly.adminAdjustCommission(userId, {
+      amount: Number(body.amount),
+      description: body.description,
+      adminId: req.user.sub,
+    });
   }
 
   // GET /affiliate/me/profile — user-panel Profile page

@@ -765,7 +765,35 @@ export class AffiliateWeeklyService {
   /** Commission-balance ledger (affiliate-facing statement). */
   async getMyCommissionLedger(userId: number, page = 1, limit = 20) {
     const af = await this.requireAffiliate(userId);
-    const offset = (page - 1) * limit;
+    return this.commissionLedgerFor(Number(af.id), page, limit);
+  }
+
+  /** ADMIN: commission ledger for any affiliate, by the affiliate's users.id. */
+  async getCommissionLedgerForUser(userId: number, page = 1, limit = 20) {
+    const rows = await this.dataSource.query(
+      `SELECT au.id, au.commission_balance, au.lifetime_commission,
+              u.username, u.user_code
+         FROM affiliate_users au JOIN users u ON u.id = au.user_id
+        WHERE au.user_id = $1 LIMIT 1`,
+      [userId],
+    );
+    if (!rows.length) throw new NotFoundException('Affiliate not found');
+    const ledger = await this.commissionLedgerFor(Number(rows[0].id), page, limit);
+    return {
+      affiliate: {
+        userId,
+        username: rows[0].username,
+        userCode: rows[0].user_code,
+        commissionBalance: parseFloat(rows[0].commission_balance),
+        lifetimeCommission: parseFloat(rows[0].lifetime_commission),
+      },
+      ...ledger,
+    };
+  }
+
+  private async commissionLedgerFor(affiliateUserId: number, page: number, limit: number) {
+    const safeLimit = Math.min(Math.max(limit, 1), 100);
+    const offset = (Math.max(page, 1) - 1) * safeLimit;
     const [rows, count] = await Promise.all([
       this.dataSource.query(
         `SELECT id, entry_type, flow, amount, balance_before, balance_after,
@@ -774,13 +802,87 @@ export class AffiliateWeeklyService {
           WHERE affiliate_user_id = $1
           ORDER BY created_at DESC, id DESC
           LIMIT $2 OFFSET $3`,
-        [af.id, limit, offset],
+        [affiliateUserId, safeLimit, offset],
       ),
       this.dataSource.query(
         `SELECT COUNT(*)::int AS total FROM affiliate_commission_ledger WHERE affiliate_user_id = $1`,
-        [af.id],
+        [affiliateUserId],
       ),
     ]);
-    return { data: rows, total: count[0].total, page, limit };
+    return { data: rows, total: count[0].total, page, limit: safeLimit };
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: credit / debit an affiliate's COMMISSION balance.
+  //   Signed amount: + credit, - debit. Records an ADMIN_ADJUST row in
+  //   affiliate_commission_ledger, so it appears in both the admin ledger
+  //   view and the affiliate's own GET /affiliate/me/commission-ledger.
+  //   Never lets the commission balance go negative.
+  // ═════════════════════════════════════════════════════════════
+  async adminAdjustCommission(
+    userId: number,
+    dto: { amount: number; description?: string; adminId: number },
+  ) {
+    const amount = Math.round(Number(dto.amount) * 100) / 100;
+    if (!Number.isFinite(amount) || amount === 0) {
+      throw new BadRequestException('amount must be a non-zero number (+ credit, - debit)');
+    }
+
+    const afRows = await this.dataSource.query(
+      `SELECT id FROM affiliate_users WHERE user_id = $1 LIMIT 1`,
+      [userId],
+    );
+    if (!afRows.length) throw new NotFoundException('Affiliate not found');
+    const affiliateUserId = Number(afRows[0].id);
+    const flow = amount > 0 ? 'CREDIT' : 'DEBIT';
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      const [bal] = await qr.query(
+        `SELECT commission_balance FROM affiliate_users WHERE id = $1 FOR UPDATE`,
+        [affiliateUserId],
+      );
+      const before = parseFloat(bal.commission_balance);
+      const after = Math.round((before + amount) * 100) / 100;
+      if (after < 0) {
+        throw new BadRequestException(
+          `Adjustment would make commission balance negative (available: ${before.toFixed(2)})`,
+        );
+      }
+
+      await qr.query(
+        `UPDATE affiliate_users SET commission_balance = $1, updated_at = NOW() WHERE id = $2`,
+        [after, affiliateUserId],
+      );
+
+      // ledger amount is stored as a magnitude (CHECK amount >= 0); flow
+      // carries the direction. reference_id = the admin who did it.
+      await qr.query(
+        `INSERT INTO affiliate_commission_ledger
+           (affiliate_user_id, entry_type, flow, amount, balance_before, balance_after,
+            reference_type, reference_id, description)
+         VALUES ($1, 'ADMIN_ADJUST', $2, $3, $4, $5, 'ADMIN', $6, $7)`,
+        [
+          affiliateUserId, flow, Math.abs(amount), before, after, dto.adminId,
+          dto.description?.trim() || (flow === 'CREDIT' ? 'Admin credit' : 'Admin debit'),
+        ],
+      );
+
+      await qr.commitTransaction();
+      return {
+        message: `Commission balance ${flow === 'CREDIT' ? 'credited' : 'debited'}.`,
+        flow,
+        amount: Math.abs(amount),
+        balanceBefore: before,
+        balanceAfter: after,
+      };
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
   }
 }
