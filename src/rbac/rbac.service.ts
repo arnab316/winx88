@@ -576,7 +576,10 @@ export class RbacService {
       throw e;
     }
     this.invalidate(adminId);
-    return res[0];
+    // UPDATE…RETURNING returns [rows, affectedCount] in TypeORM — unwrap to
+    // the single row so the response is an object, not an array.
+    const rows = Array.isArray(res[0]) ? res[0] : res;
+    return rows[0];
   }
 
   /**
