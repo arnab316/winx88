@@ -370,6 +370,28 @@ export class ScheduleController {
     }
   }
 
+  // POST /games/admin/:gameId/schedule/pause-after-round
+  //   Graceful pause: current round finishes normally, then the schedule
+  //   pauses (RoundWatcher flips it once no OPEN round remains).
+  //   body { cancel: true } withdraws a pending graceful pause.
+  //   Resume afterwards with the normal /schedule/toggle.
+  @UseGuards(AdminGuard)
+  @Post('admin/:gameId/schedule/pause-after-round')
+  async pauseAfterRound(
+    @Param('gameId', ParseIntPipe) gameId: number,
+    @Body() body: { cancel?: boolean } = {},
+  ) {
+    try {
+      const data = await this.scheduleService.pauseAfterRound(gameId, body?.cancel === true);
+      return { statusCode: HttpStatus.OK, ...data };
+    } catch (e: any) {
+      throw new HttpException(
+        { statusCode: e?.status || 500, message: e?.message || 'Error' },
+        e?.status || 500,
+      );
+    }
+  }
+
   // ╔═══════════════════════════════════════════════════════╗
   // ║  POST /games/bet-with-ticket  (places bet + PDF)      ║
   // ╚═══════════════════════════════════════════════════════╝

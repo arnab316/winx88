@@ -25,26 +25,30 @@ import { ReferralInfoStatService } from './referral-info-stat.service';
  *   DELETE /admin/referral-info-stat/:id       → delete one by id
  */
 @Controller('admin/referral-info-stat')
-@UseGuards(AdminGuard)
 export class ReferralInfoStatController {
   constructor(private readonly statService: ReferralInfoStatService) {}
 
   @Post()
+  @UseGuards(AdminGuard)
+
   async create(@Body() dto: CreateReferralInfoStatDto) {
     return this.wrap(() => this.statService.create(dto), 'Record created successfully');
   }
-
+  
   @Get()
   async findAll() {
     return this.wrap(() => this.statService.findAll(), 'Records fetched successfully');
   }
 
   @Get(':id')
+  @UseGuards(AdminGuard)
   async findOne(@Param('id', ParseIntPipe) id: number) {
     return this.wrap(() => this.statService.findOne(id), 'Record fetched successfully');
   }
 
   @Patch(':id')
+  @UseGuards(AdminGuard)
+
   async update(
     @Param('id', ParseIntPipe) id: number,
     @Body() dto: UpdateReferralInfoStatDto,
@@ -53,6 +57,8 @@ export class ReferralInfoStatController {
   }
 
   @Delete(':id')
+  @UseGuards(AdminGuard)
+
   async remove(@Param('id', ParseIntPipe) id: number) {
     return this.wrap(() => this.statService.remove(id), 'Record deleted successfully');
   }

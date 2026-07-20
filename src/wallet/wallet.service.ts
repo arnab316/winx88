@@ -20,6 +20,7 @@ import {
   AdminDepositDecideDto,
   AdminWithdrawalDecideDto,
   DepositListQuery,
+  WithdrawalListQuery,
   DepositRequestDto,
   WithdrawalRequestDto,
 } from './dto';
@@ -75,14 +76,55 @@ export class WalletService {
     return rows.length ? rows[0] : null;
   }
 
+  // ─── Helper: VIP-tier banking toggles ─────────────────────────
+  //   Each member group has two master switches (deposit_enabled /
+  //   withdrawal_enabled on vip_level_config) plus per-channel toggles
+  //   (tier_banks, keyed by gateway NAME). Missing rows default to
+  //   enabled, so new tiers/gateways stay open until an admin flips them.
+  private async assertTierChannelAllowed(
+    qr: QueryRunner,
+    userId: number,
+    gatewayId: number,
+    direction: 'DEPOSIT' | 'WITHDRAWAL',
+  ): Promise<void> {
+    const col = direction === 'DEPOSIT' ? 'deposit_enabled' : 'withdrawal_enabled';
+    const rows = await qr.query(
+      `SELECT vlc.${col}                    AS tier_enabled,
+              tb.enabled                    AS channel_master,
+              tb.${col}                     AS channel_enabled,
+              g.name                        AS gateway_name
+         FROM users u
+         LEFT JOIN vip_level_config vlc ON vlc.level = u.vip_level
+         JOIN payment_gateways g ON g.id = $2
+         LEFT JOIN tier_banks tb ON tb.level = u.vip_level AND tb.channel = g.name
+        WHERE u.id = $1
+        LIMIT 1`,
+      [userId, gatewayId],
+    );
+    if (!rows.length) return; // no user row — later checks will handle it
+    const r = rows[0];
+    const label = direction === 'DEPOSIT' ? 'Deposits' : 'Withdrawals';
+
+    if (r.tier_enabled === false) {
+      throw new ForbiddenException(
+        `${label} are currently disabled for your VIP level`,
+      );
+    }
+    if (r.channel_master === false || r.channel_enabled === false) {
+      throw new ForbiddenException(
+        `${r.gateway_name} ${label.toLowerCase()} are not available for your VIP level`,
+      );
+    }
+  }
+
   // ─── Shared deposit gate ──────────────────────────────────────
   //   The single source of truth for "is this deposit allowed?".
   //   Runs against the supplied query runner (read-only — no writes)
   //   so it can be used both by the pre-flight validateDeposit() and
   //   inside the requestDeposit() transaction. Throws a descriptive
   //   exception on the first failed rule; returns nothing on success.
-  //   Rules: phone verified → gateway active → tier min/max → promo
-  //   eligibility (full gate: verification, frequency, amount bounds).
+  //   Rules: phone verified → gateway active → tier toggles → tier
+  //   min/max → promo eligibility (verification, frequency, bounds).
   private async assertDepositGate(
     qr: QueryRunner,
     args: { userId: number; gatewayId: number; amount: number; promotionId?: number },
@@ -108,6 +150,9 @@ export class WalletService {
     if (!gateway.length) {
       throw new BadRequestException('Payment gateway not found or inactive');
     }
+
+    // VIP-tier banking toggles: tier master switch + per-channel toggle.
+    await this.assertTierChannelAllowed(qr, args.userId, args.gatewayId, 'DEPOSIT');
 
     // Tier deposit limits (min/max) — enforced only when configured.
     const limits = await this.getTierLimits(qr, args.userId);
@@ -188,7 +233,7 @@ export class WalletService {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'PENDING',NOW(),NOW(),NOW())
          RETURNING id`,
         [
-          generateCode('DEP'),
+          generateCode('DP'),
           dto.userId,
           dto.gatewayId,
           dto.agentId ?? null,
@@ -228,12 +273,56 @@ export class WalletService {
       });
 
       await qr.commitTransaction();
+
+      // Realtime ping for open admin panels (sound + pending-queue refresh).
+      // Fire-and-forget: a socket problem must never fail the request.
+      void this.notifyAdminsPendingRequest('DEPOSIT', depositId, dto.userId, dto.amount, dto.gatewayId, dto.transactionNumber);
+
       return { message: 'Deposit submitted. Awaiting admin approval.', depositId };
     } catch (e) {
       await qr.rollbackTransaction();
       throw e;
     } finally {
       await qr.release();
+    }
+  }
+
+  // Push 'admin:deposit-pending' / 'admin:withdrawal-pending' to the admins
+  // room with enough context for a toast ("DP00340 — arnab123 ৳500 bKash").
+  private async notifyAdminsPendingRequest(
+    kind: 'DEPOSIT' | 'WITHDRAWAL',
+    id: number,
+    userId: number,
+    amount: number,
+    gatewayId: number,
+    reference?: string,
+  ): Promise<void> {
+    try {
+      const [info] = await this.dataSource.query(
+        `SELECT u.username, u.user_code, g.name AS gateway_name
+           FROM users u
+           LEFT JOIN payment_gateways g ON g.id = $2
+          WHERE u.id = $1`,
+        [userId, gatewayId],
+      );
+      const prefix = kind === 'DEPOSIT' ? 'DP' : 'WD';
+      this.walletGateway.pushAdminEvent(
+        kind === 'DEPOSIT' ? 'admin:deposit-pending' : 'admin:withdrawal-pending',
+        {
+          kind,
+          id,
+          refId: `${prefix}${String(id).padStart(5, '0')}`,
+          userId,
+          username: info?.username ?? null,
+          userCode: info?.user_code ?? null,
+          amount,
+          gateway: info?.gateway_name ?? null,
+          reference: reference ?? null, // deposit trx number / withdrawal receive number
+          requestedAt: new Date().toISOString(),
+        },
+      );
+    } catch (e: any) {
+      this.logger.warn(`notifyAdminsPendingRequest(${kind} ${id}) failed: ${e.message}`);
     }
   }
 
@@ -555,6 +644,9 @@ export class WalletService {
       if (!gateway.length)
         throw new BadRequestException('Payment gateway not found or inactive');
 
+      // VIP-tier banking toggles: tier master switch + per-channel toggle.
+      await this.assertTierChannelAllowed(qr, dto.userId, dto.gatewayId, 'WITHDRAWAL');
+
       // Must have funded the account at least once before withdrawing.
       // Blocks no-deposit bonus/winnings extraction. total_deposited is
       // bumped on every approved deposit + manual deposit, so a lifetime
@@ -676,7 +768,7 @@ export class WalletService {
          VALUES ($1,$2,$3,$4,$5,'PENDING',NOW(),NOW(),NOW())
          RETURNING id`,
         [
-          generateCode('WDR'),
+          generateCode('WD'),
           dto.userId,
           dto.gatewayId,
           dto.amount,
@@ -707,6 +799,10 @@ export class WalletService {
       });
 
       await qr.commitTransaction();
+
+      // Realtime ping for open admin panels (sound + pending-queue refresh).
+      void this.notifyAdminsPendingRequest('WITHDRAWAL', withdrawalId, dto.userId, dto.amount, dto.gatewayId, dto.receiveNumber);
+
       return {
         message: 'Withdrawal requested. Awaiting admin approval.',
         withdrawalId,
@@ -971,78 +1067,190 @@ export class WalletService {
 }
 
   // ═════════════════════════════════════════════════════════════
-  // ADMIN: MANUAL DEPOSIT (credit by username OR mobile number)
-  //   Admin types an amount + a username or phone number; we resolve the
-  //   account and credit it as a MANUAL_DEPOSIT (bumps total_deposited, writes
-  //   the ledger, optional turnover) by reusing adminAdjustWallet.
+  // ADMIN: MANUAL DEPOSIT
+  //   Creates a REAL deposits row (already APPROVED) and runs the same
+  //   side-effects as an ordinary approval: wallet credit, total_deposited,
+  //   coins, promotion bonus, turnover requirement, refer-a-friend progress.
+  //   So the deposit shows on the deposit list (with DP id, gateway, TRX,
+  //   promotion) and in transaction history as "MANUAL DEPOSIT".
   // ═════════════════════════════════════════════════════════════
   async adminManualDeposit(dto: {
+    adminId: number;
     usernameOrPhone: string;
     amount: number;
+    gatewayId: number;          // the "Wallet" dropdown (bKash / Nagad / …)
+    playerNumber?: string;      // player's cashout (sender) number
+    trxNumber?: string;         // gateway TRX id, as reported by the player
+    promotionId?: number;       // optional promo — applied like a real deposit
+    turnoverMultiplier?: number; // omit = default 1× (like normal deposits),
+                                 // 0 = no requirement; ignored when promo set
     description?: string;
-    turnoverMultiplier?: number;
-    adminId: number;
   }) {
-    const identifier = (dto.usernameOrPhone ?? '').trim();
-    if (!identifier) {
-      throw new BadRequestException('username or mobile number is required');
-    }
-    if (!Number.isFinite(dto.amount) || dto.amount <= 0) {
+    if (!Number.isFinite(dto.amount) || dto.amount <= 0)
       throw new BadRequestException('amount must be a positive number');
+    if (!dto.usernameOrPhone?.trim())
+      throw new BadRequestException('usernameOrPhone is required');
+    if (!Number.isInteger(dto.gatewayId))
+      throw new BadRequestException('gatewayId is required (the wallet/channel)');
+    if (dto.turnoverMultiplier !== undefined &&
+        (!Number.isFinite(dto.turnoverMultiplier) || dto.turnoverMultiplier < 0))
+      throw new BadRequestException('turnoverMultiplier must be 0 or greater');
+
+    // Resolve the player: exact username → phone number digits → numeric id.
+    const term = dto.usernameOrPhone.trim();
+    const digits = term.replace(/\D/g, '');
+    const users = await this.dataSource.query(
+      `SELECT u.id, u.username FROM users u
+        WHERE LOWER(u.username) = LOWER($1)
+           OR ($2 <> '' AND EXISTS (
+                SELECT 1 FROM user_phone_numbers up
+                 WHERE up.user_id = u.id
+                   AND regexp_replace(up.phone_number, '\\D', '', 'g') LIKE '%' || $2))
+           OR ($3 AND u.id = $4)
+        LIMIT 2`,
+      [term, digits.length >= 6 ? digits : '', /^\d+$/.test(term), /^\d+$/.test(term) ? Number(term) : 0],
+    );
+    if (!users.length) throw new NotFoundException(`No user matches "${term}"`);
+    if (users.length > 1)
+      throw new BadRequestException(`"${term}" matches more than one user — use the exact username or user id`);
+    const userId = Number(users[0].id);
+
+    const gws = await this.dataSource.query(
+      `SELECT id, name FROM payment_gateways WHERE id = $1 LIMIT 1`,
+      [dto.gatewayId],
+    );
+    if (!gws.length) throw new NotFoundException('Gateway (wallet) not found');
+    const gateway = gws[0];
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      const depositCode = generateCode('DP');
+      const dep = await qr.query(
+        `INSERT INTO deposits
+           (deposit_code, user_id, gateway_id, agent_id, promotion_id,
+            amount, transaction_number, player_number, screenshot_url,
+            status, requested_at, decided_at, approved_by_admin_id,
+            created_at, updated_at)
+         VALUES ($1,$2,$3,NULL,$4,$5,$6,$7,'','APPROVED',NOW(),NOW(),$8,NOW(),NOW())
+         RETURNING id`,
+        [
+          depositCode,
+          userId,
+          dto.gatewayId,
+          dto.promotionId ?? null,
+          dto.amount,
+          dto.trxNumber?.trim() || depositCode,
+          dto.playerNumber?.trim() || null,
+          dto.adminId,
+        ],
+      );
+      const depositId = Number(dep[0].id);
+
+      const wallet = await this.getWalletForUpdate(qr, userId);
+      const bal = parseFloat(wallet.balance);
+      const bon = parseFloat(wallet.bonus_balance);
+      const lck = parseFloat(wallet.locked_balance);
+      const newBal = bal + dto.amount;
+
+      await qr.query(
+        `UPDATE wallets
+         SET balance = $1, total_deposited = total_deposited + $2, updated_at = NOW()
+         WHERE id = $3`,
+        [newBal, dto.amount, wallet.id],
+      );
+
+      await this.financialLedger.write({
+        qr,
+        walletId:      wallet.id,
+        userId,
+        entryType:     'MANUAL_DEPOSIT',
+        flow:          'CREDIT',
+        amount:        dto.amount,
+        balanceBefore: bal,
+        balanceAfter:  newBal,
+        bonusBefore:   bon,
+        bonusAfter:    bon,
+        lockedBefore:  lck,
+        lockedAfter:   lck,
+        // Reference the deposits row so the transaction statement resolves
+        // DP id / gateway / TRX exactly like player-initiated deposits.
+        referenceType: 'DEPOSIT',
+        referenceId:   depositId,
+        status:        'SUCCESS',
+        description:   dto.description ?? `Manual deposit via ${gateway.name} by admin`,
+        createdByType: 'ADMIN',
+        createdById:   dto.adminId,
+      });
+
+      const coinResult = await this.coinService.awardForDeposit(
+        qr, userId, dto.amount, depositId,
+      );
+
+      // Promotion — admin picked it deliberately, so unlike deposit approval
+      // (which skips a stale promo) any failure here fails the whole call.
+      let promoResult: any = null;
+      let turnover: { requirementId: number; targetAmount: number } | null = null;
+      if (dto.promotionId) {
+        try {
+          promoResult = await this.promotionEngine.apply(qr, userId, Number(dto.promotionId), {
+            kind: 'DEPOSIT',
+            depositId,
+            depositAmount: dto.amount,
+            adminId: dto.adminId,
+          });
+        } catch (e: any) {
+          throw new BadRequestException(`Promotion could not be applied: ${e.message}`);
+        }
+      } else if (dto.turnoverMultiplier === undefined) {
+        // No promo, no explicit multiplier → same default 1× as a normal deposit.
+        await this.turnoverService.createFromDeposit(qr, userId, depositId, dto.amount, null);
+      } else if (dto.turnoverMultiplier > 0) {
+        turnover = await this.turnoverService.insertRequirement(qr, {
+          userId,
+          sourceType: 'MANUAL',
+          sourceId:   depositId,
+          baseAmount: dto.amount,
+          multiplier: dto.turnoverMultiplier,
+          targetAmount: dto.amount * dto.turnoverMultiplier,
+          adminId:    dto.adminId,
+          label:      dto.description ?? `Manual deposit via ${gateway.name}`,
+        });
+      } // multiplier 0 → no requirement
+
+      await this.referralEngine.onDeposit(qr, userId, dto.amount);
+
+      await qr.commitTransaction();
+      await this.walletGateway.pushBalanceUpdate(userId);
+      return {
+        message: 'Manual deposit credited.',
+        depositId,
+        dpId: `DP${String(depositId).padStart(5, '0')}`,
+        userId,
+        username: users[0].username,
+        gateway: gateway.name,
+        trxNumber: dto.trxNumber?.trim() || depositCode,
+        amount: dto.amount,
+        newBalance: newBal,
+        coinsEarned: coinResult?.awarded ?? 0,
+        promotion: promoResult,
+        turnover,
+      };
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
     }
-
-    const user = await this.resolveUserByUsernameOrPhone(identifier);
-    if (!user) {
-      throw new NotFoundException(`No account found for "${identifier}"`);
-    }
-
-    const result = await this.adminAdjustWallet({
-      userId: user.id,
-      amount: dto.amount, // positive → credit
-      adjustmentType: 'MANUAL_DEPOSIT',
-      description: dto.description?.trim() || 'Manual deposit by admin',
-      turnoverMultiplier: dto.turnoverMultiplier,
-      adminId: dto.adminId,
-    });
-
-    return {
-      ...result,
-      message: 'Manual deposit credited.',
-      user: {
-        id: Number(user.id),
-        username: user.username,
-        fullName: user.full_name,
-        primaryPhone: user.primary_phone,
-      },
-    };
   }
 
-  // Find a user by exact username, else by phone number (primary preferred).
-  // Phone match is format-tolerant: strip non-digits, then drop a leading 880
-  // (country code) and/or 0 — same normalization the withdrawal flow uses.
-  private async resolveUserByUsernameOrPhone(identifier: string) {
-    const byName = await this.dataSource.query(
-      `SELECT u.id, u.username, u.full_name,
-              (SELECT phone_number FROM user_phone_numbers
-                WHERE user_id = u.id AND is_primary = true LIMIT 1) AS primary_phone
-         FROM users u WHERE u.username = $1 LIMIT 1`,
-      [identifier],
+  // Wallet dropdown for the manual-deposit form (and anywhere else the
+  // admin panel needs the raw channel list).
+  async listGatewaysAdmin() {
+    return this.dataSource.query(
+      `SELECT id, name, is_active FROM payment_gateways ORDER BY id ASC`,
     );
-    if (byName.length) return byName[0];
-
-    const norm = identifier.replace(/[^0-9]/g, '').replace(/^(880)?0?/, '');
-    if (!norm) return null;
-
-    const byPhone = await this.dataSource.query(
-      `SELECT u.id, u.username, u.full_name, p.phone_number AS primary_phone
-         FROM user_phone_numbers p
-         JOIN users u ON u.id = p.user_id
-        WHERE regexp_replace(regexp_replace(p.phone_number, '[^0-9]', '', 'g'), '^(880)?0?', '') = $1
-        ORDER BY p.is_primary DESC, p.id ASC
-        LIMIT 1`,
-      [norm],
-    );
-    return byPhone.length ? byPhone[0] : null;
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -1097,13 +1305,13 @@ async getPendingDeposits(q: DepositListQuery = {}) {
         params.push(prov);
       }
     }
- 
+
     // Single user filter (admin viewing one user's deposits)
     if (q.userId) {
       where.push(`d.user_id = $${i++}`);
       params.push(q.userId);
     }
- 
+
     // Date range on requested_at
     if (q.dateFrom) {
       where.push(`d.requested_at >= $${i++}::date`);
@@ -1167,7 +1375,6 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          d.decided_at,
          d.rejection_reason,
          d.promotion_id,
-         -- Provider (WINYPAY = automated online; NULL = manual agent deposit)
          d.provider,
          d.pay_type,
          d.provider_txn_id,
@@ -1178,7 +1385,9 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          u.user_code                                    AS member_id,
          u.vip_level,
          COALESCE(vlc.group_name, vlc.level_name)       AS vip_level_name,
-         ph.phone_number                                AS player_number,
+         -- Cashout number typed on the manual-deposit form wins; otherwise
+         -- the player's primary phone number.
+         COALESCE(d.player_number, ph.phone_number)     AS player_number,
          -- Deposits are always player-initiated (no admin-created flow)
          u.username                                     AS created_by,
          -- Bonus: real claim once approved; engine-math preview while pending
@@ -1284,7 +1493,7 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          u.user_code                              AS member_id,
          u.vip_level,
          COALESCE(vlc.group_name, vlc.level_name) AS vip_level_name,
-         ph.phone_number                          AS player_number,
+         COALESCE(d.player_number, ph.phone_number) AS player_number,
          u.username                               AS created_by,
          bx.bonus_amount,
          (cl.claimed_bonus IS NULL
@@ -1338,41 +1547,182 @@ async getPendingDeposits(q: DepositListQuery = {}) {
   // ═════════════════════════════════════════════════════════════
   // ADMIN: LIST WITHDRAWALS (status = PENDING | APPROVED | REJECTED | ALL)
   // ═════════════════════════════════════════════════════════════
-  async getPendingWithdrawals(
-    page = 1,
-    limit = 20,
-    status: 'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL' = 'PENDING',
-  ) {
+  // Same multi-field search panel as getPendingDeposits — one endpoint backs
+  // the Withdraw page tabs + filters. wd_id is derived (WD00212 = id 212, not
+  // stored); "TRX ID" = withdrawal_code; no fee columns exist, so
+  // total_amount = amount.
+  async getPendingWithdrawals(q: WithdrawalListQuery = {}) {
+    const page   = q.page  && q.page  > 0 ? q.page  : 1;
+    const limit  = q.limit && q.limit > 0 ? Math.min(q.limit, 100) : 20;
     const offset = (page - 1) * limit;
+    const status = q.status ?? 'PENDING';
 
-    const statusWhere = status === 'ALL' ? '' : `WHERE w.status = $3`;
-    const params: any[] =
-      status === 'ALL' ? [limit, offset] : [limit, offset, status];
+    const where: string[] = [];
+    const params: any[] = [];
+    let i = 1;
+
+    if (status !== 'ALL') {
+      where.push(`w.status = $${i++}`);
+      params.push(status);
+    }
+
+    // Free-text search (legacy) — code, receive number, name, date strings
+    if (q.search?.trim()) {
+      const term = `%${q.search.trim()}%`;
+      where.push(
+        `(w.withdrawal_code ILIKE $${i}
+          OR w.receive_number ILIKE $${i}
+          OR u.username ILIKE $${i}
+          OR u.full_name ILIKE $${i}
+          OR TO_CHAR(w.requested_at, 'YYYY-MM-DD') ILIKE $${i}
+          OR TO_CHAR(w.requested_at, 'DD-MM-YYYY') ILIKE $${i})`,
+      );
+      params.push(term);
+      i++;
+    }
+
+    if (q.gatewayId) {
+      where.push(`w.gateway_id = $${i++}`);
+      params.push(q.gatewayId);
+    }
+
+    if (q.userId) {
+      where.push(`w.user_id = $${i++}`);
+      params.push(q.userId);
+    }
+
+    // Date range on requested_at (Created Time)
+    if (q.dateFrom) {
+      where.push(`w.requested_at >= $${i++}::date`);
+      params.push(q.dateFrom);
+    }
+    if (q.dateTo) {
+      where.push(`w.requested_at < ($${i++}::date + INTERVAL '1 day')`);
+      params.push(q.dateTo);
+    }
+
+    // Member Group = VIP tier name (same convention as deposit search)
+    if (q.memberGroup?.trim()) {
+      where.push(`(vlc.group_name ILIKE $${i} OR vlc.level_name ILIKE $${i})`);
+      params.push(q.memberGroup.trim());
+      i++;
+    }
+
+    // Member ID = users.user_code
+    if (q.memberId?.trim()) {
+      where.push(`u.user_code ILIKE $${i++}`);
+      params.push(`%${q.memberId.trim()}%`);
+    }
+
+    // Phone — digits-only compare against the payout receive_number AND every
+    // saved player number, so +880/880/0-prefixed input all match either.
+    if (q.phone?.trim()) {
+      const digits = q.phone.replace(/\D/g, '').replace(/^880/, '').replace(/^0/, '');
+      where.push(`(
+        regexp_replace(w.receive_number, '\\D', '', 'g') LIKE $${i}
+        OR EXISTS (
+          SELECT 1 FROM user_phone_numbers up
+           WHERE up.user_id = u.id
+             AND regexp_replace(up.phone_number, '\\D', '', 'g') LIKE $${i}))`);
+      params.push(`%${digits}%`);
+      i++;
+    }
+
+    // TRX ID = withdrawal_code (players don't enter a trx number on payout)
+    if (q.trxId?.trim()) {
+      where.push(`w.withdrawal_code ILIKE $${i++}`);
+      params.push(`%${q.trxId.trim()}%`);
+    }
+
+    // WD ID — "WD00212" (or bare digits) → withdrawals.id
+    if (q.wdId?.trim()) {
+      const idDigits = q.wdId.replace(/\D/g, '');
+      where.push(`w.id = $${i++}`);
+      params.push(idDigits ? parseInt(idDigits, 10) : -1);
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     // Pending queue reads oldest-first (approval order); decided/mixed
     // listings read newest-first.
     const order = status === 'PENDING' ? 'ASC' : 'DESC';
 
     const rows = await this.dataSource.query(
-      `SELECT w.id, w.withdrawal_code, w.user_id, u.full_name,
-              w.amount, w.receive_number,
-              g.name AS gateway_name, w.requested_at,
-              w.status, w.decided_at, w.rejection_reason
+      `SELECT
+         w.id,
+         'WD' || LPAD(w.id::text, 5, '0') AS wd_id,
+         w.withdrawal_code,
+         w.user_id,
+         w.amount,
+         w.amount::numeric(18,2)                        AS total_amount,
+         w.receive_number,
+         w.status,
+         w.requested_at,
+         w.decided_at,
+         w.rejection_reason,
+         -- User info
+         u.full_name,
+         u.username,
+         u.email,
+         u.user_code                                    AS member_id,
+         u.vip_level,
+         COALESCE(vlc.group_name, vlc.level_name)       AS vip_level_name,
+         ph.phone_number                                AS player_number,
+         -- Withdrawals are always player-initiated (no admin-created flow)
+         u.username                                     AS created_by,
+         -- Gateway
+         g.id   AS gateway_id,
+         g.name AS gateway_name,
+         -- Deciding admin (Approve/Reject By)
+         adm.name  AS decided_by_name,
+         adm.email AS decided_by_email
+       FROM withdrawals w
+       JOIN users u            ON u.id = w.user_id
+       LEFT JOIN vip_level_config vlc ON vlc.level = u.vip_level
+       JOIN payment_gateways g ON g.id = w.gateway_id
+       LEFT JOIN admin_users adm ON adm.id = w.approved_by_admin_id
+       LEFT JOIN LATERAL (
+         SELECT up.phone_number
+           FROM user_phone_numbers up
+          WHERE up.user_id = u.id
+          ORDER BY up.is_primary DESC, up.id ASC
+          LIMIT 1
+       ) ph ON TRUE
+       ${whereSql}
+       ORDER BY w.requested_at ${order}
+       LIMIT $${i} OFFSET $${i + 1}`,
+      [...params, limit, offset],
+    );
+
+    const countRows = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS total
        FROM withdrawals w
        JOIN users u ON u.id = w.user_id
-       JOIN payment_gateways g ON g.id = w.gateway_id
-       ${statusWhere}
-       ORDER BY w.requested_at ${order}
-       LIMIT $1 OFFSET $2`,
+       LEFT JOIN vip_level_config vlc ON vlc.level = u.vip_level
+       ${whereSql}`,
       params,
     );
-    const count = await this.dataSource.query(
-      status === 'ALL'
-        ? `SELECT COUNT(*)::int AS total FROM withdrawals`
-        : `SELECT COUNT(*)::int AS total FROM withdrawals WHERE status = $1`,
-      status === 'ALL' ? [] : [status],
-    );
-    return { data: rows, total: count[0].total, page, limit, status };
+
+    return {
+      data:  rows,
+      total: countRows[0].total,
+      page,
+      limit,
+      status, // kept for backward compat with the old response shape
+      filters: {
+        status,
+        search:      q.search      ?? null,
+        gatewayId:   q.gatewayId   ?? null,
+        userId:      q.userId      ?? null,
+        dateFrom:    q.dateFrom    ?? null,
+        dateTo:      q.dateTo      ?? null,
+        memberGroup: q.memberGroup ?? null,
+        memberId:    q.memberId    ?? null,
+        phone:       q.phone       ?? null,
+        trxId:       q.trxId       ?? null,
+        wdId:        q.wdId        ?? null,
+      },
+    };
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -1450,6 +1800,7 @@ async getLedgerHistory(
     WIN_CREDIT:             'WIN',
     BET_PLACED:             'BET',
     BET_CANCELLED:          'BET',
+    AFFILIATE_COMMISSION_CREDIT: 'AFFILIATE COMMISSION',
   };
 
   const ADMIN_LABELS: Record<string, string> = {
@@ -1466,6 +1817,7 @@ async getLedgerHistory(
     WIN_CREDIT:             'WIN',
     BET_PLACED:             'BET',
     BET_CANCELLED:          'BET',
+    AFFILIATE_COMMISSION_CREDIT: 'AFFILIATE COMMISSION',
   };
 
   const labelMap = role === 'ADMIN' ? ADMIN_LABELS : USER_LABELS;
@@ -1483,9 +1835,12 @@ async getLedgerHistory(
   // Manual admin adjustments (credit "Weekly Loss Bonus", debit claw-back).
   // These must appear in the statement with their description + amount.
   const ADJUSTMENT_TYPES = ['MANUAL_ADJUSTMENT'];
+  // Approved affiliate → player commission transfers.
+  const AFFILIATE_TYPES = ['AFFILIATE_COMMISSION_CREDIT'];
 
-  // Optional ?type=DEPOSIT | WITHDRAWAL | ADJUSTMENT narrows the feed; anything
-  // else (or no filter) returns all three. Bet/win/bonus filters return nothing.
+  // Optional ?type=DEPOSIT | WITHDRAWAL | ADJUSTMENT | AFFILIATE narrows the
+  // feed; anything else (or no filter) returns all four. Bet/win/bonus
+  // filters return nothing.
   const filter = typeFilter?.trim().toUpperCase();
   let effectiveTypes: string[];
   if (filter === 'DEPOSIT') {
@@ -1494,8 +1849,10 @@ async getLedgerHistory(
     effectiveTypes = WITHDRAWAL_TYPES;
   } else if (filter === 'ADJUSTMENT') {
     effectiveTypes = ADJUSTMENT_TYPES;
+  } else if (filter === 'AFFILIATE') {
+    effectiveTypes = AFFILIATE_TYPES;
   } else {
-    effectiveTypes = [...DEPOSIT_TYPES, ...WITHDRAWAL_TYPES, ...ADJUSTMENT_TYPES];
+    effectiveTypes = [...DEPOSIT_TYPES, ...WITHDRAWAL_TYPES, ...ADJUSTMENT_TYPES, ...AFFILIATE_TYPES];
   }
 
   const params: any[] = [userId, ...effectiveTypes];
@@ -1526,14 +1883,34 @@ async getLedgerHistory(
           fl.balance_before, fl.balance_after,
           fl.reference_type, fl.reference_id,
           fl.status, fl.description, fl.created_by_type, fl.created_at,
+          -- Human transaction id — same formats the admin already sees on the
+          -- deposit/withdrawal lists (DP00292 / WD00033) and affiliate
+          -- transfers (TR-1001). Rows with no external reference (manual
+          -- adjustments) keep their FIN ledger code.
+          CASE
+            WHEN fl.reference_type = 'DEPOSIT'            AND fl.reference_id IS NOT NULL
+              THEN 'DP' || LPAD(fl.reference_id::text, 5, '0')
+            WHEN fl.reference_type = 'WITHDRAWAL'         AND fl.reference_id IS NOT NULL
+              THEN 'WD' || LPAD(fl.reference_id::text, 5, '0')
+            WHEN fl.reference_type = 'AFFILIATE_TRANSFER' AND fl.reference_id IS NOT NULL
+              THEN 'TR-' || (1000 + fl.reference_id)::text
+            ELSE fl.ledger_code
+          END             AS transaction_id,
+          d.transaction_number,
+          d.provider      AS deposit_provider,
+          COALESCE(d.transaction_number, d.provider_txn_id) AS deposit_trx_id,
+          w.withdrawal_code,
           a.wallet_type   AS agent_wallet_type,
           a.agent_number  AS agent_number,
-          g.name          AS gateway_name
+          COALESCE(g.name, wg.name) AS gateway_name
        FROM financial_ledger fl
        LEFT JOIN deposits d
               ON fl.reference_type = 'DEPOSIT' AND fl.reference_id = d.id
        LEFT JOIN agents a            ON a.id = d.agent_id
        LEFT JOIN payment_gateways g  ON g.id = d.gateway_id
+       LEFT JOIN withdrawals w
+              ON fl.reference_type = 'WITHDRAWAL' AND fl.reference_id = w.id
+       LEFT JOIN payment_gateways wg ON wg.id = w.gateway_id
        ${whereClause}
        ORDER BY ${groupKey}, fl.created_at DESC, fl.id DESC
      ) sub
@@ -1553,9 +1930,23 @@ async getLedgerHistory(
 
   return {
     data: rows.map((row) => {
-      const { agent_wallet_type, agent_number, gateway_name, ...rest } = row;
+      const {
+        agent_wallet_type, agent_number, gateway_name,
+        transaction_id, deposit_trx_id, withdrawal_code, deposit_provider,
+        ...rest
+      } = row;
       return {
         ...rest,
+        // Deposit-table transaction number exactly as the player typed it
+        // during deposit (null for withdrawals/adjustments) — same key as
+        // the admin deposit list. Kept in `rest` via d.transaction_number.
+        transactionId: transaction_id,
+        // Gateway-side TRX reference: the trx id the user submitted with the
+        // deposit, or the withdrawal's payout code. Null for adjustments.
+        trxId: deposit_trx_id ?? withdrawal_code ?? null,
+        // 'WINYPAY' = automated PSP (transaction_number is system-generated);
+        // null = manual agent deposit (transaction_number is player-typed).
+        provider: deposit_provider ?? null,
         typeLabel: labelMap[row.entry_type] ?? row.entry_type,
         // Where the money went/came from — populated for deposits only.
         walletType:  agent_wallet_type ?? null,

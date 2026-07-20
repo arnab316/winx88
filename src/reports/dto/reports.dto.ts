@@ -20,6 +20,30 @@ export class PlayerReportQueryDto {
   limit?: number = 50;
 }
 
+// ─── ADMIN: member summary report (Report page) ─────────────────
+export class MemberSummaryQueryDto {
+  @IsOptional() @IsDateString()
+  dateFrom?: string; // inclusive, YYYY-MM-DD
+
+  @IsOptional() @IsDateString()
+  dateTo?: string;   // inclusive, YYYY-MM-DD
+
+  @IsOptional() @IsString()
+  currency?: string; // accepted for forward-compat; platform is single-currency (BDT)
+
+  @IsOptional() @IsString()
+  memberGroup?: string; // vip_level_config group_name / level_name
+
+  @IsOptional() @IsString()
+  username?: string; // matches username or user_code
+
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  page?: number = 1;
+
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(200)
+  limit?: number = 50;
+}
+
 // ─── ADMIN: drill-down list query (bets / transactions) ─────────
 export class PlayerDrillQueryDto {
   @IsOptional() @IsDateString()

@@ -33,7 +33,11 @@ export class AffiliatePublicController {
       landingPath: req.originalUrl,
     });
 
-    const base = process.env.PUBLIC_SITE_URL ?? 'https://winx-88.com';
-    return res.redirect(302, `${base}/?aff=${encodeURIComponent(code ?? '')}`);
+    const base = process.env.PUBLIC_SITE_URL ?? process.env.APP_BASE_URL ?? 'https://winx-88.com';
+    // Land straight on the register page with the same param name the signup
+    // form forwards to POST /auth/register (affiliateCode). Kept for
+    // backward-compat with previously shared /r/<code> links; new links are
+    // generated in this direct /register?affiliateCode= form.
+    return res.redirect(302, `${base}/register?affiliateCode=${encodeURIComponent(code ?? '')}`);
   }
 }

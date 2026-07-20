@@ -15,7 +15,8 @@ export type FinancialEntryType =
   | 'MANUAL_ADJUSTMENT'
   | 'PROMOTION_BONUS'
   | 'MANUAL_DEPOSIT'
-  | 'JACKPOT_PRIZE';
+  | 'JACKPOT_PRIZE'
+  | 'AFFILIATE_COMMISSION_CREDIT';
 
 export type FinancialFlow = 'CREDIT' | 'DEBIT' | 'LOCK' | 'RELEASE';
 export type ActorType = 'SYSTEM' | 'ADMIN' | 'USER';

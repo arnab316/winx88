@@ -15,10 +15,13 @@ import {
   InternalServerErrorException,
   UploadedFile,
   Logger,
+  ForbiddenException,
 } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
 import { S3Service } from './s3.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { memoryStorage } from 'multer';
@@ -208,9 +211,14 @@ export class WalletController {
   // GET /wallet/admin/deposits?page=1&limit=20
   // Now returns agent_number, agent_code, wallet_type per deposit
   // (so admin sees WHERE the user was told to send the money)
-  @UseGuards(AdminGuard)
+  // RBAC: deposit.view to open the list; deposit.filter to use the search
+  // fields (member group / member id / user id / phone / trx id / dp id /
+  // date range / gateway) — mirrors the admin-panel "Use deposit filters".
+  @UseGuards(AdminGuard, PermissionsGuard)
+  @RequirePermissions('deposit', 'view')
   @Get('admin/deposits')
   getDeposits(
+    @Req() req: any,
     @Query('status')      status?:      string,
     @Query('search')      search?:      string,
     @Query('gatewayId')   gatewayId?:   string,
@@ -230,6 +238,17 @@ export class WalletController {
     const safeStatus = validStatuses.includes(status?.toUpperCase() ?? '')
       ? (status!.toUpperCase() as any)
       : 'PENDING';
+
+    // Search fields need deposit.filter on top of deposit.view (status tabs
+    // and paging stay view-level). req.rbac is set by PermissionsGuard.
+    const usesFilters = [
+      search, gatewayId, provider, userId, dateFrom, dateTo,
+      memberGroup, memberId, phone, trxId, dpId,
+    ].some((v) => v?.toString().trim());
+    if (usesFilters && req.rbac && !req.rbac.isSuperAdmin
+        && !req.rbac.flat.has('deposit.filter')) {
+      throw new ForbiddenException('Missing permission: deposit.filter');
+    }
 
     return this.walletService.getPendingDeposits({
       status:      safeStatus,
@@ -251,7 +270,8 @@ export class WalletController {
 
     // Single deposit detail — full info including who approved it.
 
-   @UseGuards(AdminGuard)
+  @UseGuards(AdminGuard, PermissionsGuard)
+  @RequirePermissions('deposit', 'view')
   @Get('admin/deposits/:id')
   getDepositById(@Param('id', ParseIntPipe) depositId: number) {
     return this.walletService.getDepositById(depositId);
@@ -283,12 +303,26 @@ export class WalletController {
  
   // GET /wallet/admin/withdrawals?page=1&limit=20&status=PENDING|APPROVED|REJECTED|ALL
   // status defaults to PENDING (the approval queue).
-  @UseGuards(AdminGuard)
+  // RBAC: withdraw.view to open the list; withdraw.filter to use the search
+  // fields — mirrors the deposit search panel.
+  @UseGuards(AdminGuard, PermissionsGuard)
+  @RequirePermissions('withdraw', 'view')
   @Get('admin/withdrawals')
   getPendingWithdrawals(
-    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
-    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
-    @Query('status') status?: string,
+    @Req() req: any,
+    @Query('status')      status?:      string,
+    @Query('search')      search?:      string,
+    @Query('gatewayId')   gatewayId?:   string,
+    @Query('userId')      userId?:      string,
+    @Query('dateFrom')    dateFrom?:    string,
+    @Query('dateTo')      dateTo?:      string,
+    @Query('memberGroup') memberGroup?: string,
+    @Query('memberId')    memberId?:    string,
+    @Query('phone')       phone?:       string,
+    @Query('trxId')       trxId?:       string,
+    @Query('wdId')        wdId?:        string,
+    @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number = 1,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number = 20,
   ) {
     const valid = ['PENDING', 'APPROVED', 'REJECTED', 'ALL'] as const;
     const normalized = (status ?? 'PENDING').toUpperCase();
@@ -297,11 +331,33 @@ export class WalletController {
         `status must be one of: ${valid.join(', ')}`,
       );
     }
-    return this.walletService.getPendingWithdrawals(
+
+    // Search fields need withdraw.filter on top of withdraw.view (status tabs
+    // and paging stay view-level). req.rbac is set by PermissionsGuard.
+    const usesFilters = [
+      search, gatewayId, userId, dateFrom, dateTo,
+      memberGroup, memberId, phone, trxId, wdId,
+    ].some((v) => v?.toString().trim());
+    if (usesFilters && req.rbac && !req.rbac.isSuperAdmin
+        && !req.rbac.flat.has('withdraw.filter')) {
+      throw new ForbiddenException('Missing permission: withdraw.filter');
+    }
+
+    return this.walletService.getPendingWithdrawals({
+      status:      normalized as (typeof valid)[number],
+      search:      search?.trim()      || undefined,
+      gatewayId:   gatewayId ? parseInt(gatewayId, 10) : undefined,
+      userId:      userId    ? parseInt(userId,    10) : undefined,
+      dateFrom:    dateFrom  || undefined,
+      dateTo:      dateTo    || undefined,
+      memberGroup: memberGroup?.trim() || undefined,
+      memberId:    memberId?.trim()    || undefined,
+      phone:       phone?.trim()       || undefined,
+      trxId:       trxId?.trim()       || undefined,
+      wdId:        wdId?.trim()        || undefined,
       page,
       limit,
-      normalized as (typeof valid)[number],
-    );
+    });
   }
  
   // POST /wallet/admin/withdrawals/:id/decide
@@ -329,31 +385,37 @@ export class WalletController {
   }
  
   // POST /wallet/admin/manual-deposit
-  // body: { usernameOrPhone, amount, description?, turnoverMultiplier? }
-  //   Credits a user's wallet by username OR primary mobile number.
-  //   amount must be positive. turnoverMultiplier (optional) = wagering req.
+  // body: { usernameOrPhone, amount, gatewayId, playerNumber?, trxNumber?,
+  //         promotionId?, turnoverMultiplier?, description? }
+  //   Creates an already-APPROVED deposit row and runs the full approval
+  //   side-effects (credit, coins, promo bonus, turnover, referral progress).
+  //   turnoverMultiplier: omit = default 1×, 0 = none; ignored when a
+  //   promotion is attached (the promo defines its own turnover).
   @UseGuards(AdminGuard)
   @Post('admin/manual-deposit')
-  adminManualDeposit(@Req() req: any, @Body() body: any) {
-    const usernameOrPhone =
-      body.usernameOrPhone ?? body.username ?? body.phone ?? body.mobile;
-    if (!usernameOrPhone || typeof usernameOrPhone !== 'string') {
-      throw new BadRequestException('usernameOrPhone is required');
-    }
-    const amount = Number(body.amount);
-    if (!Number.isFinite(amount) || amount <= 0) {
-      throw new BadRequestException('amount must be a positive number');
-    }
+  adminManualDeposit(@Body() body: any, @Req() req: any) {
     return this.walletService.adminManualDeposit({
-      usernameOrPhone,
-      amount,
-      description: body.description,
+      adminId:         req.user.sub,
+      usernameOrPhone: body.usernameOrPhone,
+      amount:          Number(body.amount),
+      gatewayId:       Number(body.gatewayId),
+      playerNumber:    body.playerNumber,
+      trxNumber:       body.trxNumber,
+      promotionId:
+        body.promotionId !== undefined && body.promotionId !== null && body.promotionId !== ''
+          ? Number(body.promotionId) : undefined,
       turnoverMultiplier:
-        body.turnoverMultiplier !== undefined && body.turnoverMultiplier !== null
-          ? Number(body.turnoverMultiplier)
-          : undefined,
-      adminId: req.user.sub,
+        body.turnoverMultiplier !== undefined && body.turnoverMultiplier !== null && body.turnoverMultiplier !== ''
+          ? Number(body.turnoverMultiplier) : undefined,
+      description:     body.description,
     });
+  }
+
+  // GET /wallet/admin/gateways — the "Wallet" dropdown (bKash, Nagad, …)
+  @UseGuards(AdminGuard)
+  @Get('admin/gateways')
+  listGateways() {
+    return this.walletService.listGatewaysAdmin();
   }
 
   // POST /wallet/admin/adjust

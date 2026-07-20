@@ -3,16 +3,24 @@ import {
   Get,
   Post,
   Patch,
+  Delete,
   Body,
   Param,
   Query,
   Req,
+  Res,
   UseGuards,
   ParseIntPipe,
   DefaultValuePipe,
+  BadRequestException,
 } from '@nestjs/common';
+import { AuthService } from '../auth/auth.service';
 import { AffiliateService } from './affiliate.service';
 import { AffiliateRevShareService } from './affiliate-revshare.service';
+import { AffiliateWeeklyService } from './affiliate-weekly.service';
+import { AffiliateTransferService } from './affiliate-transfer.service';
+import { AffiliateAdminService } from './affiliate-admin.service';
+import { VerificationService } from '../verification/verification.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
 
@@ -21,7 +29,162 @@ export class AffiliateController {
   constructor(
     private readonly affiliateService: AffiliateService,
     private readonly revshare: AffiliateRevShareService,
+    private readonly weekly: AffiliateWeeklyService,
+    private readonly transfers: AffiliateTransferService,
+    private readonly affiliateAdmin: AffiliateAdminService,
+    private readonly verification: VerificationService,
+    private readonly authService: AuthService,
   ) {}
+
+  // ─────────────────────────────────────────────────────────────
+  // PARTNERS PORTAL: signup + login (public)
+  // ─────────────────────────────────────────────────────────────
+
+  // POST /affiliate/register — the "Create your account" screen.
+  // body: { username, phoneNumber (or phone_number), email, password, fullName? }
+  // Creates the user account through the normal register flow (auto-login)
+  // AND files the affiliate application in one step.
+  @Post('register')
+  async registerAffiliate(
+    @Body() body: any,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    const phone = body.phoneNumber ?? body.phone_number;
+    if (!body.email?.trim()) throw new BadRequestException('email is required');
+
+    const result = await this.authService.register({
+      full_name:    body.fullName?.trim() || body.username,
+      username:     body.username,
+      phone_number: phone,
+      email:        body.email.trim(),
+      password:     body.password,
+    });
+
+    await this.affiliateService.applyAffiliate({
+      userId: result.userId,
+      notes:  'Signed up via partners portal',
+    });
+
+    res.cookie('accessToken', result.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    res.cookie('refreshToken', result.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    await this.authService.recordLoginEvent(
+      result.userId,
+      'REGISTER',
+      req.ip,
+      (req.headers['x-device-fingerprint'] as string) || undefined,
+    );
+
+    return {
+      success: true,
+      code: 201,
+      message: 'Account created. Affiliate application submitted for review.',
+      data: { ...result, affiliate: { status: 'PENDING' } },
+    };
+  }
+
+  // POST /affiliate/login — the "Already a partner? Sign in" screen.
+  // body: { identifier (username | email | phone), password }
+  // Same credentials as the main site; the response adds the affiliate
+  // state so the portal can route: application PENDING/REJECTED, active
+  // affiliate, or NONE (registered player who never applied).
+  @Post('login')
+  async loginAffiliate(
+    @Body() body: any,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    const result = await this.authService.login(body);
+    const affiliate = await this.affiliateService.getMyAffiliateStatus(result.user.id);
+
+    res.cookie('accessToken', result.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    res.cookie('refreshToken', result.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000,
+    });
+    await this.authService.recordLoginEvent(
+      result.user.id,
+      'LOGIN',
+      req.ip,
+      (req.headers['x-device-fingerprint'] as string) || undefined,
+    );
+
+    return {
+      success: true,
+      code: 200,
+      message: 'Logged in successfully',
+      data: { ...result, affiliate },
+    };
+  }
+
+  // POST /affiliate/logout — revoke the partner's sessions + clear cookies.
+  // body: { refreshToken? } — falls back to the refreshToken cookie.
+  @Post('logout')
+  async logoutAffiliate(
+    @Body() body: any,
+    @Req() req: any,
+    @Res({ passthrough: true }) res: any,
+  ) {
+    const refreshToken = body?.refreshToken ?? req.cookies?.refreshToken;
+    const result = await this.authService.logout({ refreshToken });
+    res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
+    return { success: true, ...result };
+  }
+
+  // ─── Forgot password: same 3-step phone-OTP flow as the main site ───
+  //   (in non-production the OTP is logged to the server console instead
+  //   of sent by SMS; resetting revokes every existing session)
+
+  // Step 1 — POST /affiliate/forgot-password { phoneNumber }
+  //   Sends a 5-minute OTP to the account's primary phone (60s cooldown).
+  @Post('forgot-password')
+  async forgotPasswordAffiliate(@Body() body: any) {
+    const result = await this.authService.forgotPassword({
+      phone_number: body.phoneNumber ?? body.phone_number,
+    });
+    return { success: true, message: result.message };
+  }
+
+  // Step 2 — POST /affiliate/verify-reset-otp { phoneNumber, otp }
+  //   Returns the short-lived resetToken for step 3.
+  @Post('verify-reset-otp')
+  async verifyResetOtpAffiliate(@Body() body: any) {
+    const result = await this.authService.verifyResetOtp({
+      phone_number: body.phoneNumber ?? body.phone_number,
+      otp: body.otp,
+    });
+    return { success: true, message: result.message, resetToken: result.resetToken };
+  }
+
+  // Step 3 — POST /affiliate/reset-password { resetToken, newPassword }
+  //   NOTE: reset requires min 8 characters (signup allows 6) —
+  //   pre-existing rule shared with the main site's reset flow.
+  @Post('reset-password')
+  async resetPasswordAffiliate(@Body() body: any) {
+    const result = await this.authService.resetPassword({
+      resetToken: body.resetToken,
+      new_password: body.newPassword ?? body.new_password,
+    });
+    return { success: true, message: result.message };
+  }
 
   // ─────────────────────────────────────────────────────────────
   // USER ROUTES
@@ -78,14 +241,31 @@ export class AffiliateController {
   // ADMIN ROUTES
   // ─────────────────────────────────────────────────────────────
 
-  // GET /affiliate/admin/applications?page=1&limit=20
+  // GET /affiliate/admin/applications?page=1&limit=20&status=&q=&from=&to=
+  //   status: PENDING (default) | APPROVED | REJECTED | ALL — the tabs.
+  //   q matches username / email / full name / user code, or user id when
+  //   numeric; from/to filter applied_at (Pending approvals screen).
+  //   Decided rows carry decided_at / decided_by_name / rejection_reason.
   @UseGuards(AdminGuard)
   @Get('admin/applications')
   getPendingApplications(
     @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('status') status?: string,
+    @Query('q')    q?: string,
+    @Query('from') from?: string,
+    @Query('to')   to?: string,
   ) {
-    return this.affiliateService.getPendingApplications(page, limit);
+    const validStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'ALL'];
+    const safeStatus = validStatuses.includes(status?.toUpperCase() ?? '')
+      ? status!.toUpperCase()
+      : 'PENDING';
+    return this.affiliateService.getPendingApplications(page, limit, {
+      status: safeStatus,
+      q:    q?.trim() || undefined,
+      from: from || undefined,
+      to:   to || undefined,
+    });
   }
 
   // POST /affiliate/admin/applications/:id/decide
@@ -103,10 +283,68 @@ export class AffiliateController {
       action:           body.action,
       commissionPct:    body.commissionPct ? parseFloat(body.commissionPct) : 0,
       rejectionReason:  body.rejectionReason,
+      revshareRate:     body.revshareRate !== undefined ? parseFloat(body.revshareRate) : undefined,
+      groupId:          body.groupId !== undefined && body.groupId !== null && body.groupId !== ''
+                          ? parseInt(body.groupId) : undefined,
     });
   }
 
+  // POST /affiliate/admin/create — admin manually creates a brand-new
+  // affiliate: creates the user account AND the ACTIVE affiliate row in one
+  // step (no application/approval needed).
+  //   body: { username, fullName, phoneNumber, password, email?,
+  //           groupId?, revshareRate?, commissionPct?, remark? }
+  @UseGuards(AdminGuard)
+  @Post('admin/create')
+  async adminCreateAffiliate(@Req() req: any, @Body() body: any) {
+    if (!body.username?.trim())    throw new BadRequestException('username is required');
+    if (!body.phoneNumber && !body.phone_number)
+      throw new BadRequestException('phoneNumber is required');
+    if (!body.password)            throw new BadRequestException('password is required');
+
+    const groupId = body.groupId !== undefined && body.groupId !== null && body.groupId !== ''
+      ? parseInt(body.groupId) : undefined;
+    // Validate the group BEFORE creating the account so a bad groupId can't
+    // leave an orphan user with no affiliate row.
+    if (groupId !== undefined) await this.affiliateService.assertGroupExists(groupId);
+
+    // 1. Create the user account (uniqueness checks, wallet, referral code).
+    const created = await this.authService.register({
+      full_name:    body.fullName?.trim() || body.username,
+      username:     body.username,
+      phone_number: body.phoneNumber ?? body.phone_number,
+      email:        body.email?.trim() || null,
+      password:     body.password,
+    });
+
+    // 2. Turn them into an ACTIVE affiliate.
+    const affiliate = await this.affiliateService.adminCreateAffiliate({
+      userId:    Number(created.userId),
+      adminId:   req.user.sub,
+      groupId,
+      revshareRate:  body.revshareRate  !== undefined && body.revshareRate  !== '' ? parseFloat(body.revshareRate)  : undefined,
+      commissionPct: body.commissionPct !== undefined && body.commissionPct !== '' ? parseFloat(body.commissionPct) : undefined,
+      remark:    body.remark?.trim() || undefined,
+    });
+
+    return {
+      success: true,
+      message: 'Affiliate account created.',
+      user: {
+        userId:   Number(created.userId),
+        username: created.username,
+        userCode: created.userCode,
+      },
+      affiliate,
+    };
+  }
+
   // GET /affiliate/admin/list?page=1&limit=20&q=&code=&tier=&status=&from=&to=
+  //     &groupId=&applicationStatus=
+  //   q = username / email / full name, or user id when numeric.
+  //   groupId = affiliate group filter.
+  //   applicationStatus = APPROVED (default, real affiliates) | PENDING |
+  //   REJECTED (applicants) | ALL — the dropdown tabs.
   @UseGuards(AdminGuard)
   @Get('admin/list')
   getAllAffiliates(
@@ -118,7 +356,13 @@ export class AffiliateController {
     @Query('status') status?: string,
     @Query('from')   from?: string,
     @Query('to')     to?: string,
+    @Query('groupId') groupId?: string,
+    @Query('applicationStatus') applicationStatus?: string,
   ) {
+    const validAppStatuses = ['PENDING', 'APPROVED', 'REJECTED', 'ALL'];
+    const safeAppStatus = validAppStatuses.includes(applicationStatus?.toUpperCase() ?? '')
+      ? applicationStatus!.toUpperCase()
+      : 'APPROVED';
     return this.affiliateService.getAllAffiliates(page, limit, {
       q:      q?.trim() || undefined,
       code:   code?.trim() || undefined,
@@ -126,6 +370,9 @@ export class AffiliateController {
       status: status === 'active' || status === 'inactive' ? status : undefined,
       from:   from || undefined,
       to:     to || undefined,
+      groupId: groupId !== undefined && groupId !== '' && !isNaN(Number(groupId))
+        ? Number(groupId) : undefined,
+      applicationStatus: safeAppStatus,
     });
   }
 
@@ -277,5 +524,375 @@ getDownlineUser(
   @Get('admin/:userId/detail')
   affiliateDetail(@Param('userId', ParseIntPipe) userId: number) {
     return this.revshare.getAffiliateDetail(userId);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // WEEKLY COMMISSION — affiliate-facing (Figma user panel)
+  // ─────────────────────────────────────────────────────────────
+
+  // GET /affiliate/me/dashboard — the partners-portal "Overview" screen with
+  // ALL-TIME totals: balance, member list, active players, lifetime deposits +
+  // wagered, earnings (available + pending review), lifetime earnings,
+  // commission rate and the affiliate link/code.
+  //   (`me/overview` is the legacy monthly-NGR view; this is the new one.)
+  @UseGuards(JwtAuthGuard)
+  @Get('me/dashboard')
+  dashboard(@Req() req: any) {
+    return this.weekly.getMyOverview(req.user.sub);
+  }
+
+  // GET /affiliate/me/weekly/overview — the CURRENT-CYCLE view: members,
+  // active players, THIS week's deposits/withdrawals, projected commission,
+  // balance, lifetime. (Use me/overview for all-time totals.)
+  @UseGuards(JwtAuthGuard)
+  @Get('me/weekly/overview')
+  weeklyOverview(@Req() req: any) {
+    return this.weekly.getWeeklyOverview(req.user.sub);
+  }
+
+  // GET /affiliate/me/weekly/history?page&limit — settled Friday weeks
+  @UseGuards(JwtAuthGuard)
+  @Get('me/weekly/history')
+  weeklyHistory(
+    @Req() req: any,
+    @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.weekly.getMyWeeklyHistory(req.user.sub, page, limit);
+  }
+
+  // GET /affiliate/me/players/report?from&to&q&page&limit
+  //   Per downline player: deposits, withdrawals, profit/loss, category
+  //   (ACTIVE / NO_BONUS / INACTIVE). Defaults to the current week.
+  @UseGuards(JwtAuthGuard)
+  @Get('me/players/report')
+  myPlayerReport(
+    @Req() req: any,
+    @Query('from')  from?: string,
+    @Query('to')    to?: string,
+    @Query('q')     q?: string,
+    @Query('page')  page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.weekly.getMyPlayerReport(req.user.sub, {
+      from, to, q,
+      page:  page  ? parseInt(page)  : undefined,
+      limit: limit ? parseInt(limit) : undefined,
+    });
+  }
+
+  // GET /affiliate/me/players/activity?q&page&limit
+  //   "Recent player activity" table: one row per referred player with
+  //   ALL-TIME deposits + wagered and a deposited/active status, newest
+  //   joined first. (country is always null — not captured yet.)
+  @UseGuards(JwtAuthGuard)
+  @Get('me/players/activity')
+  myPlayerActivity(
+    @Req() req: any,
+    @Query('q')     q?: string,
+    @Query('page')  page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.weekly.getRecentPlayerActivity(req.user.sub, {
+      q,
+      page:  page  ? parseInt(page)  : undefined,
+      limit: limit ? parseInt(limit) : undefined,
+    });
+  }
+
+  // GET /affiliate/me/commission-ledger?page&limit — balance statement
+  //   (the affiliate's own "transaction history" — includes admin credits/debits)
+  @UseGuards(JwtAuthGuard)
+  @Get('me/commission-ledger')
+  myCommissionLedger(
+    @Req() req: any,
+    @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.weekly.getMyCommissionLedger(req.user.sub, page, limit);
+  }
+
+  // GET /affiliate/admin/:userId/commission-ledger?page&limit
+  //   Admin view of an affiliate's commission-balance transaction history
+  //   (weekly commission, transfers, admin adjustments) + current balances.
+  @UseGuards(AdminGuard)
+  @Get('admin/:userId/commission-ledger')
+  adminCommissionLedger(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.weekly.getCommissionLedgerForUser(userId, page, limit);
+  }
+
+  // POST /affiliate/admin/:userId/commission-adjust
+  //   body: { amount (signed: + credit, - debit), description? }
+  //   Credits/debits the affiliate's commission balance; the entry shows in
+  //   both this admin ledger and the affiliate's own commission history.
+  @UseGuards(AdminGuard)
+  @Post('admin/:userId/commission-adjust')
+  adminAdjustCommission(
+    @Req() req: any,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body() body: any,
+  ) {
+    return this.weekly.adminAdjustCommission(userId, {
+      amount: Number(body.amount),
+      description: body.description,
+      adminId: req.user.sub,
+    });
+  }
+
+  // GET /affiliate/me/profile — user-panel Profile page
+  @UseGuards(JwtAuthGuard)
+  @Get('me/profile')
+  myProfile(@Req() req: any) {
+    return this.affiliateAdmin.getMyProfile(req.user.sub);
+  }
+
+  // GET /affiliate/me/verification — KYC status (affiliates are users, so
+  // submission itself uses the existing POST /verification/submit).
+  @UseGuards(JwtAuthGuard)
+  @Get('me/verification')
+  myVerification(@Req() req: any) {
+    return this.verification.getMyVerification(req.user.sub);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // TRANSFERS — affiliate-facing
+  // ─────────────────────────────────────────────────────────────
+
+  // POST /affiliate/me/transfers  body: { recipient, amount, note? }
+  //   recipient = user code / username / numeric user id
+  @UseGuards(JwtAuthGuard)
+  @Post('me/transfers')
+  requestTransfer(@Req() req: any, @Body() body: any) {
+    return this.transfers.requestTransfer(req.user.sub, {
+      recipient: body.recipient ?? body.recipientId ?? body.userId,
+      amount:    parseFloat(body.amount),
+      note:      body.note,
+    });
+  }
+
+  // GET /affiliate/me/transfers?status&page&limit
+  @UseGuards(JwtAuthGuard)
+  @Get('me/transfers')
+  myTransfers(
+    @Req() req: any,
+    @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('status') status?: string,
+  ) {
+    return this.transfers.getMyTransfers(req.user.sub, page, limit, status);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // WEEKLY COMMISSION — admin
+  // ─────────────────────────────────────────────────────────────
+
+  // POST /affiliate/admin/weekly/run  body: { weekStart?: 'YYYY-MM-DD' (a Friday) }
+  //   Defaults to the last completed Friday→Friday week.
+  @UseGuards(AdminGuard)
+  @Post('admin/weekly/run')
+  runWeekly(@Body() body: any) {
+    return this.weekly.runWeekly(body?.weekStart);
+  }
+
+  // GET /affiliate/admin/:userId/weekly?page&limit — weekly history
+  @UseGuards(AdminGuard)
+  @Get('admin/:userId/weekly')
+  adminWeeklyHistory(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.weekly.getWeeklyHistoryForUser(userId, page, limit);
+  }
+
+  // GET /affiliate/admin/:userId/players/report?from&to&q&page&limit
+  @UseGuards(AdminGuard)
+  @Get('admin/:userId/players/report')
+  adminPlayerReport(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query('from')  from?: string,
+    @Query('to')    to?: string,
+    @Query('q')     q?: string,
+    @Query('page')  page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.weekly.getPlayerReportForUser(userId, {
+      from, to, q,
+      page:  page  ? parseInt(page)  : undefined,
+      limit: limit ? parseInt(limit) : undefined,
+    });
+  }
+
+  // GET /affiliate/admin/:userId/players/activity?q&page&limit
+  //   Admin view of an affiliate's DOWNLINE players — one row per referred
+  //   player with all-time deposits + wagered and a deposited/active status,
+  //   newest joined first. Same data the affiliate sees on me/players/activity.
+  @UseGuards(AdminGuard)
+  @Get('admin/:userId/players/activity')
+  adminPlayerActivity(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query('q')     q?: string,
+    @Query('page')  page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.weekly.getRecentPlayerActivityForAdmin(userId, {
+      q,
+      page:  page  ? parseInt(page)  : undefined,
+      limit: limit ? parseInt(limit) : undefined,
+    });
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // GROUPS — admin
+  // ─────────────────────────────────────────────────────────────
+
+  // GET /affiliate/admin/groups — cards with affiliates/players/deposits stats
+  @UseGuards(AdminGuard)
+  @Get('admin/groups')
+  listGroups() {
+    return this.affiliateAdmin.listGroups();
+  }
+
+  // POST /affiliate/admin/groups  body: { name, revSharePct, minActivePlayers?, maxActivePlayers? }
+  @UseGuards(AdminGuard)
+  @Post('admin/groups')
+  createGroup(@Req() req: any, @Body() body: any) {
+    return this.affiliateAdmin.createGroup(
+      {
+        name:             body.name,
+        revSharePct:      body.revSharePct !== undefined ? parseFloat(body.revSharePct) : undefined as any,
+        minActivePlayers: body.minActivePlayers !== undefined && body.minActivePlayers !== '' ? parseInt(body.minActivePlayers) : undefined,
+        maxActivePlayers: body.maxActivePlayers !== undefined && body.maxActivePlayers !== null && body.maxActivePlayers !== ''
+                            ? parseInt(body.maxActivePlayers) : null,
+      },
+      req.user.sub,
+    );
+  }
+
+  // PATCH /affiliate/admin/groups/:id
+  @UseGuards(AdminGuard)
+  @Patch('admin/groups/:id')
+  updateGroup(@Param('id', ParseIntPipe) id: number, @Body() body: any) {
+    return this.affiliateAdmin.updateGroup(id, {
+      name:             body.name,
+      revSharePct:      body.revSharePct !== undefined ? parseFloat(body.revSharePct) : undefined,
+      minActivePlayers: body.minActivePlayers !== undefined ? parseInt(body.minActivePlayers) : undefined,
+      maxActivePlayers: body.maxActivePlayers === undefined ? undefined
+                          : (body.maxActivePlayers === null || body.maxActivePlayers === '' ? null : parseInt(body.maxActivePlayers)),
+      isActive:         body.isActive,
+    });
+  }
+
+  // DELETE /affiliate/admin/groups/:id
+  @UseGuards(AdminGuard)
+  @Delete('admin/groups/:id')
+  deleteGroup(@Param('id', ParseIntPipe) id: number) {
+    return this.affiliateAdmin.deleteGroup(id);
+  }
+
+  // PATCH /affiliate/admin/:userId/group  body: { groupId: number | null }
+  @UseGuards(AdminGuard)
+  @Patch('admin/:userId/group')
+  assignGroup(@Param('userId', ParseIntPipe) userId: number, @Body() body: any) {
+    return this.affiliateAdmin.assignGroup(
+      userId,
+      body.groupId === null || body.groupId === undefined || body.groupId === ''
+        ? null : parseInt(body.groupId),
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // TRANSFERS — admin
+  // ─────────────────────────────────────────────────────────────
+
+  // GET /affiliate/admin/transfers?status&q&from&to&page&limit
+  @UseGuards(AdminGuard)
+  @Get('admin/transfers')
+  adminTransfers(
+    @Query('status') status?: string,
+    @Query('q')      q?: string,
+    @Query('from')   from?: string,
+    @Query('to')     to?: string,
+    @Query('page')   page?: string,
+    @Query('limit')  limit?: string,
+  ) {
+    return this.transfers.adminListTransfers({
+      status, q, from, to,
+      page:  page  ? parseInt(page)  : undefined,
+      limit: limit ? parseInt(limit) : undefined,
+    });
+  }
+
+  // POST /affiliate/admin/transfers/:id/decide  body: { action: 'APPROVE'|'REJECT', rejectionReason? }
+  @UseGuards(AdminGuard)
+  @Post('admin/transfers/:id/decide')
+  decideTransfer(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: any,
+  ) {
+    return this.transfers.decideTransfer(id, req.user.sub, body.action, body.rejectionReason);
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // KYC — admin (affiliate-scoped view over user_verifications)
+  // ─────────────────────────────────────────────────────────────
+
+  // GET /affiliate/admin/verifications?status&page&limit
+  @UseGuards(AdminGuard)
+  @Get('admin/verifications')
+  affiliateVerifications(
+    @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    @Query('status') status?: string,
+  ) {
+    return this.affiliateAdmin.listAffiliateVerifications(page, limit, status);
+  }
+
+  // POST /affiliate/admin/verifications/:id/decide  body: { action, rejectionReason? }
+  @UseGuards(AdminGuard)
+  @Post('admin/verifications/:id/decide')
+  decideVerification(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() body: any,
+  ) {
+    return this.affiliateAdmin.decideAffiliateVerification(
+      id, req.user.sub, body.action, body.rejectionReason,
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────
+  // ACCOUNT MANAGEMENT — admin detail page
+  // ─────────────────────────────────────────────────────────────
+
+  // PATCH /affiliate/admin/:userId/status  body: { status: ACTIVE|INACTIVE|SUSPENDED|LOCKED, remark? }
+  @UseGuards(AdminGuard)
+  @Patch('admin/:userId/status')
+  updateAffiliateStatus(@Param('userId', ParseIntPipe) userId: number, @Body() body: any) {
+    return this.affiliateAdmin.updateStatus(userId, body.status, body.remark);
+  }
+
+  // PATCH /affiliate/admin/:userId/contact  body: { fullName?, email?, phone?, remark? }
+  @UseGuards(AdminGuard)
+  @Patch('admin/:userId/contact')
+  updateAffiliateContact(@Param('userId', ParseIntPipe) userId: number, @Body() body: any) {
+    return this.affiliateAdmin.updateContact(userId, {
+      fullName: body.fullName ?? body.name,
+      email:    body.email,
+      phone:    body.phone,
+      remark:   body.remark,
+    });
+  }
+
+  // POST /affiliate/admin/:userId/password  body: { newPassword }
+  @UseGuards(AdminGuard)
+  @Post('admin/:userId/password')
+  changeAffiliatePassword(@Param('userId', ParseIntPipe) userId: number, @Body() body: any) {
+    return this.affiliateAdmin.changePassword(userId, body.newPassword);
   }
 }

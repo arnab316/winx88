@@ -543,7 +543,7 @@ export class UserService {
     );
     if (!user.length) throw new NotFoundException('User not found');
 
-    const [wallet, phones, coins] = await Promise.all([
+    const [wallet, phones, coins, affiliate] = await Promise.all([
       this.dataSource.query(
         `SELECT balance, bonus_balance, locked_balance,
                 total_deposited, total_withdrawn, total_bet, total_win
@@ -559,6 +559,18 @@ export class UserService {
         `SELECT total_coins, lifetime_coins FROM user_coins WHERE user_id = $1`,
         [userId],
       ),
+      // Which AFFILIATE this user sits under (referrals = affiliate downline,
+      // NOT the refer-a-friend system). Null when unattributed. The edit form
+      // pre-fills its "Affiliate Code" input from affiliate_code.
+      this.dataSource.query(
+        `SELECT ru.id AS affiliate_user_id, ru.user_code AS affiliate_code,
+                ru.username AS affiliate_username
+           FROM referrals r
+           JOIN users ru ON ru.id = r.referrer_user_id
+          WHERE r.referee_user_id = $1
+          LIMIT 1`,
+        [userId],
+      ),
     ]);
 
     return {
@@ -566,7 +578,51 @@ export class UserService {
       wallet:  wallet[0]  ?? null,
       phones,
       coins:   coins[0]   ?? null,
+      // The affiliate the user is a downline of (null if none).
+      affiliate_code: affiliate[0]?.affiliate_code ?? null,
+      affiliate: affiliate[0]
+        ? {
+            userId: Number(affiliate[0].affiliate_user_id),
+            userCode: affiliate[0].affiliate_code,
+            username: affiliate[0].affiliate_username,
+          }
+        : null,
     };
+  }
+
+  // Place a user under an affiliate's downline by the affiliate's user_code
+  // (the "Affiliate Code" input on the admin user-edit form). Writes only the
+  // `referrals` table (affiliate downline) — never touches friend_referrals /
+  // referred_by_user_id (the separate refer-a-friend system).
+  //   - non-empty code → set / reassign (one affiliate per user, upsert)
+  //   - empty string   → remove the attribution
+  private async setUserAffiliateByCode(userId: number, affiliateCode: string) {
+    const code = affiliateCode.trim();
+    if (!code) {
+      await this.dataSource.query(
+        `DELETE FROM referrals WHERE referee_user_id = $1`,
+        [userId],
+      );
+      return;
+    }
+    const rows = await this.dataSource.query(
+      `SELECT au.user_id, u.username, u.user_code
+         FROM affiliate_users au
+         JOIN users u ON u.id = au.user_id
+        WHERE u.user_code = $1 AND au.is_active = true AND u.id <> $2
+        LIMIT 1`,
+      [code, userId],
+    );
+    if (!rows.length) {
+      throw new BadRequestException(`No active affiliate found with code "${code}"`);
+    }
+    await this.dataSource.query(
+      `INSERT INTO referrals (referrer_user_id, referee_user_id)
+       VALUES ($1, $2)
+       ON CONFLICT (referee_user_id)
+         DO UPDATE SET referrer_user_id = EXCLUDED.referrer_user_id`,
+      [Number(rows[0].user_id), userId],
+    );
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -695,8 +751,9 @@ export class UserService {
     username?:       string;
     dob?:            string;
     vip_level?:      number;
-    account_status?: 'ACTIVE' | 'BLOCKED' | 'SUSPENDED';
+    account_status?: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED' | 'LOCKED' | 'BLOCKED';
     password?:       string;   // plain text — will be hashed
+    affiliateCode?:  string;   // affiliate's user_code → puts user in their downline ('' = remove)
   }) {
     const existing = await this.dataSource.query(
       `SELECT id FROM users WHERE id = $1`, [userId],
@@ -743,7 +800,10 @@ export class UserService {
       values.push(dto.vip_level);
     }
     if (dto.account_status !== undefined) {
-      const valid = ['ACTIVE', 'BLOCKED', 'SUSPENDED'];
+      // BLOCKED is legacy (kept valid for old rows); the admin UI offers
+      // ACTIVE / INACTIVE / SUSPENDED / LOCKED. Any non-ACTIVE value blocks
+      // login and money movement with "Account is <STATUS>".
+      const valid = ['ACTIVE', 'INACTIVE', 'SUSPENDED', 'LOCKED', 'BLOCKED'];
       if (!valid.includes(dto.account_status)) {
         throw new BadRequestException(`account_status must be one of: ${valid.join(', ')}`);
       }
@@ -759,17 +819,26 @@ export class UserService {
       values.push(hashed);
     }
 
-    if (!fields.length) throw new BadRequestException('No fields to update');
+    // Affiliate attribution is a valid edit on its own (no users-table field
+    // needs to change), so it counts toward "something to update".
+    if (!fields.length && dto.affiliateCode === undefined)
+      throw new BadRequestException('No fields to update');
 
-    fields.push(`updated_at = NOW()`);
-    values.push(userId);
+    if (fields.length) {
+      fields.push(`updated_at = NOW()`);
+      values.push(userId);
+      await this.dataSource.query(
+        `UPDATE users SET ${fields.join(', ')} WHERE id = $${i}`,
+        values,
+      );
+    }
 
-    await this.dataSource.query(
-      `UPDATE users SET ${fields.join(', ')} WHERE id = $${i}`,
-      values,
-    );
+    // "Affiliate Code" input → place the user under that affiliate's downline.
+    if (dto.affiliateCode !== undefined) {
+      await this.setUserAffiliateByCode(userId, dto.affiliateCode);
+    }
 
-    // Return updated user (no password)
+    // Return updated user (no password) — includes the current affiliate.
     return this.getUserDetailsByAdmin(userId);
   }
 

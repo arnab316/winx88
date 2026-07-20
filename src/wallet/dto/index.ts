@@ -109,3 +109,20 @@ export interface DepositListQuery {
   page?:       number;
   limit?:      number;
 }
+
+// Mirrors DepositListQuery — same admin search panel on the Withdraw page.
+export interface WithdrawalListQuery {
+  status?:     'PENDING' | 'APPROVED' | 'REJECTED' | 'ALL';
+  search?:     string;    // matches username, full_name, withdrawal_code, receive_number
+  gatewayId?:  number;
+  userId?:     number;    // filter to one user's withdrawals
+  dateFrom?:   string;    // ISO date e.g. "2026-05-01"
+  dateTo?:     string;    // ISO date e.g. "2026-05-10"
+  memberGroup?: string;   // VIP tier name (vip_level_config group_name / level_name)
+  memberId?:   string;    // users.user_code (partial match)
+  phone?:      string;    // receive_number OR any saved player number; +880/880/0 forms match
+  trxId?:      string;    // withdrawal_code (partial match) — the "TRX ID" column
+  wdId?:       string;    // display withdrawal id, e.g. "WD00212" (digits → withdrawals.id)
+  page?:       number;
+  limit?:      number;
+}

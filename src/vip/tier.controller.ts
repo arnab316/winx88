@@ -11,6 +11,7 @@ import {
   Put,
   Body,
   Param,
+  Req,
   UseGuards,
   ParseIntPipe,
   UsePipes,
@@ -18,7 +19,14 @@ import {
 } from '@nestjs/common';
 import { VipService } from './vip.service';
 import { AdminGuard } from '../common/guards/admin.guard';
-import { UpdateTierLimitsDto, CreateMemberGroupDto, UpdateMemberGroupDto, SetTierBanksDto } from './dto/vip.dto';
+import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import {
+  UpdateTierLimitsDto,
+  CreateMemberGroupDto,
+  UpdateMemberGroupDto,
+  SetTierBanksDto,
+  UpdateBankingTogglesDto,
+} from './dto/vip.dto';
 
 @Controller('tiers')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
@@ -95,5 +103,34 @@ export class TierController {
   @Post('admin/:level/set-default')
   setDefault(@Param('level', ParseIntPipe) level: number) {
     return this.vipService.setDefaultTier(level);
+  }
+
+  // ─── Banking toggles: 2 master + deposit/withdrawal per channel ──
+
+  // GET /tiers/admin/:level/banking — the tier's 10 toggle states
+  @UseGuards(AdminGuard)
+  @Get('admin/:level/banking')
+  getBankingToggles(@Param('level', ParseIntPipe) level: number) {
+    return this.vipService.getBankingToggles(level);
+  }
+
+  // PATCH /tiers/admin/:level/banking
+  //   body: { depositEnabled?, withdrawalEnabled?,
+  //           channels?: [{ channel, depositEnabled?, withdrawalEnabled? }] }
+  @UseGuards(AdminGuard)
+  @Patch('admin/:level/banking')
+  updateBankingToggles(
+    @Param('level', ParseIntPipe) level: number,
+    @Body() dto: UpdateBankingTogglesDto,
+  ) {
+    return this.vipService.updateBankingToggles(level, dto);
+  }
+
+  // GET /tiers/me/banking — effective toggles for the logged-in player
+  // (deposit/withdraw pages use this to hide disabled methods).
+  @UseGuards(JwtAuthGuard)
+  @Get('me/banking')
+  myBankingToggles(@Req() req: any) {
+    return this.vipService.getMyBankingToggles(req.user.sub);
   }
 }

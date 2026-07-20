@@ -520,7 +520,7 @@ export class UserController {
   //   Currency and Affiliate are intentionally excluded.
   //     memberGroupId  → MEMBER GROUP = VIP tier (vip_level_config.level); alias: vipLevel
   //     memberId       → MEMBER ID (user_code)
-  //     status         → USER STATUS (ACTIVE | BLOCKED | SUSPENDED)
+  //     status         → USER STATUS (ACTIVE | INACTIVE | SUSPENDED | LOCKED | BLOCKED-legacy)
   //     q              → USER ID / USERNAME
   //     name           → NAME (full_name)
   //     contactNumber  → CONTACT NUMBER (national part, no +880)
@@ -656,7 +656,7 @@ export class UserController {
   // body: { full_name?, email?, username?, dob?,
   //         vip_level?, account_status?, password? }
   // Password is plain text — service hashes before saving.
-  // account_status: 'ACTIVE' | 'BLOCKED' | 'SUSPENDED'
+  // account_status: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED' | 'LOCKED' ('BLOCKED' legacy)
   @UseGuards(AdminGuard)
   @Patch('admin/:userId')
   async adminEditUser(
@@ -668,8 +668,11 @@ export class UserController {
       username?:       string;
       dob?:            string;
       vip_level?:      number;
-      account_status?: 'ACTIVE' | 'BLOCKED' | 'SUSPENDED';
+      account_status?: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED' | 'LOCKED' | 'BLOCKED';
       password?:       string;
+      // Affiliate's user_code — places this user under that affiliate's
+      // downline. '' removes the attribution. (referrals table only.)
+      affiliateCode?:  string;
     },
   ) {
     // Never log the password — log other field names only

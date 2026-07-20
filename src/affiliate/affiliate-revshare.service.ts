@@ -387,9 +387,18 @@ export class AffiliateRevShareService {
       `SELECT au.id, au.user_id, au.is_active, au.commission_pct,
               au.revshare_tier, au.revshare_rate, au.payment_method, au.payment_details,
               au.approved_at,
+              au.status AS aff_status, au.remark, au.group_id,
+              au.commission_balance, au.lifetime_commission,
+              g.name AS group_name, g.rev_share_pct AS group_rate,
+              p.phone_number,
               u.username, u.full_name, u.email, u.user_code, u.referral_code, u.account_status
          FROM affiliate_users au
          JOIN users u ON u.id = au.user_id
+         LEFT JOIN affiliate_groups g ON g.id = au.group_id
+         LEFT JOIN LATERAL (
+           SELECT phone_number FROM user_phone_numbers
+            WHERE user_id = u.id ORDER BY is_primary DESC, id ASC LIMIT 1
+         ) p ON TRUE
         WHERE au.user_id = $1
         LIMIT 1`,
       [userId],
@@ -440,8 +449,15 @@ export class AffiliateRevShareService {
         userCode: af.user_code,
         referralCode: af.referral_code,
         accountStatus: af.account_status,
+        phone: af.phone_number ?? null,
         isActive: af.is_active,
-        status: af.is_active ? 'active' : 'suspended',
+        status: (af.aff_status ?? (af.is_active ? 'ACTIVE' : 'INACTIVE')).toLowerCase(),
+        remark: af.remark ?? null,
+        group: af.group_id != null
+          ? { id: Number(af.group_id), name: af.group_name, revSharePct: parseFloat(af.group_rate) }
+          : null,
+        commissionBalance: parseFloat(af.commission_balance ?? '0'),
+        lifetimeCommission: parseFloat(af.lifetime_commission ?? '0'),
         tier: af.revshare_tier ?? live.tier,
         revshareRate: customRate ?? live.rate,
         commissionPct: af.commission_pct != null ? parseFloat(af.commission_pct) : 0,
@@ -528,15 +544,20 @@ export class AffiliateRevShareService {
   // GET /affiliate/me/link — tracking link / referral code
   async getMyLink(userId: number) {
     const rows = await this.dataSource.query(
-      `SELECT referral_code, user_code FROM users WHERE id = $1`,
+      `SELECT user_code FROM users WHERE id = $1`,
       [userId],
     );
     if (!rows.length) throw new NotFoundException('User not found');
-    const code = rows[0].referral_code ?? rows[0].user_code;
-    const base = process.env.PUBLIC_SITE_URL ?? 'https://winx88.example';
+    // AFFILIATE attribution is keyed by user_code (attachAffiliateOnSignup
+    // matches u.user_code) — NOT referral_code, which belongs to the separate
+    // refer-a-friend system (?ref=). The link lands directly on the register
+    // page carrying ?affiliateCode=, which the signup form forwards in the
+    // register body.
+    const code = rows[0].user_code;
+    const base = process.env.PUBLIC_SITE_URL ?? process.env.APP_BASE_URL ?? 'https://winx-88.com';
     return {
-      referralCode: code,
-      trackingLink: `${base}/r/${code}`,
+      affiliateCode: code,
+      trackingLink: `${base}/register?affiliateCode=${encodeURIComponent(code)}`,
     };
   }
 }

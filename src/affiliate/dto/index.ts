@@ -11,6 +11,8 @@ export interface DecideApplicationDto {
   commissionPct?:   number;
   /** Optional RevShare % override applied on approval (else auto-tiered monthly). */
   revshareRate?:    number;
+  /** Optional affiliate group assigned on approval ("Assign group & approve"). */
+  groupId?:         number;
 }
 
 export interface UpdateCommissionDto {

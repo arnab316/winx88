@@ -231,15 +231,22 @@ export class ScheduleService {
   //   schedule-aware) and a game:unlisted WS event is emitted.
   //   When RESUMING, emits game:listed; the scheduler spawns the next round.
   async toggleSchedule(gameId: number, closeOpenRound = true) {
-    const result = await this.dataSource.query(
+    // Toggling always clears any pending graceful pause: resuming obviously
+    // cancels it, and a hard pause supersedes it.
+    // NOTE: dataSource.query returns [rows, affectedCount] for
+    // UPDATE…RETURNING — destructure, or `result[0]` is the rows ARRAY
+    // (which made is_active read undefined: the message was always
+    // "paused", the pause branch never force-closed, and game:listed was
+    // emitted on every toggle regardless of direction).
+    const [rows] = await this.dataSource.query(
       `UPDATE game_schedules
-       SET is_active = NOT is_active, updated_at = NOW()
+       SET is_active = NOT is_active, pause_after_round = FALSE, updated_at = NOW()
        WHERE game_id = $1
        RETURNING *`,
       [gameId],
     );
-    if (!result.length) throw new NotFoundException('No schedule found for this game');
-    const sched = result[0];
+    if (!rows.length) throw new NotFoundException('No schedule found for this game');
+    const sched = rows[0];
 
     if (sched.is_active === false) {
       // Paused.
@@ -271,6 +278,84 @@ export class ScheduleService {
     }
 
     return sched;
+  }
+
+  // POST /games/admin/:gameId/schedule/pause-after-round
+  //   GRACEFUL pause: the running round finishes normally (players keep
+  //   betting until its close_time, the game stays in the lobby), no new
+  //   rounds spawn, and once no OPEN round remains the RoundWatcher flips
+  //   the schedule to paused and unlists the game.
+  //   body { cancel: true } withdraws a pending graceful pause.
+  async pauseAfterRound(gameId: number, cancel = false) {
+    const scheds = await this.dataSource.query(
+      `SELECT id, is_active, pause_after_round FROM game_schedules WHERE game_id = $1`,
+      [gameId],
+    );
+    if (!scheds.length) throw new NotFoundException('No schedule found for this game');
+    const sched = scheds[0];
+
+    if (cancel) {
+      await this.dataSource.query(
+        `UPDATE game_schedules SET pause_after_round = FALSE, updated_at = NOW()
+         WHERE game_id = $1`,
+        [gameId],
+      );
+      return {
+        message: sched.pause_after_round
+          ? 'Pending pause cancelled — the schedule keeps running.'
+          : 'No pending pause to cancel.',
+        pauseAfterRound: false,
+        isActive: sched.is_active,
+      };
+    }
+
+    if (!sched.is_active) {
+      return {
+        message: 'Schedule is already paused.',
+        pauseAfterRound: false,
+        isActive: false,
+      };
+    }
+
+    const openRounds = await this.dataSource.query(
+      `SELECT id, round_code, close_time FROM game_rounds
+        WHERE game_id = $1 AND status = 'OPEN'
+        ORDER BY close_time ASC`,
+      [gameId],
+    );
+
+    if (!openRounds.length) {
+      // Nothing running — pause right now (identical to a hard pause with
+      // nothing to close).
+      await this.dataSource.query(
+        `UPDATE game_schedules
+            SET is_active = FALSE, pause_after_round = FALSE, updated_at = NOW()
+          WHERE game_id = $1`,
+        [gameId],
+      );
+      this.gateway.emitGameUnlisted({ gameId });
+      return {
+        message: 'No round running — schedule paused immediately.',
+        pauseAfterRound: false,
+        isActive: false,
+      };
+    }
+
+    await this.dataSource.query(
+      `UPDATE game_schedules SET pause_after_round = TRUE, updated_at = NOW()
+       WHERE game_id = $1`,
+      [gameId],
+    );
+    return {
+      message: `Will pause after the current round closes (${openRounds[0].round_code}).`,
+      pauseAfterRound: true,
+      isActive: true,
+      currentRound: {
+        id: Number(openRounds[0].id),
+        roundCode: openRounds[0].round_code,
+        closeTime: openRounds[0].close_time,
+      },
+    };
   }
 
   // ══════════════════════════════════════════════════════════

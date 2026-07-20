@@ -39,7 +39,7 @@ import { ReportsModule } from './reports/reports.module';
 import { AnnouncementModule } from './announcement/announcement.module';
 import { SportsModule } from './sports/sports.module';
 import { CatalogModule } from './catalog/catalog.module';
-import { WinypayModule } from './winypay/winypay.module';
+import { RbacModule } from './rbac/rbac.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -95,7 +95,7 @@ import { WinypayModule } from './winypay/winypay.module';
   AnnouncementModule,
   SportsModule,
   CatalogModule,
-  WinypayModule,
+  RbacModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],

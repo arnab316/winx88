@@ -316,15 +316,62 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
   // ADMIN: list all pending applications
   // ─────────────────────────────────────────────────────────────
 
-  async getPendingApplications(page = 1, limit = 20) {
+  async getPendingApplications(
+    page = 1,
+    limit = 20,
+    filters: { q?: string; from?: string; to?: string; status?: string } = {},
+  ) {
     const offset = (page - 1) * limit;
+
+    // Status tab: PENDING (default — the approval queue), APPROVED,
+    // REJECTED, or ALL.
+    const status = (filters.status ?? 'PENDING').toUpperCase();
+
+    // Search matches username / email / full name / user code, or — when the
+    // term is purely numeric — the user id itself ("USERNAME / USER ID" box).
+    const where: string[] = [];
+    if (status !== 'ALL') where.push(`aa.status = '${status === 'APPROVED' ? 'APPROVED' : status === 'REJECTED' ? 'REJECTED' : 'PENDING'}'`);
+    const params: any[] = [];
+    let i = 1;
+    if (filters.q) {
+      const idClause = /^\d+$/.test(filters.q.trim())
+        ? ` OR aa.user_id = ${Number(filters.q.trim())}`
+        : '';
+      where.push(
+        `(u.username ILIKE $${i} OR u.email ILIKE $${i} OR u.full_name ILIKE $${i} OR u.user_code ILIKE $${i}${idClause})`,
+      );
+      params.push(`%${filters.q}%`);
+      i++;
+    }
+    if (filters.from) {
+      where.push(`aa.applied_at >= $${i}::timestamptz`);
+      params.push(filters.from);
+      i++;
+    }
+    if (filters.to) {
+      // inclusive end-of-day for a YYYY-MM-DD bound
+      where.push(`aa.applied_at < ($${i}::date + INTERVAL '1 day')`);
+      params.push(filters.to);
+      i++;
+    }
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    // The pending queue reads oldest-first (approval order); decided/ALL
+    // views read newest-first — same convention as the deposit lists.
+    const order = status === 'PENDING' ? 'ASC' : 'DESC';
+
     const [rows, count] = await Promise.all([
       this.dataSource.query(
         `SELECT
            aa.id,
            aa.user_id,
+           aa.status,
            aa.notes,
            aa.applied_at,
+           aa.decided_at,
+           aa.rejection_reason,
+           adm.name  AS decided_by_name,
+           adm.email AS decided_by_email,
            u.full_name,
            u.username,
            u.email,
@@ -332,20 +379,30 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
            u.vip_level,
            u.created_at AS user_joined_at,
            w.total_deposited,
-           w.balance
+           w.balance,
+           p.phone_number
          FROM affiliate_applications aa
          JOIN users   u ON u.id = aa.user_id
          JOIN wallets w ON w.user_id = aa.user_id
-         WHERE aa.status = 'PENDING'
-         ORDER BY aa.applied_at ASC
-         LIMIT $1 OFFSET $2`,
-        [limit, offset],
+         LEFT JOIN admin_users adm ON adm.id = aa.decided_by_admin_id
+         LEFT JOIN LATERAL (
+           SELECT phone_number FROM user_phone_numbers
+            WHERE user_id = u.id ORDER BY is_primary DESC, id ASC LIMIT 1
+         ) p ON TRUE
+         ${whereSql}
+         ORDER BY aa.applied_at ${order}
+         LIMIT $${i} OFFSET $${i + 1}`,
+        [...params, limit, offset],
       ),
       this.dataSource.query(
-        `SELECT COUNT(*) AS total FROM affiliate_applications WHERE status = 'PENDING'`,
+        `SELECT COUNT(*) AS total
+           FROM affiliate_applications aa
+           JOIN users u ON u.id = aa.user_id
+           ${whereSql}`,
+        params,
       ),
     ]);
-    return { data: rows, total: parseInt(count[0].total), page, limit };
+    return { status, data: rows, total: parseInt(count[0].total), page, limit };
   }
 
   // ─────────────────────────────────────────────────────────────
@@ -378,21 +435,31 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
           [dto.adminId, dto.applicationId],
         );
 
-        // 2. Insert into affiliate_users. RevShare tier/rate is normally
-        //    auto-derived monthly by active-player count; an optional
-        //    revshareRate here sets a per-affiliate override at approval time
-        //    (the winX88partners "assign group on approval" step).
+        // Optional group assigned at approval time must exist.
+        if (dto.groupId != null) {
+          const g = await queryRunner.query(
+            `SELECT id FROM affiliate_groups WHERE id = $1`,
+            [dto.groupId],
+          );
+          if (!g.length) throw new NotFoundException('Group not found');
+        }
+
+        // 2. Insert into affiliate_users. The weekly engine resolves the rate
+        //    as: revshare_rate override → assigned group → bracket-matched
+        //    group → legacy ladder. "Assign group & approve" sets group_id.
         await queryRunner.query(
           `INSERT INTO affiliate_users
-             (user_id, commission_pct, revshare_rate, is_active, approved_at, approved_by_admin_id, created_at, updated_at)
-           VALUES ($1, $2, $3, true, NOW(), $4, NOW(), NOW())
+             (user_id, commission_pct, revshare_rate, group_id, is_active, status, approved_at, approved_by_admin_id, created_at, updated_at)
+           VALUES ($1, $2, $3, $4, true, 'ACTIVE', NOW(), $5, NOW(), NOW())
            ON CONFLICT (user_id) DO UPDATE
            SET is_active = true,
+               status = 'ACTIVE',
                commission_pct = EXCLUDED.commission_pct,
                revshare_rate = COALESCE(EXCLUDED.revshare_rate, affiliate_users.revshare_rate),
+               group_id = COALESCE(EXCLUDED.group_id, affiliate_users.group_id),
                approved_by_admin_id = EXCLUDED.approved_by_admin_id,
                updated_at = NOW()`,
-          [app.user_id, dto.commissionPct ?? 0, dto.revshareRate ?? null, dto.adminId],
+          [app.user_id, dto.commissionPct ?? 0, dto.revshareRate ?? null, dto.groupId ?? null, dto.adminId],
         );
 
         await queryRunner.commitTransaction();
@@ -420,6 +487,87 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
   }
 
   // ─────────────────────────────────────────────────────────────
+  // ADMIN: manually make an (already-created) user into an affiliate.
+  //   Used by POST /affiliate/admin/create AFTER the user account is
+  //   created — inserts an ACTIVE affiliate_users row (same shape the
+  //   approve flow uses) and records an APPROVED application for the
+  //   audit trail, so the new partner shows consistently everywhere.
+  // ─────────────────────────────────────────────────────────────
+  // Cheap pre-check so the controller can validate the group BEFORE it
+  // creates the user account (avoids an orphan user if the group is bad).
+  async assertGroupExists(groupId: number): Promise<void> {
+    const g = await this.dataSource.query(
+      `SELECT id FROM affiliate_groups WHERE id = $1`,
+      [groupId],
+    );
+    if (!g.length) throw new NotFoundException('Group not found');
+  }
+
+  async adminCreateAffiliate(dto: {
+    userId: number;
+    adminId: number;
+    groupId?: number;
+    revshareRate?: number;
+    commissionPct?: number;
+    remark?: string;
+  }) {
+    // Already an active affiliate? Don't silently overwrite.
+    const existing = await this.dataSource.query(
+      `SELECT id, is_active FROM affiliate_users WHERE user_id = $1 LIMIT 1`,
+      [dto.userId],
+    );
+    if (existing.length && existing[0].is_active) {
+      throw new BadRequestException('This user is already an affiliate');
+    }
+
+    if (dto.groupId != null) await this.assertGroupExists(dto.groupId);
+
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+    try {
+      await qr.query(
+        `INSERT INTO affiliate_users
+           (user_id, commission_pct, revshare_rate, group_id, remark, is_active, status,
+            approved_at, approved_by_admin_id, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, true, 'ACTIVE', NOW(), $6, NOW(), NOW())
+         ON CONFLICT (user_id) DO UPDATE
+         SET is_active = true, status = 'ACTIVE',
+             commission_pct = EXCLUDED.commission_pct,
+             revshare_rate  = COALESCE(EXCLUDED.revshare_rate, affiliate_users.revshare_rate),
+             group_id       = COALESCE(EXCLUDED.group_id, affiliate_users.group_id),
+             remark         = COALESCE(EXCLUDED.remark, affiliate_users.remark),
+             approved_by_admin_id = EXCLUDED.approved_by_admin_id,
+             updated_at = NOW()`,
+        [dto.userId, dto.commissionPct ?? 0, dto.revshareRate ?? null,
+         dto.groupId ?? null, dto.remark ?? 'Created by admin', dto.adminId],
+      );
+
+      // Audit-trail application row (APPROVED). ON CONFLICT keeps it safe if
+      // the user had a prior application (e.g. a previous rejection).
+      await qr.query(
+        `INSERT INTO affiliate_applications
+           (user_id, status, notes, applied_at, decided_at, decided_by_admin_id, created_at, updated_at)
+         VALUES ($1, 'APPROVED', 'Created by admin', NOW(), NOW(), $2, NOW(), NOW())
+         ON CONFLICT (user_id) DO UPDATE
+         SET status = 'APPROVED', decided_at = NOW(),
+             decided_by_admin_id = EXCLUDED.decided_by_admin_id,
+             rejection_reason = NULL, updated_at = NOW()`,
+        [dto.userId, dto.adminId],
+      );
+
+      await qr.commitTransaction();
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+
+    return this.getMyAffiliateStatus(dto.userId);
+  }
+
+  // ─────────────────────────────────────────────────────────────
   // ADMIN: list all affiliates
   // ─────────────────────────────────────────────────────────────
 
@@ -433,16 +581,32 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
       status?: 'active' | 'inactive';
       from?: string;
       to?: string;
+      groupId?: number;
+      applicationStatus?: string;
     } = {},
   ) {
     const offset = (page - 1) * limit;
 
+    // Application-status dropdown: APPROVED (default — the real affiliates,
+    // same rows as before), PENDING / REJECTED (applicants), ALL.
+    const appStatus = (filters.applicationStatus ?? 'APPROVED').toUpperCase();
+
     // Build the shared WHERE (applies to both the page query and the count).
     const where: string[] = [];
+    if (appStatus === 'PENDING') where.push(`aa.status = 'PENDING'`);
+    else if (appStatus === 'REJECTED') where.push(`aa.status = 'REJECTED'`);
+    else if (appStatus === 'ALL') where.push(`(au.id IS NOT NULL OR aa.id IS NOT NULL)`);
+    else where.push(`au.id IS NOT NULL`); // APPROVED
+
     const params: any[] = [];
     let i = 1;
     if (filters.q) {
-      where.push(`(u.username ILIKE $${i} OR u.email ILIKE $${i} OR u.full_name ILIKE $${i})`);
+      // "USERNAME / USER ID" box — a purely numeric term also matches the
+      // user id itself.
+      const idClause = /^\d+$/.test(filters.q.trim())
+        ? ` OR u.id = ${Number(filters.q.trim())}`
+        : '';
+      where.push(`(u.username ILIKE $${i} OR u.email ILIKE $${i} OR u.full_name ILIKE $${i}${idClause})`);
       params.push(`%${filters.q}%`);
       i++;
     }
@@ -456,20 +620,27 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
       params.push(filters.tier);
       i++;
     }
+    if (filters.groupId !== undefined) {
+      where.push(`au.group_id = $${i}`);
+      params.push(filters.groupId);
+      i++;
+    }
     if (filters.status === 'active') where.push(`au.is_active = true`);
     else if (filters.status === 'inactive') where.push(`au.is_active = false`);
+    // FROM/TO filter the "joined" date: approved_at for affiliates,
+    // applied_at for not-yet-approved applicants.
     if (filters.from) {
-      where.push(`au.approved_at >= $${i}::timestamptz`);
+      where.push(`COALESCE(au.approved_at, aa.applied_at) >= $${i}::timestamptz`);
       params.push(filters.from);
       i++;
     }
     if (filters.to) {
       // inclusive end-of-day for a YYYY-MM-DD bound
-      where.push(`au.approved_at < ($${i}::date + INTERVAL '1 day')`);
+      where.push(`COALESCE(au.approved_at, aa.applied_at) < ($${i}::date + INTERVAL '1 day')`);
       params.push(filters.to);
       i++;
     }
-    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+    const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const [rows, count] = await Promise.all([
       this.dataSource.query(
@@ -480,6 +651,16 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
            au.revshare_tier,
            au.revshare_rate,
            au.is_active,
+           au.status,
+           au.remark,
+           au.group_id,
+           g.name AS group_name,
+           g.rev_share_pct AS group_rate,
+           -- The REVSHARE column as displayed: per-affiliate override wins,
+           -- else the assigned group's rate, else 0 (no group, no override).
+           COALESCE(au.revshare_rate, g.rev_share_pct, 0) AS effective_revshare,
+           au.commission_balance,
+           au.lifetime_commission,
            au.approved_at,
            u.full_name,
            u.username,
@@ -489,27 +670,49 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
            u.vip_level,
            w.total_deposited,
            w.balance,
-           (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = au.user_id)      AS downline_count,
-           (SELECT COUNT(*) FROM affiliate_clicks WHERE referrer_user_id = au.user_id) AS click_count,
+           p.phone_number,
+           -- Application state (drives the pending/approved/rejected tabs)
+           aa.status        AS application_status,
+           aa.applied_at,
+           aa.decided_at    AS application_decided_at,
+           aa.rejection_reason,
+           (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = u.id)            AS downline_count,
+           (SELECT COUNT(DISTINCT r.referee_user_id) FROM referrals r
+             WHERE r.referrer_user_id = u.id
+               AND EXISTS (SELECT 1 FROM deposits d
+                            WHERE d.user_id = r.referee_user_id AND d.status = 'APPROVED'
+                              AND d.decided_at >= (CURRENT_DATE - ((EXTRACT(DOW FROM CURRENT_DATE)::int + 2) % 7))))
+                                                                                     AS active_players_week,
+           (SELECT COALESCE(SUM(w2.total_deposited),0) FROM referrals r2
+             JOIN wallets w2 ON w2.user_id = r2.referee_user_id
+            WHERE r2.referrer_user_id = u.id)                                        AS downline_deposits,
+           (SELECT COUNT(*) FROM affiliate_clicks WHERE referrer_user_id = u.id)     AS click_count,
            (SELECT COALESCE(SUM(amount),0) FROM referral_bonus
-            WHERE referrer_user_id = au.user_id AND status = 'APPROVED')             AS total_bonus_paid
-         FROM affiliate_users au
-         JOIN users   u ON u.id = au.user_id
-         JOIN wallets w ON w.user_id = au.user_id
+            WHERE referrer_user_id = u.id AND status = 'APPROVED')                   AS total_bonus_paid
+         FROM users u
+         LEFT JOIN affiliate_users au        ON au.user_id = u.id
+         LEFT JOIN affiliate_applications aa ON aa.user_id = u.id
+         JOIN wallets w ON w.user_id = u.id
+         LEFT JOIN affiliate_groups g ON g.id = au.group_id
+         LEFT JOIN LATERAL (
+           SELECT phone_number FROM user_phone_numbers
+            WHERE user_id = u.id ORDER BY is_primary DESC, id ASC LIMIT 1
+         ) p ON TRUE
          ${whereSql}
-         ORDER BY au.approved_at DESC
+         ORDER BY COALESCE(au.approved_at, aa.applied_at) DESC NULLS LAST
          LIMIT $${i} OFFSET $${i + 1}`,
         [...params, limit, offset],
       ),
       this.dataSource.query(
         `SELECT COUNT(*) AS total
-           FROM affiliate_users au
-           JOIN users u ON u.id = au.user_id
+           FROM users u
+           LEFT JOIN affiliate_users au        ON au.user_id = u.id
+           LEFT JOIN affiliate_applications aa ON aa.user_id = u.id
            ${whereSql}`,
         params,
       ),
     ]);
-    return { data: rows, total: parseInt(count[0].total), page, limit };
+    return { applicationStatus: appStatus, data: rows, total: parseInt(count[0].total), page, limit };
   }
 
   // ─────────────────────────────────────────────────────────────

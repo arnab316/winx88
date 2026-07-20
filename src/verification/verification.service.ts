@@ -93,12 +93,17 @@ export class VerificationService {
       );
     }
 
-    // ── Validate expiry date ───────────────────────────────────
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(body.expiryDate)) {
-      throw new BadRequestException('expiryDate must be in YYYY-MM-DD format');
-    }
-    if (new Date(body.expiryDate) < new Date()) {
-      throw new BadRequestException('Document has already expired');
+    // ── Validate expiry date (optional) ────────────────────────
+    // Blank / whitespace / missing → stored as NULL (no expiry). Only when a
+    // value is supplied do we enforce the format and the not-expired rule.
+    const expiryDate = body.expiryDate?.trim() || null;
+    if (expiryDate) {
+      if (!/^\d{4}-\d{2}-\d{2}$/.test(expiryDate)) {
+        throw new BadRequestException('expiryDate must be in YYYY-MM-DD format');
+      }
+      if (new Date(expiryDate) < new Date()) {
+        throw new BadRequestException('Document has already expired');
+      }
     }
 
     // ── Check existing record ──────────────────────────────────
@@ -150,7 +155,7 @@ export class VerificationService {
           userId,
           body.documentType,
           body.documentNumber.trim(),
-          body.expiryDate,
+          expiryDate,
           frontUrl,
           backUrl,
           selfieUrl,
@@ -191,7 +196,7 @@ export class VerificationService {
       [
         body.documentType,
         body.documentNumber.trim(),
-        body.expiryDate,
+        expiryDate,
         frontUrl,
         backUrl,
         selfieUrl,
@@ -199,9 +204,13 @@ export class VerificationService {
       ],
     );
 
+    // TypeORM returns [rows, affectedCount] for UPDATE…RETURNING (unlike
+    // INSERT…RETURNING which returns plain rows), so result[0] is the rows
+    // array. Unwrap to a single object so re-submission matches first-submit.
+    const updated = Array.isArray(result[0]) ? result[0][0] : result[0];
     return {
       message: 'Verification re-submitted successfully. Awaiting review.',
-      data: result[0],
+      data: updated,
     };
   }
 
@@ -250,14 +259,24 @@ export class VerificationService {
   // GET /verification/admin/list?page=1&limit=20&status=PENDING
   // ══════════════════════════════════════════════════════════════
 
+  // Player-side KYC only: anything belonging to the affiliate program —
+  // approved affiliates AND pending partner applicants — is reviewed on
+  // GET /affiliate/admin/verifications instead, never mixed in here.
+  private static readonly NOT_AFFILIATE_SQL = `
+    NOT (
+      EXISTS (SELECT 1 FROM affiliate_users au WHERE au.user_id = uv.user_id)
+      OR EXISTS (SELECT 1 FROM affiliate_applications aa
+                  WHERE aa.user_id = uv.user_id AND aa.status = 'PENDING')
+    )`;
+
   async listVerifications(page: number, limit: number, status?: string) {
     const offset = (page - 1) * limit;
     const params: any[] = [limit, offset];
 
-    let where = '';
+    let where = `WHERE ${VerificationService.NOT_AFFILIATE_SQL}`;
     if (status) {
       params.push(status);
-      where = `WHERE uv.status = $${params.length}`;
+      where += ` AND uv.status = $${params.length}`;
     }
 
     const rows = await this.dataSource.query(
@@ -275,10 +294,14 @@ export class VerificationService {
               uv.rejection_reason,
               uv.submission_count,
               uv.reviewed_at,
+              -- Reviewing admin (same convention as deposit/withdrawal lists)
+              adm.name  AS decided_by_name,
+              adm.email AS decided_by_email,
               uv.created_at,
               uv.updated_at
        FROM user_verifications uv
        JOIN users u ON u.id = uv.user_id
+       LEFT JOIN admin_users adm ON adm.id = uv.reviewed_by_admin_id
        ${where}
        ORDER BY uv.created_at DESC
        LIMIT $1 OFFSET $2`,
@@ -286,14 +309,14 @@ export class VerificationService {
     );
 
     const countParams: any[] = [];
-    let countWhere = '';
+    let countWhere = `WHERE ${VerificationService.NOT_AFFILIATE_SQL}`;
     if (status) {
       countParams.push(status);
-      countWhere = `WHERE status = $1`;
+      countWhere += ` AND uv.status = $1`;
     }
 
     const countResult = await this.dataSource.query(
-      `SELECT COUNT(*)::int AS total FROM user_verifications ${countWhere}`,
+      `SELECT COUNT(*)::int AS total FROM user_verifications uv ${countWhere}`,
       countParams,
     );
 
@@ -320,9 +343,12 @@ export class VerificationService {
       `SELECT uv.*,
               u.username,
               u.full_name,
-              u.email
+              u.email,
+              adm.name  AS decided_by_name,
+              adm.email AS decided_by_email
        FROM user_verifications uv
        JOIN users u ON u.id = uv.user_id
+       LEFT JOIN admin_users adm ON adm.id = uv.reviewed_by_admin_id
        WHERE uv.id = $1
        LIMIT 1`,
       [id],
@@ -342,13 +368,17 @@ export class VerificationService {
 
   async getVerificationByUserId(userId: number) {
     const rows = await this.dataSource.query(
-      `SELECT id, document_type, document_number, expiry_date,
-              front_image_url, back_image_url, selfie_image_url,
-              status, rejection_reason, submission_count,
-              reviewed_at, created_at, updated_at
-       FROM user_verifications
-       WHERE user_id = $1
-       ORDER BY created_at DESC`,
+      `SELECT uv.id, uv.document_type, uv.document_number, uv.expiry_date,
+              uv.front_image_url, uv.back_image_url, uv.selfie_image_url,
+              uv.status, uv.rejection_reason, uv.submission_count,
+              uv.reviewed_at,
+              adm.name  AS decided_by_name,
+              adm.email AS decided_by_email,
+              uv.created_at, uv.updated_at
+       FROM user_verifications uv
+       LEFT JOIN admin_users adm ON adm.id = uv.reviewed_by_admin_id
+       WHERE uv.user_id = $1
+       ORDER BY uv.created_at DESC`,
       [userId],
     );
 
@@ -459,14 +489,17 @@ async reviewVerification(
   // ══════════════════════════════════════════════════════════════
 
   async getStats() {
+    // Player-side counts only — affiliate-program KYC is counted on the
+    // affiliate verifications view (same partition as listVerifications).
     const rows = await this.dataSource.query(
       `SELECT
-         COUNT(*) FILTER (WHERE status = 'PENDING')      AS pending,
-         COUNT(*) FILTER (WHERE status = 'UNDER_REVIEW') AS under_review,
-         COUNT(*) FILTER (WHERE status = 'APPROVED')     AS approved,
-         COUNT(*) FILTER (WHERE status = 'REJECTED')     AS rejected,
-         COUNT(*)                                         AS total
-       FROM user_verifications`,
+         COUNT(*) FILTER (WHERE uv.status = 'PENDING')      AS pending,
+         COUNT(*) FILTER (WHERE uv.status = 'UNDER_REVIEW') AS under_review,
+         COUNT(*) FILTER (WHERE uv.status = 'APPROVED')     AS approved,
+         COUNT(*) FILTER (WHERE uv.status = 'REJECTED')     AS rejected,
+         COUNT(*)                                            AS total
+       FROM user_verifications uv
+       WHERE ${VerificationService.NOT_AFFILIATE_SQL}`,
     );
 
     return { data: rows[0] };

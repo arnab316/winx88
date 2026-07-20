@@ -254,7 +254,7 @@
 
 // src/auth/auth.controller.ts
 import {
-  Body, Controller, Post, Get, Param,
+  Body, Controller, Post, Get, Param, Query,
   UnauthorizedException, HttpException, HttpStatus,
   Res, Req, UseGuards, Inject,
 } from '@nestjs/common';
@@ -349,6 +349,32 @@ async register(
   }
 }
 
+
+  // ═════════════════════════════════════════════════════════════
+  // CHECK USERNAME — live availability check for signup forms
+  //   (main site + partners portal type-as-you-go). Public.
+  //   GET /auth/check-username?username=foo
+  //   Same exact-match rule the register duplicate check uses.
+  // ═════════════════════════════════════════════════════════════
+  @Get('check-username')
+  async checkUsername(@Query('username') username?: string) {
+    const name = username?.trim();
+    if (!name) {
+      return {
+        success: true,
+        username: username ?? '',
+        available: false,
+        message: 'Username is required',
+      };
+    }
+    const taken = await this.authService.isUsernameTaken(name);
+    return {
+      success: true,
+      username: name,
+      available: !taken,
+      message: taken ? 'Username already exists' : 'Username is available',
+    };
+  }
 
   // ═════════════════════════════════════════════════════════════
   // SEND OTP — request phone verification after signup
