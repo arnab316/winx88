@@ -452,7 +452,12 @@ export class AffiliateAdminService {
       username: r.username,
       email: r.email,
       phone: r.phone_number ?? null,
-      affiliateCode: r.referral_code ?? r.user_code,
+      // AFFILIATE code = user_code — the code the tracking link, dashboard, and
+      // downline attribution (attachAffiliateOnSignup / admin edit-user) all
+      // match on. referral_code (ANIKHA00AY-style) is the SEPARATE
+      // refer-a-friend code and must NOT be shown as the affiliate code, or
+      // it fails when pasted into "put user under affiliate".
+      affiliateCode: r.user_code,
       userCode: r.user_code,
       commissionRate: rate,
       group: r.group_id != null ? { id: Number(r.group_id), name: r.group_name } : null,
