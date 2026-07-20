@@ -693,6 +693,37 @@ export class AffiliateWeeklyService {
     opts: { q?: string; page?: number; limit?: number } = {},
   ) {
     await this.requireAffiliate(userId);
+    return this.recentPlayerActivityFor(userId, opts);
+  }
+
+  /**
+   * ADMIN: same "Recent player activity" downline table for ANY affiliate,
+   * by the affiliate's users.id. Unlike the affiliate-facing version this
+   * does not require the caller to be that affiliate, and it shows even
+   * inactive/suspended affiliates' downlines.
+   */
+  async getRecentPlayerActivityForAdmin(
+    userId: number,
+    opts: { q?: string; page?: number; limit?: number } = {},
+  ) {
+    const rows = await this.dataSource.query(
+      `SELECT au.id, u.username, u.user_code
+         FROM affiliate_users au JOIN users u ON u.id = au.user_id
+        WHERE au.user_id = $1 LIMIT 1`,
+      [userId],
+    );
+    if (!rows.length) throw new NotFoundException('Affiliate not found');
+    const ledger = await this.recentPlayerActivityFor(userId, opts);
+    return {
+      affiliate: { userId, username: rows[0].username, userCode: rows[0].user_code },
+      ...ledger,
+    };
+  }
+
+  private async recentPlayerActivityFor(
+    userId: number,
+    opts: { q?: string; page?: number; limit?: number } = {},
+  ) {
     const page = Math.max(1, opts.page ?? 1);
     const limit = Math.min(100, Math.max(1, opts.limit ?? 20));
     const offset = (page - 1) * limit;

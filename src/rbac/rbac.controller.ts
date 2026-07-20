@@ -158,4 +158,25 @@ export class RbacController {
   ) {
     return ok(await this.rbac.setAdminStatus(id, dto?.status));
   }
+
+  // PATCH /admin/rbac/admins/:id  → edit name / email / password.
+  // SUPER_ADMIN only (enforced in the service, resolved live from the DB —
+  // not a permission, so it can't be granted to a normal role).
+  @Patch('admins/:id')
+  async editAdmin(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: { name?: string; email?: string; password?: string },
+  ) {
+    return ok(await this.rbac.editAdmin(id, dto, Number(req.user.sub)));
+  }
+
+  // DELETE /admin/rbac/admins/:id → delete any admin. SUPER_ADMIN only.
+  @Delete('admins/:id')
+  async deleteAdmin(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+  ) {
+    return ok(await this.rbac.deleteAdmin(id, Number(req.user.sub)));
+  }
 }

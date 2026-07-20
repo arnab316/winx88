@@ -510,6 +510,107 @@ export class RbacService {
     return res[0];
   }
 
+  /** Only a SUPER_ADMIN may pass. Resolved live from the DB (not the JWT), so
+   *  a demoted admin loses access immediately. */
+  private async assertSuperAdmin(actorAdminId: number): Promise<void> {
+    const access = await this.getAccess(actorAdminId);
+    if (!access.isSuperAdmin) {
+      throw new ForbiddenException('Only a SUPER_ADMIN can perform this action');
+    }
+  }
+
+  private async isSuperAdminRow(adminId: number): Promise<boolean> {
+    const rows = await this.dataSource.query(
+      `SELECT 1 FROM admin_user_roles aur
+         JOIN admin_roles ar ON ar.id = aur.role_id
+        WHERE aur.admin_id = $1 AND ar.code = 'SUPER_ADMIN' LIMIT 1`,
+      [adminId],
+    );
+    return rows.length > 0;
+  }
+
+  /**
+   * PATCH /admin/rbac/admins/:id — SUPER_ADMIN only. Edit an admin's
+   * name / email / password (roles/status have their own endpoints).
+   */
+  async editAdmin(
+    adminId: number,
+    dto: { name?: string; email?: string; password?: string },
+    actorAdminId: number,
+  ) {
+    await this.assertSuperAdmin(actorAdminId);
+
+    const [admin] = await this.dataSource.query(
+      `SELECT id FROM admin_users WHERE id = $1`, [adminId],
+    );
+    if (!admin) throw new NotFoundException('Admin not found');
+
+    const fields: string[] = [];
+    const values: any[] = [];
+    let i = 1;
+    if (dto.name !== undefined) {
+      if (!dto.name.trim()) throw new BadRequestException('name cannot be empty');
+      fields.push(`name = $${i++}`); values.push(dto.name.trim());
+    }
+    if (dto.email !== undefined) {
+      if (!dto.email.trim()) throw new BadRequestException('email cannot be empty');
+      fields.push(`email = $${i++}`); values.push(dto.email.trim().toLowerCase());
+    }
+    if (dto.password !== undefined && dto.password.trim()) {
+      if (dto.password.length < 6) throw new BadRequestException('Password must be at least 6 characters');
+      fields.push(`password = $${i++}`); values.push(await bcrypt.hash(dto.password, 10));
+    }
+    if (!fields.length) throw new BadRequestException('No fields to update');
+
+    fields.push(`updated_at = NOW()`);
+    values.push(adminId);
+    let res;
+    try {
+      res = await this.dataSource.query(
+        `UPDATE admin_users SET ${fields.join(', ')} WHERE id = $${i}
+         RETURNING id, name, email, role, status`,
+        values,
+      );
+    } catch (e: any) {
+      if (e.code === '23505') throw new BadRequestException('An admin with this email already exists');
+      throw e;
+    }
+    this.invalidate(adminId);
+    return res[0];
+  }
+
+  /**
+   * DELETE /admin/rbac/admins/:id — SUPER_ADMIN only. Hard-deletes the admin
+   * (cascades their tokens + role assignments; audit references like
+   * decided_by_admin_id are set NULL by the FKs). Guards: can't delete
+   * yourself, and can't remove the last SUPER_ADMIN.
+   */
+  async deleteAdmin(adminId: number, actorAdminId: number) {
+    await this.assertSuperAdmin(actorAdminId);
+    if (adminId === actorAdminId) {
+      throw new ForbiddenException('You cannot delete your own account');
+    }
+
+    const [admin] = await this.dataSource.query(
+      `SELECT id, name, email FROM admin_users WHERE id = $1`, [adminId],
+    );
+    if (!admin) throw new NotFoundException('Admin not found');
+
+    if (await this.isSuperAdminRow(adminId)) {
+      const [{ c }] = await this.dataSource.query(
+        `SELECT COUNT(DISTINCT aur.admin_id)::int AS c
+           FROM admin_user_roles aur
+           JOIN admin_roles ar ON ar.id = aur.role_id
+          WHERE ar.code = 'SUPER_ADMIN'`,
+      );
+      if (c <= 1) throw new BadRequestException('Cannot delete the last SUPER_ADMIN');
+    }
+
+    await this.dataSource.query(`DELETE FROM admin_users WHERE id = $1`, [adminId]);
+    this.invalidate(adminId);
+    return { deleted: true, id: adminId, name: admin.name, email: admin.email };
+  }
+
   // Highest-priority legacy-compatible code for the admin_users.role column.
   private primaryRole(codes: string[]): string {
     const order = ['SUPER_ADMIN', 'ADMIN', 'OPERATOR'];

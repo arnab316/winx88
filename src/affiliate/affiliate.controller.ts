@@ -727,6 +727,25 @@ getDownlineUser(
     });
   }
 
+  // GET /affiliate/admin/:userId/players/activity?q&page&limit
+  //   Admin view of an affiliate's DOWNLINE players — one row per referred
+  //   player with all-time deposits + wagered and a deposited/active status,
+  //   newest joined first. Same data the affiliate sees on me/players/activity.
+  @UseGuards(AdminGuard)
+  @Get('admin/:userId/players/activity')
+  adminPlayerActivity(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query('q')     q?: string,
+    @Query('page')  page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.weekly.getRecentPlayerActivityForAdmin(userId, {
+      q,
+      page:  page  ? parseInt(page)  : undefined,
+      limit: limit ? parseInt(limit) : undefined,
+    });
+  }
+
   // ─────────────────────────────────────────────────────────────
   // GROUPS — admin
   // ─────────────────────────────────────────────────────────────
