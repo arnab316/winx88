@@ -266,6 +266,8 @@ import {
 import { UserService } from './user.service';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { AdminGuard } from 'src/common/guards/admin.guard';
+import { PermissionsGuard } from 'src/common/guards/permissions.guard';
+import { RequirePermissions } from 'src/common/decorators/require-permissions.decorator';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { Logger } from 'winston';
 
@@ -694,6 +696,118 @@ export class UserController {
         context: UserController.name, adminId: req.user?.sub,
         targetUserId: userId, ip: req.ip,
         message: error.message, stack: error.stack,
+      });
+      throw new HttpException(
+        { success: false, message: error?.message || 'Failed' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // ╔═══════════════════════════════════════════════════════════╗
+  // ║       ADMIN: MEMBER REMARKS (internal profile notes)       ║
+  // ║  RBAC: all_members.{view_remarks,add_remark,edit_remark,   ║
+  // ║  delete_remark}. SUPER_ADMIN bypasses; ADMIN granted by     ║
+  // ║  migration; other roles only if a SUPER_ADMIN grants them. ║
+  // ║  The acting admin is taken from the token (req.user.sub).   ║
+  // ╚═══════════════════════════════════════════════════════════╝
+
+  // GET /user/admin/:userId/remarks
+  @UseGuards(AdminGuard, PermissionsGuard)
+  @RequirePermissions('all_members', 'view_remarks')
+  @Get('admin/:userId/remarks')
+  async listRemarks(
+    @Req() req: any,
+    @Param('userId', ParseIntPipe) userId: number,
+  ) {
+    try {
+      const data = await this.userService.listUserRemarks(userId);
+      return { success: true, code: 200, message: 'Remarks retrieved', data };
+    } catch (error: any) {
+      throw new HttpException(
+        { success: false, message: error?.message || 'Failed' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // POST /user/admin/:userId/remarks   body: { remark: string }
+  @UseGuards(AdminGuard, PermissionsGuard)
+  @RequirePermissions('all_members', 'add_remark')
+  @Post('admin/:userId/remarks')
+  async addRemark(
+    @Req() req: any,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Body('remark') remark: string,
+  ) {
+    const adminId = req.user?.sub;
+    this.logger.info('Admin: add remark started', {
+      context: UserController.name, adminId, targetUserId: userId, ip: req.ip,
+    });
+    try {
+      const data = await this.userService.addUserRemark(userId, adminId, remark);
+      return { success: true, message: data.message, id: data.id };
+    } catch (error: any) {
+      this.logger.error('Admin: add remark failed', {
+        context: UserController.name, adminId, targetUserId: userId,
+        message: error.message, ip: req.ip,
+      });
+      throw new HttpException(
+        { success: false, message: error?.message || 'Failed' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // PATCH /user/admin/:userId/remarks/:remarkId   body: { remark: string }
+  @UseGuards(AdminGuard, PermissionsGuard)
+  @RequirePermissions('all_members', 'edit_remark')
+  @Patch('admin/:userId/remarks/:remarkId')
+  async editRemark(
+    @Req() req: any,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Param('remarkId', ParseIntPipe) remarkId: number,
+    @Body('remark') remark: string,
+  ) {
+    const adminId = req.user?.sub;
+    this.logger.info('Admin: edit remark started', {
+      context: UserController.name, adminId, targetUserId: userId, remarkId, ip: req.ip,
+    });
+    try {
+      const data = await this.userService.editUserRemark(userId, remarkId, adminId, remark);
+      return { success: true, message: data.message };
+    } catch (error: any) {
+      this.logger.error('Admin: edit remark failed', {
+        context: UserController.name, adminId, targetUserId: userId, remarkId,
+        message: error.message, ip: req.ip,
+      });
+      throw new HttpException(
+        { success: false, message: error?.message || 'Failed' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  // DELETE /user/admin/:userId/remarks/:remarkId
+  @UseGuards(AdminGuard, PermissionsGuard)
+  @RequirePermissions('all_members', 'delete_remark')
+  @Delete('admin/:userId/remarks/:remarkId')
+  async deleteRemark(
+    @Req() req: any,
+    @Param('userId', ParseIntPipe) userId: number,
+    @Param('remarkId', ParseIntPipe) remarkId: number,
+  ) {
+    const adminId = req.user?.sub;
+    this.logger.info('Admin: delete remark started', {
+      context: UserController.name, adminId, targetUserId: userId, remarkId, ip: req.ip,
+    });
+    try {
+      const data = await this.userService.deleteUserRemark(userId, remarkId);
+      return { success: true, message: data.message };
+    } catch (error: any) {
+      this.logger.error('Admin: delete remark failed', {
+        context: UserController.name, adminId, targetUserId: userId, remarkId,
+        message: error.message, ip: req.ip,
       });
       throw new HttpException(
         { success: false, message: error?.message || 'Failed' },

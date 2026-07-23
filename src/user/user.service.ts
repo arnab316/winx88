@@ -543,7 +543,7 @@ export class UserService {
     );
     if (!user.length) throw new NotFoundException('User not found');
 
-    const [wallet, phones, coins, affiliate] = await Promise.all([
+    const [wallet, phones, coins, affiliate, remarks] = await Promise.all([
       this.dataSource.query(
         `SELECT balance, bonus_balance, locked_balance,
                 total_deposited, total_withdrawn, total_bet, total_win
@@ -571,6 +571,9 @@ export class UserService {
           LIMIT 1`,
         [userId],
       ),
+      // Admin remarks (internal notes) on this member, newest first, with the
+      // creating / last-editing admin's name+email resolved from admin_users.
+      this.listUserRemarks(userId),
     ]);
 
     return {
@@ -587,7 +590,76 @@ export class UserService {
             username: affiliate[0].affiliate_username,
           }
         : null,
+      // Admin-only internal notes on this member.
+      remarks,
     };
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: MEMBER REMARKS (internal notes on a user profile)
+  //   A list of notes per user. Each remark records the admin who
+  //   created it and the admin who last edited it (resolved to
+  //   name+email from admin_users — a SEPARATE table from users).
+  //   Gated by the all_members.{view_remarks,add_remark,edit_remark,
+  //   delete_remark} RBAC actions at the controller.
+  // ═════════════════════════════════════════════════════════════
+  async listUserRemarks(userId: number) {
+    return this.dataSource.query(
+      `SELECT r.id, r.user_id, r.remark,
+              r.created_by_admin_id, r.updated_by_admin_id,
+              r.created_at, r.updated_at,
+              ca.name  AS created_by_name,  ca.email  AS created_by_email,
+              ua.name  AS updated_by_name,  ua.email  AS updated_by_email
+         FROM user_remarks r
+         LEFT JOIN admin_users ca ON ca.id = r.created_by_admin_id
+         LEFT JOIN admin_users ua ON ua.id = r.updated_by_admin_id
+        WHERE r.user_id = $1
+        ORDER BY r.created_at DESC`,
+      [userId],
+    );
+  }
+
+  async addUserRemark(userId: number, adminId: number, remark: string) {
+    const text = (remark ?? '').trim();
+    if (!text) throw new BadRequestException('Remark cannot be empty');
+
+    const exists = await this.dataSource.query(
+      `SELECT 1 FROM users WHERE id = $1 LIMIT 1`,
+      [userId],
+    );
+    if (!exists.length) throw new NotFoundException('User not found');
+
+    const [row] = await this.dataSource.query(
+      `INSERT INTO user_remarks (user_id, remark, created_by_admin_id, updated_by_admin_id)
+       VALUES ($1, $2, $3, $3) RETURNING id`,
+      [userId, text, adminId],
+    );
+    return { message: 'Remark added', id: row.id };
+  }
+
+  async editUserRemark(userId: number, remarkId: number, adminId: number, remark: string) {
+    const text = (remark ?? '').trim();
+    if (!text) throw new BadRequestException('Remark cannot be empty');
+
+    // Raw dataSource.query returns a flat array of the RETURNING rows.
+    const rows = await this.dataSource.query(
+      `UPDATE user_remarks
+          SET remark = $1, updated_by_admin_id = $2, updated_at = NOW()
+        WHERE id = $3 AND user_id = $4
+        RETURNING id`,
+      [text, adminId, remarkId, userId],
+    );
+    if (!rows.length) throw new NotFoundException('Remark not found');
+    return { message: 'Remark updated' };
+  }
+
+  async deleteUserRemark(userId: number, remarkId: number) {
+    const rows = await this.dataSource.query(
+      `DELETE FROM user_remarks WHERE id = $1 AND user_id = $2 RETURNING id`,
+      [remarkId, userId],
+    );
+    if (!rows.length) throw new NotFoundException('Remark not found');
+    return { message: 'Remark deleted' };
   }
 
   // Place a user under an affiliate's downline by the affiliate's user_code
