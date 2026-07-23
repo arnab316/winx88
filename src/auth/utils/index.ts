@@ -15,19 +15,20 @@ export function generateUsername(fullName: string, email: string): string {
     return `${initials}${emailPart}${randomNum}`; // e.g., jdjo123
 }
 
-export function generateUserCode(fullName: string): string {
-    const initials = fullName
+// Format: WINX88 + 2-digit year + first 3 letters of username (padded with
+// 'X' if the username is shorter). E.g. username "jo" in 2026 -> WINX8826JOX.
+// This is also the affiliate code (?aff=<user_code> tracking links), so it
+// intentionally carries the brand + year for readability at a glance.
+export function generateUserCode(username: string): string {
+    const year2 = String(new Date().getFullYear()).slice(-2);
+    const namePart = (username || '')
         .trim()
-        .split(' ')
-        .filter(word => word.length > 0)
-        .map(word => word[0])
-        .join('')
-        .toUpperCase();
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '')
+        .slice(0, 3)
+        .padEnd(3, 'X');
 
-    // Generate random 5-digit number
-    const randomNumber = Math.floor(10000 + Math.random() * 90000);
-
-    return `${initials}${randomNumber}`;
+    return `WINX88${year2}${namePart}`;
 }
 
 // The permanent invite code shared in the referral link

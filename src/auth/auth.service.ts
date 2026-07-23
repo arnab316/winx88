@@ -87,7 +87,7 @@ async register(dto: any) {
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-    const userCode = generateUserCode(full_name);
+    const userCode = await this.generateUniqueUserCode(qr, username);
     // This user's own permanent invite code, so they can refer others.
     const referralCode = await this.generateUniqueReferralCode(qr, username || full_name);
 
@@ -179,6 +179,31 @@ async register(dto: any) {
     await qr.release();
   }
 }
+
+  // Pick a user_code that isn't taken yet. The base (WINX88<YY><3-letter
+  // username>) is clean for the common case; on collision (e.g. two
+  // usernames sharing the first 3 letters) append a short numeric suffix.
+  // Runs on the caller's query runner so it shares the registration
+  // transaction. user_code doubles as the affiliate code (?aff=<user_code>).
+  private async generateUniqueUserCode(qr: any, username: string): Promise<string> {
+    const base = generateUserCode(username);
+    const exists = await qr.query(
+      `SELECT 1 FROM users WHERE user_code = $1 LIMIT 1`,
+      [base],
+    );
+    if (!exists.length) return base;
+
+    for (let attempt = 2; attempt < 20; attempt++) {
+      const code = `${base}${attempt}`;
+      const clash = await qr.query(
+        `SELECT 1 FROM users WHERE user_code = $1 LIMIT 1`,
+        [code],
+      );
+      if (!clash.length) return code;
+    }
+    // Astronomically unlikely; widen the random space and accept it.
+    return `${base}${Math.floor(1000 + Math.random() * 9000)}`;
+  }
 
   // ─── Referral helpers (refer-a-friend system) ───────────────────────────
 
