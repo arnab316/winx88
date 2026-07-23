@@ -671,7 +671,11 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
            w.total_deposited,
            w.balance,
            p.phone_number,
-           -- Application state (drives the pending/approved/rejected tabs)
+           -- Application state (drives the pending/approved/rejected tabs).
+           -- aa.id is what /admin/applications/:id/decide expects — au.id
+           -- (above) is a DIFFERENT id space (affiliate_users) and is NULL
+           -- until a PENDING application is approved.
+           aa.id             AS application_id,
            aa.status        AS application_status,
            aa.applied_at,
            aa.decided_at    AS application_decided_at,
