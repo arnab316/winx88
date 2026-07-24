@@ -543,7 +543,7 @@ export class UserService {
     );
     if (!user.length) throw new NotFoundException('User not found');
 
-    const [wallet, phones, coins, affiliate, remarks] = await Promise.all([
+    const [wallet, phones, coins, affiliate, affiliateSelf, remarks] = await Promise.all([
       this.dataSource.query(
         `SELECT balance, bonus_balance, locked_balance,
                 total_deposited, total_withdrawn, total_bet, total_win
@@ -571,17 +571,34 @@ export class UserService {
           LIMIT 1`,
         [userId],
       ),
+      // Is THIS user an affiliate themselves? (own row in affiliate_users).
+      // Distinct from the `affiliate` above, which is the upline they sit under.
+      this.dataSource.query(
+        `SELECT is_active, status FROM affiliate_users WHERE user_id = $1 LIMIT 1`,
+        [userId],
+      ),
       // Admin remarks (internal notes) on this member, newest first, with the
       // creating / last-editing admin's name+email resolved from admin_users.
       this.listUserRemarks(userId),
     ]);
+
+    // An affiliate's OWN affiliate code IS their users.user_code (the value
+    // used in ?aff=<code> tracking links). Only meaningful when is_affiliate.
+    const selfAff = affiliateSelf[0] ?? null;
+    const isAffiliate = !!selfAff && selfAff.is_active === true;
 
     return {
       ...user[0],
       wallet:  wallet[0]  ?? null,
       phones,
       coins:   coins[0]   ?? null,
-      // The affiliate the user is a downline of (null if none).
+      // Is this user an affiliate (has an active affiliate_users row)?
+      is_affiliate: isAffiliate,
+      // The user's OWN affiliate code (their user_code) when they're an
+      // affiliate, else null. Downstream: build ?aff=<code> links from this.
+      affiliate_own_code: isAffiliate ? user[0].user_code : null,
+      affiliate_status: selfAff?.status ?? null,
+      // The affiliate this user is a DOWNLINE of (null if none) — the upline.
       affiliate_code: affiliate[0]?.affiliate_code ?? null,
       affiliate: affiliate[0]
         ? {
