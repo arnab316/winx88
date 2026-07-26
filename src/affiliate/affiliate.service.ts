@@ -447,13 +447,16 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
         // 2. Insert into affiliate_users. The weekly engine resolves the rate
         //    as: revshare_rate override → assigned group → bracket-matched
         //    group → legacy ladder.
-        //    Client rule: if approved INTO a group, the group's rate drives the
-        //    revshare, so store revshare_rate = NULL (the affiliate tracks the
-        //    group's current rate). An explicit revshareRate becomes a manual
-        //    override ONLY when no group is assigned. On re-approval into a
-        //    group, the CASE below also clears any prior override.
+        //    Rate precedence at approval:
+        //      - An explicitly provided revshareRate is a MANUAL CUSTOM OVERRIDE
+        //        and WINS (even if a group is also assigned).
+        //      - No revshareRate + a group → revshare_rate = NULL, so the
+        //        affiliate tracks the group's current rate.
+        //      - Neither → NULL (falls to bracket/ladder).
+        //    So: send a group only → group rate; send revshareRate → custom rate.
+        //    commissionPct is optional (defaults 0) and does NOT affect earnings.
         const approveGroupId = dto.groupId ?? null;
-        const approveRevshare = approveGroupId != null ? null : (dto.revshareRate ?? null);
+        const approveRevshare = dto.revshareRate != null ? dto.revshareRate : null;
         await queryRunner.query(
           `INSERT INTO affiliate_users
              (user_id, commission_pct, revshare_rate, group_id, is_active, status, approved_at, approved_by_admin_id, created_at, updated_at)
@@ -464,8 +467,9 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
                commission_pct = EXCLUDED.commission_pct,
                group_id = COALESCE(EXCLUDED.group_id, affiliate_users.group_id),
                revshare_rate = CASE
+                                 WHEN EXCLUDED.revshare_rate IS NOT NULL THEN EXCLUDED.revshare_rate
                                  WHEN EXCLUDED.group_id IS NOT NULL THEN NULL
-                                 ELSE COALESCE(EXCLUDED.revshare_rate, affiliate_users.revshare_rate)
+                                 ELSE affiliate_users.revshare_rate
                                END,
                approved_by_admin_id = EXCLUDED.approved_by_admin_id,
                updated_at = NOW()`,
@@ -536,11 +540,12 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
     await qr.connect();
     await qr.startTransaction();
     try {
-      // Client rule: created INTO a group → group rate drives revshare (store
-      // NULL so it tracks the group's current rate). A revshareRate is a manual
-      // override only when no group is assigned.
+      // Rate precedence (same as approval): an explicit revshareRate is a manual
+      // custom override and WINS over the group; a group with no revshareRate →
+      // NULL so it tracks the group's current rate. commissionPct is optional
+      // (defaults 0) and does NOT affect earnings.
       const createGroupId = dto.groupId ?? null;
-      const createRevshare = createGroupId != null ? null : (dto.revshareRate ?? null);
+      const createRevshare = dto.revshareRate != null ? dto.revshareRate : null;
       await qr.query(
         `INSERT INTO affiliate_users
            (user_id, commission_pct, revshare_rate, group_id, remark, is_active, status,
@@ -551,8 +556,9 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
              commission_pct = EXCLUDED.commission_pct,
              group_id       = COALESCE(EXCLUDED.group_id, affiliate_users.group_id),
              revshare_rate  = CASE
+                                WHEN EXCLUDED.revshare_rate IS NOT NULL THEN EXCLUDED.revshare_rate
                                 WHEN EXCLUDED.group_id IS NOT NULL THEN NULL
-                                ELSE COALESCE(EXCLUDED.revshare_rate, affiliate_users.revshare_rate)
+                                ELSE affiliate_users.revshare_rate
                               END,
              remark         = COALESCE(EXCLUDED.remark, affiliate_users.remark),
              approved_by_admin_id = EXCLUDED.approved_by_admin_id,

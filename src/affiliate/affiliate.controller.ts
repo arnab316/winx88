@@ -277,15 +277,18 @@ export class AffiliateController {
     @Param('id', ParseIntPipe) applicationId: number,
     @Body() body: any,
   ) {
+    // commissionPct is OPTIONAL (defaults 0, no effect on earnings).
+    // revshareRate is OPTIONAL: when provided it becomes a manual custom
+    // override that wins; when omitted, an assigned group's rate drives.
+    const has = (v: any) => v !== undefined && v !== null && v !== '';
     return this.affiliateService.decideApplication({
       applicationId,
       adminId:          req.user.sub,
       action:           body.action,
-      commissionPct:    body.commissionPct ? parseFloat(body.commissionPct) : 0,
+      commissionPct:    has(body.commissionPct) ? parseFloat(body.commissionPct) : undefined,
       rejectionReason:  body.rejectionReason,
-      revshareRate:     body.revshareRate !== undefined ? parseFloat(body.revshareRate) : undefined,
-      groupId:          body.groupId !== undefined && body.groupId !== null && body.groupId !== ''
-                          ? parseInt(body.groupId) : undefined,
+      revshareRate:     has(body.revshareRate) ? parseFloat(body.revshareRate) : undefined,
+      groupId:          has(body.groupId) ? parseInt(body.groupId) : undefined,
     });
   }
 
