@@ -1838,19 +1838,24 @@ async getLedgerHistory(
   // Approved affiliate → player commission transfers.
   const AFFILIATE_TYPES = ['AFFILIATE_COMMISSION_CREDIT'];
 
-  // Optional ?type=DEPOSIT | WITHDRAWAL | ADJUSTMENT | AFFILIATE narrows the
-  // feed; anything else (or no filter) returns all four. Bet/win/bonus
-  // filters return nothing.
-  const filter = typeFilter?.trim().toUpperCase();
+  // Optional ?type= narrows the feed. Accepts ONE or MANY (comma-separated)
+  // of: DEPOSIT | WITHDRAWAL | ADJUSTMENT | AFFILIATE — e.g.
+  // ?type=ADJUSTMENT,AFFILIATE returns admin adjustments + affiliate-commission
+  // credits together. Unrecognised / empty → all four. Bet/win/bonus excluded.
+  const typeMap: Record<string, string[]> = {
+    DEPOSIT: DEPOSIT_TYPES,
+    WITHDRAWAL: WITHDRAWAL_TYPES,
+    ADJUSTMENT: ADJUSTMENT_TYPES,
+    AFFILIATE: AFFILIATE_TYPES,
+  };
+  const requested = (typeFilter ?? '')
+    .split(',')
+    .map((f) => f.trim().toUpperCase())
+    .filter((f) => typeMap[f]);
   let effectiveTypes: string[];
-  if (filter === 'DEPOSIT') {
-    effectiveTypes = DEPOSIT_TYPES;
-  } else if (filter === 'WITHDRAWAL') {
-    effectiveTypes = WITHDRAWAL_TYPES;
-  } else if (filter === 'ADJUSTMENT') {
-    effectiveTypes = ADJUSTMENT_TYPES;
-  } else if (filter === 'AFFILIATE') {
-    effectiveTypes = AFFILIATE_TYPES;
+  if (requested.length) {
+    // Union of the recognised buckets, de-duplicated.
+    effectiveTypes = [...new Set(requested.flatMap((f) => typeMap[f]))];
   } else {
     effectiveTypes = [...DEPOSIT_TYPES, ...WITHDRAWAL_TYPES, ...ADJUSTMENT_TYPES, ...AFFILIATE_TYPES];
   }

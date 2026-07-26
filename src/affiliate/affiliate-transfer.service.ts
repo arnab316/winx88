@@ -20,6 +20,9 @@ import { FinancialLedgerService } from '../ledger/financial-ledger.service';
 import { WalletGateway } from '../wallet/wallet.gateway';
 import { TurnoverService } from '../turnover/turnover.service';
 
+// Minimum amount an affiliate can transfer to a player in one request.
+const MIN_TRANSFER_AMOUNT = 200;
+
 @Injectable()
 export class AffiliateTransferService {
   constructor(
@@ -44,6 +47,11 @@ export class AffiliateTransferService {
     const amount = Math.round(Number(dto.amount) * 100) / 100;
     if (!Number.isFinite(amount) || amount <= 0) {
       throw new BadRequestException('amount must be a positive number');
+    }
+    if (amount < MIN_TRANSFER_AMOUNT) {
+      throw new BadRequestException(
+        `Minimum transfer amount is ${MIN_TRANSFER_AMOUNT.toFixed(2)}`,
+      );
     }
     if (!dto.recipient || !String(dto.recipient).trim()) {
       throw new BadRequestException('recipient is required (user ID / user code / username)');

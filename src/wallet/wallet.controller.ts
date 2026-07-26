@@ -208,6 +208,22 @@ export class WalletController {
     );
   }
 
+  // GET /wallet/admin/adjustments?userId=42&page=1&limit=20
+  // A user's ADJUSTMENT statement: admin manual wallet adjustments (credit/
+  // debit) + affiliate-commission credits the user RECEIVED — nothing else.
+  // Same response shape as /wallet/admin/transactions (filtered feed).
+  @UseGuards(AdminGuard)
+  @Get('admin/adjustments')
+  getUserAdjustments(
+    @Query('userId', ParseIntPipe) userId: number,
+    @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.walletService.getLedgerHistory(
+      userId, page, limit, 'ADJUSTMENT,AFFILIATE', 'ADMIN',
+    );
+  }
+
   // GET /wallet/admin/deposits?page=1&limit=20
   // Now returns agent_number, agent_code, wallet_type per deposit
   // (so admin sees WHERE the user was told to send the money)
