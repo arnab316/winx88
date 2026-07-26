@@ -827,11 +827,19 @@ export class AffiliateWeeklyService {
     const offset = (Math.max(page, 1) - 1) * safeLimit;
     const [rows, count] = await Promise.all([
       this.dataSource.query(
-        `SELECT id, entry_type, flow, amount, balance_before, balance_after,
-                reference_type, reference_id, description, created_at
-           FROM affiliate_commission_ledger
-          WHERE affiliate_user_id = $1
-          ORDER BY created_at DESC, id DESC
+        `SELECT acl.id, acl.entry_type, acl.flow, acl.amount,
+                acl.balance_before, acl.balance_after,
+                acl.reference_type, acl.reference_id, acl.description, acl.created_at,
+                -- For ADMIN_ADJUST rows reference_id = the acting admin's id
+                -- (admin_users.id); resolve their name/email so the UI can show
+                -- WHICH admin made the adjustment alongside the remark.
+                a.name  AS admin_name,
+                a.email AS admin_email
+           FROM affiliate_commission_ledger acl
+           LEFT JOIN admin_users a
+             ON acl.reference_type = 'ADMIN' AND a.id = acl.reference_id
+          WHERE acl.affiliate_user_id = $1
+          ORDER BY acl.created_at DESC, acl.id DESC
           LIMIT $2 OFFSET $3`,
         [affiliateUserId, safeLimit, offset],
       ),

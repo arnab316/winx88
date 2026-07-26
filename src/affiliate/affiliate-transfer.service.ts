@@ -18,6 +18,7 @@ import {
 import { DataSource } from 'typeorm';
 import { FinancialLedgerService } from '../ledger/financial-ledger.service';
 import { WalletGateway } from '../wallet/wallet.gateway';
+import { TurnoverService } from '../turnover/turnover.service';
 
 @Injectable()
 export class AffiliateTransferService {
@@ -25,6 +26,7 @@ export class AffiliateTransferService {
     private dataSource: DataSource,
     private financialLedger: FinancialLedgerService,
     private walletGateway: WalletGateway,
+    private turnoverService: TurnoverService,
   ) {}
 
   // Display code derived from id (same pattern as dp_id / wd_id).
@@ -154,35 +156,89 @@ export class AffiliateTransferService {
       [userId],
     );
     if (!afRows.length) throw new ForbiddenException('You are not an affiliate');
-
+    const affiliateUserId = afRows[0].id;
     const offset = (page - 1) * limit;
-    const params: any[] = [afRows[0].id];
-    let where = `WHERE t.affiliate_user_id = $1`;
-    if (status && ['PENDING', 'APPROVED', 'REJECTED'].includes(status.toUpperCase())) {
-      params.push(status.toUpperCase());
-      where += ` AND t.status = $${params.length}`;
+
+    const statusFilter =
+      status && ['PENDING', 'APPROVED', 'REJECTED'].includes(status.toUpperCase())
+        ? status.toUpperCase()
+        : null;
+
+    // A transfer-status filter narrows to transfers only (admin adjustments
+    // have no PENDING/APPROVED/REJECTED status).
+    if (statusFilter) {
+      const [rows, count] = await Promise.all([
+        this.dataSource.query(
+          `SELECT t.id, t.amount, t.status, t.note, t.rejection_reason,
+                  t.requested_at, t.decided_at,
+                  ru.user_code AS recipient_code, ru.username AS recipient_username
+             FROM affiliate_transfers t
+             JOIN users ru ON ru.id = t.to_user_id
+            WHERE t.affiliate_user_id = $1 AND t.status = $2
+            ORDER BY t.requested_at DESC
+            LIMIT $3 OFFSET $4`,
+          [affiliateUserId, statusFilter, limit, offset],
+        ),
+        this.dataSource.query(
+          `SELECT COUNT(*)::int AS total FROM affiliate_transfers
+            WHERE affiliate_user_id = $1 AND status = $2`,
+          [affiliateUserId, statusFilter],
+        ),
+      ]);
+      return {
+        data: rows.map((r: any) => ({
+          ...r, type: 'TRANSFER', code: this.codeFor(Number(r.id)), amount: parseFloat(r.amount),
+        })),
+        total: count[0].total,
+        page,
+        limit,
+      };
     }
 
+    // No filter → merged feed: transfers + admin commission ADJUSTMENTS
+    // (credits/debits), newest-first. Each row is tagged with `type`; adjustment
+    // rows carry the admin remark (`remark`) and which admin made it.
     const [rows, count] = await Promise.all([
       this.dataSource.query(
-        `SELECT t.id, t.amount, t.status, t.note, t.rejection_reason,
-                t.requested_at, t.decided_at,
-                ru.user_code AS recipient_code, ru.username AS recipient_username
-           FROM affiliate_transfers t
-           JOIN users ru ON ru.id = t.to_user_id
-           ${where}
-           ORDER BY t.requested_at DESC
-           LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
-        [...params, limit, offset],
+        `SELECT * FROM (
+           SELECT t.id, 'TRANSFER' AS type, t.amount, 'DEBIT' AS flow, t.status,
+                  t.note AS remark, t.rejection_reason, t.requested_at AS created_at,
+                  ru.user_code AS recipient_code, ru.username AS recipient_username,
+                  NULL::text AS admin_name, NULL::text AS admin_email
+             FROM affiliate_transfers t
+             JOIN users ru ON ru.id = t.to_user_id
+            WHERE t.affiliate_user_id = $1
+           UNION ALL
+           SELECT acl.id, 'ADJUSTMENT' AS type, acl.amount, acl.flow, NULL AS status,
+                  acl.description AS remark, NULL AS rejection_reason, acl.created_at,
+                  NULL AS recipient_code, NULL AS recipient_username,
+                  a.name AS admin_name, a.email AS admin_email
+             FROM affiliate_commission_ledger acl
+             LEFT JOIN admin_users a
+               ON acl.reference_type = 'ADMIN' AND a.id = acl.reference_id
+            WHERE acl.affiliate_user_id = $1 AND acl.entry_type = 'ADMIN_ADJUST'
+         ) feed
+         ORDER BY created_at DESC, id DESC
+         LIMIT $2 OFFSET $3`,
+        [affiliateUserId, limit, offset],
       ),
       this.dataSource.query(
-        `SELECT COUNT(*)::int AS total FROM affiliate_transfers t ${where}`,
-        params,
+        `SELECT (
+            (SELECT COUNT(*) FROM affiliate_transfers WHERE affiliate_user_id = $1)
+          + (SELECT COUNT(*) FROM affiliate_commission_ledger
+              WHERE affiliate_user_id = $1 AND entry_type = 'ADMIN_ADJUST')
+         )::int AS total`,
+        [affiliateUserId],
       ),
     ]);
 
     return {
-      data: rows.map((r: any) => ({ ...r, code: this.codeFor(r.id), amount: parseFloat(r.amount) })),
+      data: rows.map((r: any) => ({
+        ...r,
+        amount: parseFloat(r.amount),
+        // Transfer display code (TR-xxxx); adjustments have none.
+        code: r.type === 'TRANSFER' ? this.codeFor(Number(r.id)) : null,
+      })),
       total: count[0].total,
       page,
       limit,
@@ -268,10 +324,17 @@ export class AffiliateTransferService {
     adminId: number,
     action: 'APPROVE' | 'REJECT',
     rejectionReason?: string,
+    // Optional turnover multiplier applied to the credited amount on APPROVE.
+    // Blank/undefined → 1× (recipient must wager the amount once). 0 → no
+    // turnover (freely withdrawable). Ignored on REJECT.
+    turnoverMultiplier?: number,
   ) {
     if (action !== 'APPROVE' && action !== 'REJECT') {
       throw new BadRequestException("action must be 'APPROVE' or 'REJECT'");
     }
+    // Resolve the turnover multiplier: default 1×, never negative.
+    const rawMult = Number(turnoverMultiplier);
+    const multiplier = Number.isFinite(rawMult) && rawMult >= 0 ? rawMult : 1;
 
     const qr = this.dataSource.createQueryRunner();
     await qr.connect();
@@ -337,6 +400,23 @@ export class AffiliateTransferService {
             WHERE id = $3`,
           [adminId, ledgerId, transferId],
         );
+
+        // Turnover: the credited amount carries a wagering requirement (like
+        // the referral bonus). multiplier 0 → skip (freely withdrawable).
+        if (multiplier > 0) {
+          const targetAmount = Math.round(amount * multiplier * 100) / 100;
+          await this.turnoverService.insertRequirement(qr, {
+            userId: Number(tr.to_user_id),
+            sourceType: 'BONUS',
+            sourceId: transferId,
+            baseAmount: amount,
+            multiplier,
+            targetAmount,
+            adminId,
+            label: `Affiliate commission ${this.codeFor(transferId)} from ${tr.from_code}`,
+          });
+        }
+
         approvedRecipientId = Number(tr.to_user_id);
       } else {
         // Refund the held amount back to the affiliate's commission balance.

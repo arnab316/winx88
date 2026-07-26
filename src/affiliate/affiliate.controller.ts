@@ -626,9 +626,12 @@ getDownlineUser(
   }
 
   // POST /affiliate/admin/:userId/commission-adjust
-  //   body: { amount (signed: + credit, - debit), description? }
+  //   body: { amount, direction?: 'CREDIT'|'DEBIT', remark? }
+  //     - amount + direction: positive amount, direction picks credit/debit
+  //     - OR legacy signed amount (+ credit, − debit) with `description`
   //   Credits/debits the affiliate's commission balance; the entry shows in
-  //   both this admin ledger and the affiliate's own commission history.
+  //   the admin ledger, the affiliate's own commission history, the detail
+  //   Payout tab, and /affiliate/me/transfers — with the remark + which admin.
   @UseGuards(AdminGuard)
   @Post('admin/:userId/commission-adjust')
   adminAdjustCommission(
@@ -636,9 +639,14 @@ getDownlineUser(
     @Param('userId', ParseIntPipe) userId: number,
     @Body() body: any,
   ) {
+    const magnitude = Math.abs(Number(body.amount));
+    const direction = String(
+      body.direction ?? (Number(body.amount) < 0 ? 'DEBIT' : 'CREDIT'),
+    ).toUpperCase();
+    const signed = direction === 'DEBIT' ? -magnitude : magnitude;
     return this.weekly.adminAdjustCommission(userId, {
-      amount: Number(body.amount),
-      description: body.description,
+      amount: signed,
+      description: body.remark ?? body.description,
       adminId: req.user.sub,
     });
   }
@@ -827,7 +835,10 @@ getDownlineUser(
     });
   }
 
-  // POST /affiliate/admin/transfers/:id/decide  body: { action: 'APPROVE'|'REJECT', rejectionReason? }
+  // POST /affiliate/admin/transfers/:id/decide
+  //   body: { action: 'APPROVE'|'REJECT', rejectionReason?, turnoverMultiplier? }
+  //   turnoverMultiplier (APPROVE only): blank → 1× the credited amount, 0 → no
+  //   turnover, N → N× as the recipient's wagering requirement.
   @UseGuards(AdminGuard)
   @Post('admin/transfers/:id/decide')
   decideTransfer(
@@ -835,7 +846,13 @@ getDownlineUser(
     @Param('id', ParseIntPipe) id: number,
     @Body() body: any,
   ) {
-    return this.transfers.decideTransfer(id, req.user.sub, body.action, body.rejectionReason);
+    const turnoverMultiplier =
+      body.turnoverMultiplier !== undefined && body.turnoverMultiplier !== '' && body.turnoverMultiplier !== null
+        ? Number(body.turnoverMultiplier)
+        : undefined;
+    return this.transfers.decideTransfer(
+      id, req.user.sub, body.action, body.rejectionReason, turnoverMultiplier,
+    );
   }
 
   // ─────────────────────────────────────────────────────────────

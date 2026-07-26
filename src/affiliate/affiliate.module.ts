@@ -9,11 +9,14 @@ import { AffiliatePublicController } from './affiliate-public.controller';
 import { AuthModule } from 'src/auth/auth.module';
 import { WalletModule } from 'src/wallet/wallet.module';
 import { VerificationModule } from 'src/verification/verification.module';
+import { TurnoverModule } from 'src/turnover/turnover.module';
 import { AdminGuard } from 'src/common/guards/admin.guard';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 
 @Module({
-  imports: [AuthModule, WalletModule, VerificationModule],
+  // TurnoverModule: approved affiliate→player transfers create a turnover
+  // requirement on the credited amount (like the referral bonus flow).
+  imports: [AuthModule, WalletModule, VerificationModule, TurnoverModule],
   providers: [
     AffiliateService,
     AffiliateRevShareService,

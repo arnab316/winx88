@@ -225,10 +225,25 @@ export class AffiliateAdminService {
       );
       if (!g.length) throw new NotFoundException('Group not found');
     }
-    await this.dataSource.query(
-      `UPDATE affiliate_users SET group_id = $1, updated_at = NOW() WHERE user_id = $2`,
-      [groupId, userId],
-    );
+    if (groupId != null) {
+      // Client rule: assigning a group makes the affiliate TRACK that group's
+      // revshare. Clear any per-affiliate override (revshare_rate → NULL) so
+      // resolveRate() falls through to the group's CURRENT rate — and stays in
+      // sync if the group rate is later edited. A manual override can still be
+      // re-applied afterward via the revshare endpoint.
+      await this.dataSource.query(
+        `UPDATE affiliate_users
+            SET group_id = $1, revshare_rate = NULL, updated_at = NOW()
+          WHERE user_id = $2`,
+        [groupId, userId],
+      );
+    } else {
+      // Clearing the group leaves any manual override untouched.
+      await this.dataSource.query(
+        `UPDATE affiliate_users SET group_id = NULL, updated_at = NOW() WHERE user_id = $1`,
+        [userId],
+      );
+    }
     return { message: groupId != null ? 'Group assigned' : 'Group cleared' };
   }
 

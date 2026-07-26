@@ -95,6 +95,10 @@ export class AffiliateRevShareService {
     period: string,
     cfg: RevShareConfig,
     customRate: number | null,
+    // The affiliate's assigned-group rate (null if not in a group). Used as the
+    // fallback BEFORE the legacy config tier-ladder, so group membership drives
+    // the revshare — consistent with the weekly engine's resolveRate().
+    groupRate: number | null = null,
   ) {
     const { start, end } = this.periodBounds(period);
 
@@ -163,18 +167,49 @@ export class AffiliateRevShareService {
     );
     const activePlayerCount = Number(activeRows[0].cnt);
 
+    // Commission basis = real-cash NET DEPOSIT, matching the weekly payout
+    // engine exactly: per referred player, (approved deposits − approved
+    // withdrawals) in the period, with a PER-PLAYER positive clamp — a player
+    // whose withdrawals exceed deposits contributes 0, never a negative that
+    // drags down other players. commission = Σ max(dep − wd, 0) × rate.
+    // (NGR below is kept for informational display only; it is NOT the basis.)
+    const netRows = await this.dataSource.query(
+      `SELECT COALESCE(SUM(GREATEST(net, 0)), 0) AS net_deposits
+         FROM (
+           SELECT COALESCE(dep.total, 0) - COALESCE(wd.total, 0) AS net
+             FROM referrals r
+             LEFT JOIN LATERAL (
+               SELECT SUM(d.amount) AS total FROM deposits d
+                WHERE d.user_id = r.referee_user_id AND d.status = 'APPROVED'
+                  AND d.decided_at >= $2::date AND d.decided_at < $3::date
+             ) dep ON TRUE
+             LEFT JOIN LATERAL (
+               SELECT SUM(w.amount) AS total FROM withdrawals w
+                WHERE w.user_id = r.referee_user_id AND w.status = 'APPROVED'
+                  AND w.decided_at >= $2::date AND w.decided_at < $3::date
+             ) wd ON TRUE
+            WHERE r.referrer_user_id = $1
+         ) t`,
+      [affiliateOwnerUserId, start, end],
+    );
+    const netDeposits = parseFloat(netRows[0].net_deposits);
+
+    // NGR figures — informational only (bets/wins/bonuses/fee), no longer the
+    // commission basis.
     const grossWin = Math.max(totalBets - totalWins, 0);
     const adminFee = (grossWin * Number(cfg.admin_fee_pct)) / 100;
     const ngr = totalBets - totalWins - bonusesGiven - adminFee;
 
     const { tier, rate: tierRate } = this.tierForCount(activePlayerCount, cfg);
-    const rate = customRate ?? tierRate;
+    // Precedence: per-affiliate override → assigned group rate → legacy ladder.
+    const rate = customRate ?? groupRate ?? tierRate;
 
-    // NNCO: never carry a negative NGR; earning floors at 0
-    const grossEarning = ngr > 0 ? (ngr * rate) / 100 : 0;
+    // Commission = net deposits × revshare% (floored at 0).
+    const grossEarning = netDeposits > 0 ? (netDeposits * rate) / 100 : 0;
 
     return {
       totalBets, totalWins, bonusesGiven, adminFee, ngr,
+      netDeposits: Math.round(netDeposits * 100) / 100,
       activePlayerCount, tier, rate,
       grossEarning: Math.round(grossEarning * 100) / 100,
     };
@@ -190,7 +225,11 @@ export class AffiliateRevShareService {
     const cfg = await this.getConfig();
 
     const affiliates = await this.dataSource.query(
-      `SELECT id, user_id, revshare_rate FROM affiliate_users WHERE is_active = TRUE`,
+      `SELECT au.id, au.user_id, au.revshare_rate, au.group_id,
+              g.rev_share_pct AS group_rate
+         FROM affiliate_users au
+         LEFT JOIN affiliate_groups g ON g.id = au.group_id
+        WHERE au.is_active = TRUE`,
     );
 
     const results: any[] = [];
@@ -207,8 +246,9 @@ export class AffiliateRevShareService {
       }
 
       const customRate = af.revshare_rate != null ? parseFloat(af.revshare_rate) : null;
+      const groupRate = af.group_rate != null ? parseFloat(af.group_rate) : null;
       const calc = await this.computeAffiliatePeriod(
-        af.id, Number(af.user_id), period, cfg, customRate,
+        af.id, Number(af.user_id), period, cfg, customRate, groupRate,
       );
 
       // Carry-in = prior month's carried_forward (rolled-forward balance)
@@ -410,9 +450,10 @@ export class AffiliateRevShareService {
     const now = new Date();
     const period = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     const customRate = af.revshare_rate != null ? parseFloat(af.revshare_rate) : null;
+    const groupRate = af.group_id != null && af.group_rate != null ? parseFloat(af.group_rate) : null;
     // Live month-to-date figures (active players / NGR / projected payout).
     const live = await this.computeAffiliatePeriod(
-      af.id, Number(af.user_id), period, cfg, customRate,
+      af.id, Number(af.user_id), period, cfg, customRate, groupRate,
     );
 
     const [paidRows, refRows, depRows, clickRows] = await Promise.all([
@@ -437,7 +478,46 @@ export class AffiliateRevShareService {
       ),
     ]);
 
-    const payouts = await this.getNgrHistory(af.id);
+    // Payouts feed = monthly NGR payouts + admin commission ADJUSTMENTS, merged
+    // newest-first, so the detail "Payout" tab shows manual credits/debits
+    // inline. Each entry carries a `type` ('PAYOUT' | 'ADJUSTMENT') so the UI
+    // can branch; adjustment rows include the remark + which admin made it.
+    const [monthly, adjustments] = await Promise.all([
+      this.getNgrHistory(af.id),
+      this.dataSource.query(
+        `SELECT acl.id, acl.flow, acl.amount, acl.balance_after,
+                acl.description AS remark, acl.created_at,
+                a.name AS admin_name, a.email AS admin_email
+           FROM affiliate_commission_ledger acl
+           LEFT JOIN admin_users a
+             ON acl.reference_type = 'ADMIN' AND a.id = acl.reference_id
+          WHERE acl.affiliate_user_id = $1 AND acl.entry_type = 'ADMIN_ADJUST'
+          ORDER BY acl.created_at DESC`,
+        [af.id],
+      ),
+    ]);
+    const payouts = [
+      ...monthly.map((p: any) => ({
+        ...p,
+        type: 'PAYOUT',
+        sortAt: p.paid_at ?? p.computed_at ?? p.created_at,
+      })),
+      ...adjustments.map((r: any) => ({
+        type: 'ADJUSTMENT',
+        id: Number(r.id),
+        flow: r.flow, // CREDIT | DEBIT
+        amount: parseFloat(r.amount),
+        balanceAfter: parseFloat(r.balance_after),
+        remark: r.remark,
+        adminName: r.admin_name ?? null,
+        adminEmail: r.admin_email ?? null,
+        createdAt: r.created_at,
+        sortAt: r.created_at,
+      })),
+    ].sort(
+      (a: any, b: any) =>
+        new Date(b.sortAt).getTime() - new Date(a.sortAt).getTime(),
+    );
 
     return {
       affiliate: {
@@ -467,7 +547,8 @@ export class AffiliateRevShareService {
       },
       kpis: {
         lifetimePaid: parseFloat(paidRows[0].v),
-        pendingCommission: live.grossEarning, // live MTD projection
+        // MTD commission = Σ per-player max(deposits − withdrawals, 0) × rate.
+        pendingCommission: live.grossEarning,
         playerDeposits: parseFloat(depRows[0].v),
         referredPlayers: Number(refRows[0].v),
         activePlayers: live.activePlayerCount,
@@ -475,6 +556,8 @@ export class AffiliateRevShareService {
       },
       currentMonth: {
         period,
+        // The commission basis (real-cash net deposit) and the resulting payout.
+        netDeposits: live.netDeposits,
         ngr: live.ngr,
         totalBets: live.totalBets,
         totalWins: live.totalWins,
@@ -491,8 +574,11 @@ export class AffiliateRevShareService {
   // ═════════════════════════════════════════════════════════════
   private async requireActiveAffiliate(userId: number) {
     const rows = await this.dataSource.query(
-      `SELECT id, user_id, revshare_tier, revshare_rate
-         FROM affiliate_users WHERE user_id = $1 AND is_active = TRUE LIMIT 1`,
+      `SELECT au.id, au.user_id, au.revshare_tier, au.revshare_rate, au.group_id,
+              g.rev_share_pct AS group_rate
+         FROM affiliate_users au
+         LEFT JOIN affiliate_groups g ON g.id = au.group_id
+        WHERE au.user_id = $1 AND au.is_active = TRUE LIMIT 1`,
       [userId],
     );
     if (!rows.length) throw new NotFoundException('You are not an active affiliate');
@@ -507,7 +593,8 @@ export class AffiliateRevShareService {
     const now = new Date();
     const period = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}`;
     const customRate = af.revshare_rate != null ? parseFloat(af.revshare_rate) : null;
-    const calc = await this.computeAffiliatePeriod(af.id, Number(af.user_id), period, cfg, customRate);
+    const groupRate = af.group_id != null && af.group_rate != null ? parseFloat(af.group_rate) : null;
+    const calc = await this.computeAffiliatePeriod(af.id, Number(af.user_id), period, cfg, customRate, groupRate);
 
     return {
       period,
