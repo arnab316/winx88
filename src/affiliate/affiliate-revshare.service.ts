@@ -478,46 +478,35 @@ export class AffiliateRevShareService {
       ),
     ]);
 
-    // Payouts feed = monthly NGR payouts + admin commission ADJUSTMENTS, merged
-    // newest-first, so the detail "Payout" tab shows manual credits/debits
-    // inline. Each entry carries a `type` ('PAYOUT' | 'ADJUSTMENT') so the UI
-    // can branch; adjustment rows include the remark + which admin made it.
-    const [monthly, adjustments] = await Promise.all([
-      this.getNgrHistory(af.id),
-      this.dataSource.query(
-        `SELECT acl.id, acl.flow, acl.amount, acl.balance_after,
-                acl.description AS remark, acl.created_at,
-                a.name AS admin_name, a.email AS admin_email
-           FROM affiliate_commission_ledger acl
-           LEFT JOIN admin_users a
-             ON acl.reference_type = 'ADMIN' AND a.id = acl.reference_id
-          WHERE acl.affiliate_user_id = $1 AND acl.entry_type = 'ADMIN_ADJUST'
-          ORDER BY acl.created_at DESC`,
-        [af.id],
-      ),
-    ]);
-    const payouts = [
-      ...monthly.map((p: any) => ({
-        ...p,
-        type: 'PAYOUT',
-        sortAt: p.paid_at ?? p.computed_at ?? p.created_at,
-      })),
-      ...adjustments.map((r: any) => ({
-        type: 'ADJUSTMENT',
-        id: Number(r.id),
-        flow: r.flow, // CREDIT | DEBIT
-        amount: parseFloat(r.amount),
-        balanceAfter: parseFloat(r.balance_after),
-        remark: r.remark,
-        adminName: r.admin_name ?? null,
-        adminEmail: r.admin_email ?? null,
-        createdAt: r.created_at,
-        sortAt: r.created_at,
-      })),
-    ].sort(
-      (a: any, b: any) =>
-        new Date(b.sortAt).getTime() - new Date(a.sortAt).getTime(),
+    // Payouts feed = WEEKLY COMMISSION credits + admin ADJUSTMENTS (credit/
+    // debit), newest-first — the affiliate's real commission history. (Monthly
+    // NGR is not used.) Each entry has `type`: 'COMMISSION' | 'ADJUSTMENT' and
+    // `flow`: 'CREDIT' | 'DEBIT'; adjustment rows carry the remark + which admin.
+    const ledgerRows = await this.dataSource.query(
+      `SELECT acl.id, acl.entry_type, acl.flow, acl.amount, acl.balance_after,
+              acl.description AS remark, acl.reference_type, acl.reference_id,
+              acl.created_at,
+              a.name AS admin_name, a.email AS admin_email
+         FROM affiliate_commission_ledger acl
+         LEFT JOIN admin_users a
+           ON acl.reference_type = 'ADMIN' AND a.id = acl.reference_id
+        WHERE acl.affiliate_user_id = $1
+          AND acl.entry_type IN ('WEEKLY_COMMISSION', 'ADMIN_ADJUST')
+        ORDER BY acl.created_at DESC, acl.id DESC`,
+      [af.id],
     );
+    const payouts = ledgerRows.map((r: any) => ({
+      type: r.entry_type === 'WEEKLY_COMMISSION' ? 'COMMISSION' : 'ADJUSTMENT',
+      id: Number(r.id),
+      flow: r.flow, // CREDIT | DEBIT
+      amount: parseFloat(r.amount),
+      balanceAfter: parseFloat(r.balance_after),
+      remark: r.remark,
+      // Only ADJUSTMENT rows have an acting admin.
+      adminName: r.admin_name ?? null,
+      adminEmail: r.admin_email ?? null,
+      createdAt: r.created_at,
+    }));
 
     return {
       affiliate: {
