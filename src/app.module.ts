@@ -40,6 +40,7 @@ import { AnnouncementModule } from './announcement/announcement.module';
 import { SportsModule } from './sports/sports.module';
 import { CatalogModule } from './catalog/catalog.module';
 import { RbacModule } from './rbac/rbac.module';
+import { ChannelsModule } from './channels/channels.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -96,6 +97,7 @@ import { RbacModule } from './rbac/rbac.module';
   SportsModule,
   CatalogModule,
   RbacModule,
+  ChannelsModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],

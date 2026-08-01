@@ -56,6 +56,18 @@ export class ChannelsService {
     return String(code ?? '').trim().toLowerCase().slice(0, 64);
   }
 
+  /**
+   * TypeORM returns `[rows, affectedCount]` from UPDATE/DELETE ... RETURNING
+   * but a plain rows array from INSERT/SELECT. Taking `result[0]` blindly on an
+   * UPDATE yields the rows ARRAY rather than the first row, which silently
+   * turns a "no rows matched" case into an apparent success. Always unwrap
+   * through here. Same idiom as rbac.service.ts.
+   */
+  private firstRow(res: any): any | undefined {
+    const rows = Array.isArray(res?.[0]) ? res[0] : res;
+    return Array.isArray(rows) ? rows[0] : undefined;
+  }
+
   /** Where the /c/:code links must point — the API host, not the public site. */
   private trackingBase(): string {
     return (process.env.APP_BASE_URL ?? 'https://winx-88.com').replace(/\/+$/, '');
@@ -191,7 +203,10 @@ export class ChannelsService {
         : `($2::timestamptz IS NULL OR ${col} >= $2::timestamptz)
            AND ($3::timestamptz IS NULL OR ${col} <  $3::timestamptz)`;
 
-    const dayCol = daily ? `g.day::date AS date,` : '';
+    // Formatted in SQL as a plain YYYY-MM-DD string. A bare ::date comes back
+    // as a Date and serializes to a UTC instant, so a non-UTC server would
+    // report the previous calendar day to the vendor.
+    const dayCol = daily ? `to_char(g.day, 'YYYY-MM-DD') AS date,` : '';
     const daySource = daily
       ? `CROSS JOIN generate_series($2::date, $3::date - INTERVAL '1 day', INTERVAL '1 day') AS g(day)`
       : '';
@@ -319,10 +334,12 @@ export class ChannelsService {
     fields.push(`updated_at = NOW()`);
     vals.push(id);
 
-    const [row] = await this.dataSource.query(
-      `UPDATE marketing_vendors SET ${fields.join(', ')} WHERE id = $${i}
-       RETURNING id, name, contact_email, status, notes, created_at`,
-      vals,
+    const row = this.firstRow(
+      await this.dataSource.query(
+        `UPDATE marketing_vendors SET ${fields.join(', ')} WHERE id = $${i}
+         RETURNING id, name, contact_email, status, notes, created_at`,
+        vals,
+      ),
     );
     if (!row) throw new NotFoundException('Vendor not found');
     return { success: true, data: { ...row, id: Number(row.id) } };
@@ -382,12 +399,14 @@ export class ChannelsService {
 
   /** Soft revoke: the row stays for the audit trail. */
   async revokeApiKey(vendorId: number, keyId: number) {
-    const [row] = await this.dataSource.query(
-      `UPDATE marketing_vendor_api_keys
-          SET status = 'REVOKED', revoked_at = NOW()
-        WHERE id = $1 AND vendor_id = $2 AND status = 'ACTIVE'
-        RETURNING id, key_prefix`,
-      [keyId, vendorId],
+    const row = this.firstRow(
+      await this.dataSource.query(
+        `UPDATE marketing_vendor_api_keys
+            SET status = 'REVOKED', revoked_at = NOW()
+          WHERE id = $1 AND vendor_id = $2 AND status = 'ACTIVE'
+          RETURNING id, key_prefix`,
+        [keyId, vendorId],
+      ),
     );
     if (!row) throw new NotFoundException('Active key not found for this vendor');
     return { success: true, message: `Key ${row.key_prefix} revoked` };
@@ -491,10 +510,12 @@ export class ChannelsService {
     fields.push(`updated_at = NOW()`);
     vals.push(id);
 
-    const [row] = await this.dataSource.query(
-      `UPDATE marketing_channels SET ${fields.join(', ')} WHERE id = $${i}
-       RETURNING id, code, name, vendor_id, platform, landing_path, is_active, created_at`,
-      vals,
+    const row = this.firstRow(
+      await this.dataSource.query(
+        `UPDATE marketing_channels SET ${fields.join(', ')} WHERE id = $${i}
+         RETURNING id, code, name, vendor_id, platform, landing_path, is_active, created_at`,
+        vals,
+      ),
     );
     if (!row) throw new NotFoundException('Channel not found');
     return {

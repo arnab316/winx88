@@ -154,6 +154,16 @@ async register(dto: any) {
       await this.attachAffiliateOnSignup(userId, affCode);
     }
 
+    // Marketing channel — a THIRD, separate attribution axis from the two
+    // above. Identifies which paid-ad campaign (?channel=) a player arrived
+    // through, for third-party media-buyer reporting. No payout is attached.
+    // Same post-commit, best-effort contract as the two systems above.
+    const chCode = (dto.channel ?? dto.channel_code ?? '').toString().trim();
+    const chClickUid = (dto.cid ?? dto.click_id ?? '').toString().trim();
+    if (chCode) {
+      await this.attachChannelOnSignup(userId, chCode, chClickUid);
+    }
+
     return {
       message: 'Account created successfully. Please verify your phone number.',
       userId,
@@ -414,6 +424,75 @@ async register(dto: any) {
       );
     } finally {
       await qr.release();
+    }
+  }
+
+  /**
+   * Tag a new player with the paid-ad campaign they arrived through.
+   *
+   * Separate from both systems above: no payout, no downline — this only feeds
+   * the third-party media-buyer report. Written with raw SQL here rather than
+   * by injecting ChannelsService, which would create an AuthModule ↔
+   * ChannelsModule circular dependency.
+   *
+   * FIRST TOUCH WINS — ON CONFLICT DO NOTHING on the user_id primary key, so a
+   * later signup attempt through a different campaign can never rewrite where
+   * a player originally came from. That is what makes the numbers defensible
+   * when a vendor disputes an invoice.
+   *
+   * An unregistered code is still recorded (is_unknown), matching the click
+   * side: a typo in a live campaign must be visible, not silently dropped.
+   */
+  private async attachChannelOnSignup(
+    userId: number,
+    channelCode: string,
+    clickUid?: string,
+  ): Promise<void> {
+    const code = channelCode.trim().toLowerCase().slice(0, 64);
+    if (!code) return;
+    try {
+      const chRows = await this.dataSource.query(
+        `SELECT id, vendor_id FROM marketing_channels WHERE code = $1 LIMIT 1`,
+        [code],
+      );
+      const channel = chRows[0] ?? null;
+
+      // Only honour a click id that actually belongs to this channel —
+      // otherwise a forged `cid` could credit another campaign's click.
+      let clickId: number | null = null;
+      if (clickUid) {
+        const clickRows = await this.dataSource.query(
+          `SELECT id FROM marketing_clicks
+            WHERE click_uid = $1 AND channel_code = $2 LIMIT 1`,
+          [clickUid, code],
+        );
+        clickId = clickRows.length ? Number(clickRows[0].id) : null;
+      }
+
+      await this.dataSource.query(
+        `INSERT INTO user_channel_attribution
+           (user_id, channel_code, channel_id, vendor_id, click_id, is_unknown, source)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (user_id) DO NOTHING`,
+        [
+          userId,
+          code,
+          channel?.id ?? null,
+          channel?.vendor_id ?? null,
+          clickId,
+          !channel,
+          clickId ? 'REDIRECT' : 'PARAM',
+        ],
+      );
+
+      this.logger.log(
+        `Channel attributed: userId=${userId} channel="${code}" ` +
+          `clickId=${clickId ?? '-'} unknown=${!channel}`,
+      );
+    } catch (e: any) {
+      this.logger.warn(
+        `attachChannelOnSignup failed (channel="${code}", userId=${userId}): ${e?.message}`,
+      );
     }
   }
 

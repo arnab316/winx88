@@ -1,0 +1,115 @@
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  ParseIntPipe,
+  Patch,
+  Post,
+  Query,
+  Req,
+  UseGuards,
+  UsePipes,
+  ValidationPipe,
+} from '@nestjs/common';
+import { ChannelsService } from './channels.service';
+import { AdminGuard } from '../common/guards/admin.guard';
+import { PermissionsGuard } from '../common/guards/permissions.guard';
+import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
+import {
+  CreateVendorDto,
+  UpdateVendorDto,
+  CreateApiKeyDto,
+  CreateChannelDto,
+  UpdateChannelDto,
+  ChannelListQueryDto,
+  UnknownClickQueryDto,
+} from './dto/channels.dto';
+
+/**
+ * Admin management of marketing vendors, their campaign channels, and the
+ * scoped API keys they use to pull reports.
+ *
+ * Permission resource is `marketing`, with `view` and `manage` actions. RBAC
+ * creates permission rows on first grant, so no RBAC code change is needed —
+ * just grant marketing.view / marketing.manage to a role.
+ */
+@Controller('admin/marketing')
+@UseGuards(AdminGuard, PermissionsGuard)
+@UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
+export class ChannelsAdminController {
+  constructor(private readonly channels: ChannelsService) {}
+
+  // ── Vendors ──────────────────────────────────────────────────
+  @Get('vendors')
+  @RequirePermissions('marketing', 'view')
+  listVendors() {
+    return this.channels.listVendors();
+  }
+
+  @Post('vendors')
+  @RequirePermissions('marketing', 'manage')
+  createVendor(@Req() req: any, @Body() dto: CreateVendorDto) {
+    return this.channels.createVendor(dto, Number(req.user?.sub));
+  }
+
+  @Patch('vendors/:id')
+  @RequirePermissions('marketing', 'manage')
+  updateVendor(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateVendorDto) {
+    return this.channels.updateVendor(id, dto);
+  }
+
+  // ── API keys ─────────────────────────────────────────────────
+  @Get('vendors/:id/keys')
+  @RequirePermissions('marketing', 'view')
+  listKeys(@Param('id', ParseIntPipe) id: number) {
+    return this.channels.listApiKeys(id);
+  }
+
+  /** Returns the plaintext key ONCE. It is not recoverable afterwards. */
+  @Post('vendors/:id/keys')
+  @RequirePermissions('marketing', 'manage')
+  createKey(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) id: number,
+    @Body() dto: CreateApiKeyDto,
+  ) {
+    return this.channels.createApiKey(id, dto, Number(req.user?.sub));
+  }
+
+  @Delete('vendors/:id/keys/:keyId')
+  @RequirePermissions('marketing', 'manage')
+  revokeKey(
+    @Param('id', ParseIntPipe) id: number,
+    @Param('keyId', ParseIntPipe) keyId: number,
+  ) {
+    return this.channels.revokeApiKey(id, keyId);
+  }
+
+  // ── Channels ─────────────────────────────────────────────────
+  @Get('channels')
+  @RequirePermissions('marketing', 'view')
+  listChannels(@Query() q: ChannelListQueryDto) {
+    return this.channels.listChannels(q);
+  }
+
+  @Post('channels')
+  @RequirePermissions('marketing', 'manage')
+  createChannel(@Req() req: any, @Body() dto: CreateChannelDto) {
+    return this.channels.createChannel(dto, Number(req.user?.sub));
+  }
+
+  @Patch('channels/:id')
+  @RequirePermissions('marketing', 'manage')
+  updateChannel(@Param('id', ParseIntPipe) id: number, @Body() dto: UpdateChannelDto) {
+    return this.channels.updateChannel(id, dto);
+  }
+
+  // ── Unknown codes (typo watch during a campaign launch) ──────
+  @Get('clicks/unknown')
+  @RequirePermissions('marketing', 'view')
+  unknownClicks(@Query() q: UnknownClickQueryDto) {
+    return this.channels.listUnknownClicks(q);
+  }
+}

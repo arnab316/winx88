@@ -91,7 +91,8 @@ async function bootstrap() {
       'Accept',
       'Origin',
       'X-Requested-With',
-      'x-device-fingerprint'
+      'x-device-fingerprint',
+      'x-api-key'
     ],
   });
 
