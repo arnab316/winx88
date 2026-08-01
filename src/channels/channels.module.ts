@@ -5,6 +5,7 @@ import { ChannelsPublicController } from './channels-public.controller';
 import { ChannelsVendorController } from './channels-vendor.controller';
 import { ChannelsAdminController } from './channels-admin.controller';
 import { VendorThrottlerGuard } from './vendor-throttler.guard';
+import { ClickRetentionService } from './click-retention.service';
 import { ApiKeyGuard } from '../common/guards/api-key.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { AuthModule } from '../auth/auth.module';
@@ -29,7 +30,13 @@ import { AuthModule } from '../auth/auth.module';
     ChannelsVendorController,
     ChannelsAdminController,
   ],
-  providers: [ChannelsService, ApiKeyGuard, AdminGuard, VendorThrottlerGuard],
+  providers: [
+    ChannelsService,
+    ApiKeyGuard,
+    AdminGuard,
+    VendorThrottlerGuard,
+    ClickRetentionService,
+  ],
   exports: [ChannelsService],
 })
 export class ChannelsModule {}
