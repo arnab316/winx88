@@ -5,7 +5,11 @@
       "PowerShell(git rev-list --left-right --count origin/dev...dev)",
       "PowerShell(git rev-list --left-right --count origin/master...master)",
       "Bash(export PGPASSWORD='Ynbvctbb@#$')",
-      "Bash(psql -h 15.207.97.72 -p 5432 -U postgres -d postgres -X -A '-F | ' -c ' *)"
+      "Bash(psql -h 15.207.97.72 -p 5432 -U postgres -d postgres -X -A '-F | ' -c ' *)",
+      "mcp__claude_ai_Postman__searchPostmanElements",
+      "mcp__claude_ai_Postman__getCollections",
+      "mcp__claude_ai_Postman__getCollection",
+      "mcp__claude_ai_Postman__createCollectionRequest"
     ]
   }
 }

@@ -3,11 +3,12 @@ import { UserService } from './user.service';
 import { UserController } from './user.controller';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { AuthModule } from 'src/auth/auth.module';
+import { LaafficService } from 'src/laaffic/laaffic.service';
 
 @Module({
   imports: [AuthModule],
   controllers: [UserController],
-  providers: [UserService, JwtAuthGuard],
+  providers: [UserService, JwtAuthGuard, LaafficService],
   exports: [JwtAuthGuard, UserService],
 
 })

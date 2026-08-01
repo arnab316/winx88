@@ -218,4 +218,11 @@ export class LaafficService {
     const { msgId } = await this.sendSms(phoneNumber, content);
     return msgId;
   }
+
+  /** Phone-add verification OTP convenience helper. */
+  async sendPhoneVerifyOtp(phoneNumber: string, otp: string): Promise<string | undefined> {
+    const content = `${otp} is your WinX88 phone verification code. Valid for 5 minutes. Do not share this code with anyone.`;
+    const { msgId } = await this.sendSms(phoneNumber, content);
+    return msgId;
+  }
 }

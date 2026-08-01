@@ -417,18 +417,47 @@ export class UserController {
     }
   }
 
+  // POST /user/phone/:phoneId/send-otp — sends the OTP for the verify step below
+  @Post('phone/:phoneId/send-otp')
+  async sendPhoneVerifyOtp(
+    @Req() req: any,
+    @Param('phoneId', ParseIntPipe) phoneId: number,
+  ) {
+    const userId = req.user?.sub;
+    this.logger.info('Send phone verify OTP started', {
+      context: UserController.name, userId, phoneId, ip: req.ip,
+    });
+    try {
+      const data = await this.userService.sendPhoneVerifyOtp(userId, phoneId);
+      this.logger.info('Phone verify OTP sent', {
+        context: UserController.name, userId, phoneId, ip: req.ip,
+      });
+      return { success: true, code: 200, message: data.message };
+    } catch (error: any) {
+      this.logger.error('Send phone verify OTP failed', {
+        context: UserController.name, userId, phoneId, ip: req.ip,
+        message: error.message, stack: error.stack,
+      });
+      throw new HttpException(
+        { success: false, message: error?.message || 'Failed' },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
   // PATCH /user/phone/:phoneId/verify
   @Patch('phone/:phoneId/verify')
   async verifyPhone(
     @Req() req: any,
     @Param('phoneId', ParseIntPipe) phoneId: number,
+    @Body() dto: { otp: string },
   ) {
     const userId = req.user?.sub;
     this.logger.info('Phone verification started', {
       context: UserController.name, userId, phoneId, ip: req.ip,
     });
     try {
-      const data = await this.userService.verifyPhone(userId, phoneId);
+      const data = await this.userService.verifyPhone(userId, phoneId, dto?.otp);
       this.logger.info('Phone verified successfully', {
         context: UserController.name, userId, phoneId, ip: req.ip,
       });

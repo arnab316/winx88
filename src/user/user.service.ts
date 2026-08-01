@@ -5,11 +5,20 @@ import {
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import * as crypto from 'crypto';
 import { assertPhoneAvailable } from '../common/phone.util';
+import { LaafficService } from '../laaffic/laaffic.service';
 
 @Injectable()
 export class UserService {
-  constructor(private dataSource: DataSource) {}
+  constructor(
+    private dataSource: DataSource,
+    private laafficService: LaafficService,
+  ) {}
+
+  private generateOtp(): string {
+    return crypto.randomInt(100000, 1000000).toString();
+  }
 
   // ═════════════════════════════════════════════════════════════
   // USER: GET OWN PROFILE
@@ -180,7 +189,120 @@ export class UserService {
     }
   }
 
-  async verifyPhone(userId: number, phoneId: number) {
+  // Purpose tag for user_otps rows created by this flow, so cooldown/daily
+  // limits and lookups here never collide with REGISTRATION or
+  // PASSWORD_RESET OTPs sent to the same number.
+  private static readonly PHONE_ADD_VERIFY_PURPOSE = 'PHONE_ADD_VERIFY';
+
+  async sendPhoneVerifyOtp(userId: number, phoneId: number) {
+    const phones = await this.dataSource.query(
+      `SELECT id, phone_number, is_verified FROM user_phone_numbers
+       WHERE id = $1 AND user_id = $2`,
+      [phoneId, userId],
+    );
+    if (!phones.length) throw new NotFoundException('Phone not found');
+    const phone = phones[0];
+    if (phone.is_verified) throw new BadRequestException('Phone is already verified');
+
+    const phoneNumber = phone.phone_number;
+    const purpose = UserService.PHONE_ADD_VERIFY_PURPOSE;
+
+    // 60s cooldown, same rule as registration/password-reset OTPs.
+    const recent = await this.dataSource.query(
+      `SELECT created_at FROM user_otps
+       WHERE phone_number = $1 AND purpose = $2
+       ORDER BY id DESC LIMIT 1`,
+      [phoneNumber, purpose],
+    );
+    if (recent.length) {
+      const timeLeft = 60_000 - (Date.now() - new Date(recent[0].created_at).getTime());
+      if (timeLeft > 0) {
+        throw new BadRequestException(
+          `Please wait ${Math.ceil(timeLeft / 1000)} seconds before requesting another OTP`,
+        );
+      }
+    }
+
+    // Daily limit: max 5 OTPs per phone per day.
+    const dailyCount = await this.dataSource.query(
+      `SELECT COUNT(*)::int AS count FROM user_otps
+       WHERE phone_number = $1 AND purpose = $2
+         AND created_at > NOW() - INTERVAL '24 hours'`,
+      [phoneNumber, purpose],
+    );
+    if (dailyCount[0].count >= 5) {
+      throw new BadRequestException('Too many OTP requests today. Try again tomorrow.');
+    }
+
+    const otp = this.generateOtp();
+    // Expiry computed by the DB — a JS UTC ISO string written into a
+    // timestamp-without-tz column reads as local clock time on a non-UTC DB.
+    const inserted = await this.dataSource.query(
+      `INSERT INTO user_otps (phone_number, otp, expires_at, purpose)
+       VALUES ($1, $2, NOW() + INTERVAL '5 minutes', $3)
+       RETURNING id`,
+      [phoneNumber, otp, purpose],
+    );
+    const otpRowId: number = inserted[0].id;
+
+    // LAAFFIC numbers never carry a leading "+".
+    const laafficNumber = String(phoneNumber).replace(/^\+/, '');
+    try {
+      if (process.env.NODE_ENV !== 'production') {
+        console.log(`[DEV PHONE VERIFY OTP] ${laafficNumber}: ${otp}`);
+      } else {
+        const msgId = await this.laafficService.sendPhoneVerifyOtp(laafficNumber, otp);
+        if (msgId) {
+          await this.dataSource.query(
+            `UPDATE user_otps SET provider_msg_id = $1 WHERE id = $2`,
+            [msgId, otpRowId],
+          );
+        }
+      }
+    } catch (err: any) {
+      throw new BadRequestException('Failed to send OTP. Please try again.');
+    }
+
+    return { message: 'OTP sent successfully' };
+  }
+
+  async verifyPhone(userId: number, phoneId: number, otp: string) {
+    if (!otp) throw new BadRequestException('otp is required');
+
+    const phones = await this.dataSource.query(
+      `SELECT id, phone_number, is_verified FROM user_phone_numbers
+       WHERE id = $1 AND user_id = $2`,
+      [phoneId, userId],
+    );
+    if (!phones.length) throw new NotFoundException('Phone not found');
+    const phone = phones[0];
+    if (phone.is_verified) return { message: 'Phone already verified' };
+
+    const purpose = UserService.PHONE_ADD_VERIFY_PURPOSE;
+    const otpRecord = await this.dataSource.query(
+      `SELECT id, otp, attempts,
+              EXTRACT(EPOCH FROM (expires_at - NOW())) * 1000 AS ms_remaining
+       FROM user_otps
+       WHERE phone_number = $1 AND purpose = $2 AND is_used = false
+       ORDER BY id DESC LIMIT 1`,
+      [phone.phone_number, purpose],
+    );
+    if (!otpRecord.length) throw new BadRequestException('No OTP found. Please request a new one.');
+
+    const record = otpRecord[0];
+    if (record.attempts >= 5) throw new BadRequestException('Too many attempts. Request a new OTP.');
+    if (parseFloat(record.ms_remaining) <= 0) throw new BadRequestException('OTP expired. Request a new one.');
+
+    if (record.otp !== String(otp)) {
+      await this.dataSource.query(
+        `UPDATE user_otps SET attempts = attempts + 1 WHERE id = $1`, [record.id],
+      );
+      throw new BadRequestException('Invalid OTP');
+    }
+
+    await this.dataSource.query(
+      `UPDATE user_otps SET is_used = true WHERE id = $1`, [record.id],
+    );
     await this.dataSource.query(
       `UPDATE user_phone_numbers SET is_verified = true WHERE id = $1 AND user_id = $2`,
       [phoneId, userId],
