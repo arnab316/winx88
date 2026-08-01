@@ -341,8 +341,11 @@ export class WalletService {
     await qr.startTransaction();
 
     try {
+      // FOR UPDATE: the auto-reject watcher can decide a deposit at the same
+      // moment an admin clicks Approve. Without the row lock both transactions
+      // read PENDING and the second write silently overwrites the first.
       const deps = await qr.query(
-        `SELECT * FROM deposits WHERE id = $1 LIMIT 1`,
+        `SELECT * FROM deposits WHERE id = $1 LIMIT 1 FOR UPDATE`,
         [dto.depositId],
       );
       if (!deps.length) throw new NotFoundException('Deposit not found');
@@ -469,9 +472,10 @@ export class WalletService {
         await qr.query(
           `UPDATE deposits
            SET status = 'REJECTED', decided_at = NOW(),
-               approved_by_admin_id = $1, rejection_reason = $2, updated_at = NOW()
-           WHERE id = $3`,
-          [dto.adminId, dto.rejectionReason ?? null, dto.depositId],
+               approved_by_admin_id = $1, rejection_reason = $2,
+               auto_rejected = $3, updated_at = NOW()
+           WHERE id = $4`,
+          [dto.adminId, dto.rejectionReason ?? null, dto.auto === true, dto.depositId],
         );
 
         await this.financialLedger.write({
@@ -491,13 +495,110 @@ export class WalletService {
           referenceId: dto.depositId,
           status: 'FAILED',
           description: dto.rejectionReason ?? 'Deposit rejected by admin',
-          createdByType: 'ADMIN',
+          createdByType: dto.auto === true ? 'SYSTEM' : 'ADMIN',
           createdById: dto.adminId ?? undefined,
         });
 
         await qr.commitTransaction();
         return { message: 'Deposit rejected.' };
       }
+    } catch (e) {
+      await qr.rollbackTransaction();
+      throw e;
+    } finally {
+      await qr.release();
+    }
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // DEPOSIT: REOPEN AN AUTO-REJECTED REQUEST
+  //   Safety valve for the pending-timeout watcher: the player really did
+  //   send the money, nobody got to the queue in time. Puts the row back in
+  //   the PENDING queue so the normal approve flow can credit it.
+  //
+  //   Only auto_rejected rows qualify — a rejection a human actually made
+  //   (wrong amount, fake screenshot, fraud) stays final.
+  //
+  //   requested_at is deliberately NOT touched: reports keep the true request
+  //   time, and reopened_at is what tells the watcher to leave this one alone
+  //   from now on.
+  // ═════════════════════════════════════════════════════════════
+  async reopenDeposit(depositId: number, adminId: number) {
+    const qr = this.dataSource.createQueryRunner();
+    await qr.connect();
+    await qr.startTransaction();
+
+    try {
+      const deps = await qr.query(
+        `SELECT id, user_id, status, auto_rejected,
+                amount, gateway_id, transaction_number
+           FROM deposits WHERE id = $1 LIMIT 1 FOR UPDATE`,
+        [depositId],
+      );
+      if (!deps.length) throw new NotFoundException('Deposit not found');
+
+      const dep = deps[0];
+      if (dep.status !== 'REJECTED')
+        throw new BadRequestException(
+          `Only a rejected deposit can be reopened — this one is ${dep.status}`,
+        );
+      if (!dep.auto_rejected)
+        throw new BadRequestException(
+          'This deposit was rejected by an admin, not by the pending timeout. It cannot be reopened.',
+        );
+
+      await qr.query(
+        `UPDATE deposits
+            SET status = 'PENDING', decided_at = NULL,
+                approved_by_admin_id = NULL, rejection_reason = NULL,
+                auto_rejected = false,
+                reopened_at = NOW(), reopened_by_admin_id = $1,
+                updated_at = NOW()
+          WHERE id = $2`,
+        [adminId, depositId],
+      );
+
+      // Balance is untouched (the reject never moved money) — this entry only
+      // restores the audit trail's "awaiting decision" state.
+      const wallet = await this.getWalletForUpdate(qr, dep.user_id);
+      const bal = parseFloat(wallet.balance);
+      const bon = parseFloat(wallet.bonus_balance);
+      const lck = parseFloat(wallet.locked_balance);
+
+      await this.financialLedger.write({
+        qr,
+        walletId: wallet.id,
+        userId: dep.user_id,
+        entryType: 'DEPOSIT_PENDING',
+        flow: 'CREDIT',
+        amount: parseFloat(dep.amount),   // informational — mirrors the original request entry
+        balanceBefore: bal,
+        balanceAfter: bal,
+        bonusBefore: bon,
+        bonusAfter: bon,
+        lockedBefore: lck,
+        lockedAfter: lck,
+        referenceType: 'DEPOSIT',
+        referenceId: depositId,
+        status: 'PENDING',
+        description: 'Auto-rejected deposit reopened by admin',
+        createdByType: 'ADMIN',
+        createdById: adminId,
+      });
+
+      await qr.commitTransaction();
+
+      // Put it back on open admin panels the same way a fresh request lands.
+      void this.notifyAdminsPendingRequest(
+        'DEPOSIT',
+        depositId,
+        dep.user_id,
+        parseFloat(dep.amount),
+        Number(dep.gateway_id),
+        dep.transaction_number,
+      );
+
+      return { message: 'Deposit reopened. It is back in the pending queue.', depositId };
     } catch (e) {
       await qr.rollbackTransaction();
       throw e;
@@ -1374,6 +1475,8 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          d.requested_at,
          d.decided_at,
          d.rejection_reason,
+         d.auto_rejected,   -- true = rejected by the pending-timeout watcher
+         d.reopened_at,
          d.promotion_id,
          d.provider,
          d.pay_type,

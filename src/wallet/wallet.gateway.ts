@@ -178,4 +178,19 @@ export class WalletGateway implements OnGatewayConnection, OnGatewayDisconnect {
       this.logger.error(`pushAdminEvent(${event}) failed: ${err.message}`);
     }
   }
+
+  // ═════════════════════════════════════════════════════════════
+  // PUBLIC METHOD — push an event to every socket of one player
+  //   ('user:{id}' room). Used for status changes that move no money,
+  //   e.g. 'deposit:auto-rejected', so an open deposit page updates
+  //   itself instead of showing a stale PENDING row.
+  // ═════════════════════════════════════════════════════════════
+  pushUserEvent(userId: number, event: string, payload: unknown) {
+    try {
+      this.server.to(`user:${userId}`).emit(event, payload);
+      this.logger.log(`${event} pushed to userId=${userId}`);
+    } catch (err: any) {
+      this.logger.error(`pushUserEvent(${event}) failed: ${err.message}`);
+    }
+  }
 }

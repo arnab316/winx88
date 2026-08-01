@@ -25,6 +25,7 @@ import { Module, forwardRef } from '@nestjs/common';
 import { WalletController } from './wallet.controller';
 import { WalletService } from './wallet.service';
 import { WalletGateway } from './wallet.gateway';
+import { DepositExpiryService } from './deposit-expiry.service';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
 import { AuthModule } from 'src/auth/auth.module';
 import { S3Service } from './s3.service';
@@ -49,6 +50,7 @@ import { PromotionModule } from 'src/promotion/promotion.module';
   providers: [
     WalletService,   // ← only once, no need for the provide/useClass wrapper
     WalletGateway,
+    DepositExpiryService,  // cron: auto-rejects stale PENDING manual deposits
     S3Service,
     JwtAuthGuard,
     // TurnoverModule was here by mistake — modules never go in providers

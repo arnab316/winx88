@@ -69,6 +69,9 @@ export interface AdminDepositDecideDto {
   adminId: number | null;   // null = automated/system decision (e.g. WinyPay callback)
   action: 'APPROVE' | 'REJECT';
   rejectionReason?: string;
+  // REJECT only — marks deposits.auto_rejected so the pending-timeout watcher's
+  // rejections stay distinguishable from a human one (and stay reopenable).
+  auto?: boolean;
 }
 
 export interface AdminWithdrawalDecideDto {

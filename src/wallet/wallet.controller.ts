@@ -316,7 +316,22 @@ export class WalletController {
       rejectionReason: body.rejectionReason,
     });
   }
- 
+
+  // POST /wallet/admin/deposits/:id/reopen
+  // Puts a deposit the pending-timeout watcher auto-rejected back into the
+  // PENDING queue, so a genuine deposit nobody got to in time can still be
+  // approved. Rejections an admin actually made are NOT reopenable.
+  // RBAC: deposit.approve — reopening is a step towards crediting money.
+  @UseGuards(AdminGuard, PermissionsGuard)
+  @RequirePermissions('deposit', 'approve')
+  @Post('admin/deposits/:id/reopen')
+  reopenDeposit(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) depositId: number,
+  ) {
+    return this.walletService.reopenDeposit(depositId, req.user.sub);
+  }
+
   // GET /wallet/admin/withdrawals?page=1&limit=20&status=PENDING|APPROVED|REJECTED|ALL
   // status defaults to PENDING (the approval queue).
   // RBAC: withdraw.view to open the list; withdraw.filter to use the search
