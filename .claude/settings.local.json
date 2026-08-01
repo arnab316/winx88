@@ -9,7 +9,11 @@
       "mcp__claude_ai_Postman__searchPostmanElements",
       "mcp__claude_ai_Postman__getCollections",
       "mcp__claude_ai_Postman__getCollection",
-      "mcp__claude_ai_Postman__createCollectionRequest"
+      "mcp__claude_ai_Postman__createCollectionRequest",
+      "Bash(npx tsc *)",
+      "Bash(node -e ' *)",
+      "Bash(curl -s --retry 3 --retry-connrefused --retry-delay 3 -X POST http://localhost:3000/admin/rbac/admins -H 'Authorization: Bearer __TRACKED_VAR__' -H 'Content-Type: application/json' -d '{\"name\":\"x\",\"email\":\"abc@yahoo.com\",\"password\":\"Test12345!\",\"roles\":[\"Team Lead\"]}')",
+      "Bash(curl -s -X POST http://localhost:3000/admin/rbac/admins -H 'Authorization: Bearer __TRACKED_VAR__' -H 'Content-Type: application/json' -d '{\"name\":\"x\",\"email\":\"abc@yahoo.com\",\"password\":\"Test12345!\",\"roles\":[\"Not A Role\"]}')"
     ]
   }
 }

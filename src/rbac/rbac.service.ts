@@ -359,6 +359,40 @@ export class RbacService {
     }));
   }
 
+  /**
+   * Map role identifiers from the frontend to canonical role codes. Accepts
+   * the code itself ("TL", "team_leader"), or the display name ("Team Lead",
+   * "Team Leader") — the admin panel sends whichever it has. Multi-word input
+   * is normalized the same way createRole derives codes ("Team Leader" →
+   * TEAM_LEADER), and display names are matched case-insensitively, since the
+   * two can legitimately differ (e.g. a renamed role keeps its original code).
+   */
+  private async resolveRoleCodes(roles: string[]): Promise<string[]> {
+    const inputs = (roles ?? []).map((r) => String(r).trim()).filter(Boolean);
+    if (!inputs.length) throw new BadRequestException('At least one role is required');
+
+    const all = await this.dataSource.query(`SELECT code, name FROM admin_roles`);
+    const toCode = (s: string) =>
+      s.replace(/[^a-zA-Z0-9]+/g, '_').replace(/^_+|_+$/g, '').toUpperCase();
+
+    const codes: string[] = [];
+    const unknown: string[] = [];
+    for (const input of inputs) {
+      const match = all.find(
+        (r: any) =>
+          r.code === toCode(input) ||
+          r.name.trim().toUpperCase() === input.toUpperCase(),
+      );
+      if (match) {
+        if (!codes.includes(match.code)) codes.push(match.code);
+      } else {
+        unknown.push(input);
+      }
+    }
+    if (unknown.length) throw new BadRequestException(`Unknown role(s): ${unknown.join(', ')}`);
+    return codes;
+  }
+
   async createAdmin(
     dto: { name: string; email: string; password: string; roles?: string[] },
     creatorAdminId: number,
@@ -366,16 +400,7 @@ export class RbacService {
     if (!dto.name?.trim() || !dto.email?.trim() || !dto.password) {
       throw new BadRequestException('name, email and password are required');
     }
-    const roleCodes = (dto.roles ?? []).map((r) => r.trim().toUpperCase()).filter(Boolean);
-    if (!roleCodes.length) throw new BadRequestException('At least one role is required');
-
-    const valid = await this.dataSource.query(
-      `SELECT code FROM admin_roles WHERE code = ANY($1)`,
-      [roleCodes],
-    );
-    const validCodes = valid.map((r: any) => r.code);
-    const unknown = roleCodes.filter((c) => !validCodes.includes(c));
-    if (unknown.length) throw new BadRequestException(`Unknown role(s): ${unknown.join(', ')}`);
+    const roleCodes = await this.resolveRoleCodes(dto.roles ?? []);
 
     const hashed = await bcrypt.hash(dto.password, 10);
     // Keep the legacy `role` column populated with a sensible primary role so
@@ -460,13 +485,7 @@ export class RbacService {
     const [admin] = await this.dataSource.query(`SELECT id FROM admin_users WHERE id = $1`, [adminId]);
     if (!admin) throw new NotFoundException('Admin not found');
 
-    const roleCodes = (roles ?? []).map((r) => r.trim().toUpperCase()).filter(Boolean);
-    if (!roleCodes.length) throw new BadRequestException('At least one role is required');
-
-    const valid = await this.dataSource.query(`SELECT code FROM admin_roles WHERE code = ANY($1)`, [roleCodes]);
-    const validCodes = valid.map((r: any) => r.code);
-    const unknown = roleCodes.filter((c) => !validCodes.includes(c));
-    if (unknown.length) throw new BadRequestException(`Unknown role(s): ${unknown.join(', ')}`);
+    const roleCodes = await this.resolveRoleCodes(roles ?? []);
 
     const qr = this.dataSource.createQueryRunner();
     await qr.connect();

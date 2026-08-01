@@ -5,6 +5,7 @@ import {
   Param,
   Query,
   Res,
+  StreamableFile,
   UseGuards,
   ParseIntPipe,
   UsePipes,
@@ -52,7 +53,9 @@ export class ReportsController {
       'Content-Disposition',
       `attachment; filename="member-report-${stamp}.xlsx"`,
     );
-    return xlsx;
+    // A bare Buffer gets JSON-serialized by the Express adapter
+    // ({"type":"Buffer","data":[...]}), corrupting the download.
+    return new StreamableFile(xlsx);
   }
 
   // GET /reports/players
