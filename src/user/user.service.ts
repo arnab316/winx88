@@ -5,6 +5,7 @@ import {
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
+import { assertPhoneAvailable } from '../common/phone.util';
 
 @Injectable()
 export class UserService {
@@ -101,9 +102,13 @@ export class UserService {
       if (phones.length >= 3) {
         throw new BadRequestException('Maximum 3 phone numbers allowed');
       }
-      if (phones.find((p: any) => p.phone_number === phoneNumber)) {
-        throw new BadRequestException('Phone already exists');
-      }
+      // One number = one account, ACROSS all accounts. Without this an account
+      // could add another account's primary number as its own secondary — the
+      // multi-account / referral-farming hole. Digits-only comparison, so
+      // "+8801969552779" cannot slip past "8801969552779".
+      await assertPhoneAvailable(qr, phoneNumber, {
+        message: 'This phone number is already registered to an account',
+      });
 
       const isPrimary = phones.length === 0;
       const result = await qr.query(
@@ -1005,16 +1010,12 @@ export class UserService {
 
     // Reject if the number is already registered to ANY account (excluding the
     // row being edited) — mirrors the global one-number-per-account rule the
-    // registration flow enforces. The DB unique index is only on
-    // (user_id, phone_number), so it blocks same-user dupes but NOT the same
-    // number across two users; this app-level check closes that gap.
-    const dupe = await this.dataSource.query(
-      `SELECT id FROM user_phone_numbers
-        WHERE phone_number = $1 AND id != $2
-        LIMIT 1`,
-      [trimmed, phoneId],
-    );
-    if (dupe.length) throw new BadRequestException('Phone number already registered');
+    // registration flow enforces. Compared digits-only, so the "+880…" / "0…"
+    // spellings of the same number cannot be used to sidestep it.
+    await assertPhoneAvailable(this.dataSource, trimmed, {
+      excludePhoneId: phoneId,
+      message: 'Phone number already registered',
+    });
 
     try {
       await this.dataSource.query(

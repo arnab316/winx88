@@ -704,6 +704,22 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
            aa.applied_at,
            aa.decided_at    AS application_decided_at,
            aa.rejection_reason,
+           -- WHO decided it. Populated for APPROVED *and* REJECTED rows, since
+           -- decideApplication() stamps decided_by_admin_id on both branches.
+           -- Two different records, deliberately both exposed:
+           --   decided_by_*  = admin who pressed Approve/Reject on the APPLICATION
+           --   approved_by_* = admin on the resulting affiliate_users row
+           -- Normally the same person. They diverge for an affiliate created
+           -- through the manual "make affiliate" route, which writes NO
+           -- application row — there aa.* is all NULL and only approved_by_* answers
+           -- "who made this an affiliate". Naming matches the KYC / applications
+           -- lists (decided_by_name / decided_by_email).
+           aa.decided_by_admin_id,
+           dadm.name  AS decided_by_name,
+           dadm.email AS decided_by_email,
+           au.approved_by_admin_id,
+           aadm.name  AS approved_by_name,
+           aadm.email AS approved_by_email,
            (SELECT COUNT(*) FROM referrals WHERE referrer_user_id = u.id)            AS downline_count,
            (SELECT COUNT(DISTINCT r.referee_user_id) FROM referrals r
              WHERE r.referrer_user_id = u.id
@@ -722,6 +738,8 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
          LEFT JOIN affiliate_applications aa ON aa.user_id = u.id
          JOIN wallets w ON w.user_id = u.id
          LEFT JOIN affiliate_groups g ON g.id = au.group_id
+         LEFT JOIN admin_users dadm ON dadm.id = aa.decided_by_admin_id
+         LEFT JOIN admin_users aadm ON aadm.id = au.approved_by_admin_id
          LEFT JOIN LATERAL (
            SELECT phone_number FROM user_phone_numbers
             WHERE user_id = u.id ORDER BY is_primary DESC, id ASC LIMIT 1

@@ -12,6 +12,7 @@ import { JwtService } from '@nestjs/jwt';
 import { TwilioService } from '../twilio/twilio.service';
 import { PromotionEngineService } from '../promotion/promotion-engine.service';
 import { LaafficService } from '../laaffic/laaffic.service';
+import { assertPhoneAvailable } from '../common/phone.util';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -72,11 +73,12 @@ async register(dto: any) {
     );
     if (usernameTaken.length) throw new BadRequestException('Username already taken');
 
-    // Check phone not already registered
-    const phoneTaken = await qr.query(
-      `SELECT 1 FROM user_phone_numbers WHERE phone_number = $1 LIMIT 1`, [phone_number],
-    );
-    if (phoneTaken.length) throw new BadRequestException('Phone number already registered');
+    // Check phone not already registered — on ANY account, as primary OR
+    // secondary. Compared digits-only so "+8801969552779", "8801969552779"
+    // and "01969552779" all count as the same number.
+    await assertPhoneAvailable(qr, phone_number, {
+      message: 'Phone number already registered',
+    });
 
     // Check email if provided
     if (email) {

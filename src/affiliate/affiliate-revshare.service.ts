@@ -431,10 +431,27 @@ export class AffiliateRevShareService {
               au.commission_balance, au.lifetime_commission,
               g.name AS group_name, g.rev_share_pct AS group_rate,
               p.phone_number,
-              u.username, u.full_name, u.email, u.user_code, u.referral_code, u.account_status
+              u.username, u.full_name, u.email, u.user_code, u.referral_code, u.account_status,
+              -- Who turned this user into an affiliate, and who decided their
+              -- application. Same admin in the normal flow; only approved_by_*
+              -- is set when they were made an affiliate manually (no
+              -- application row exists in that path).
+              au.approved_by_admin_id,
+              aadm.name  AS approved_by_name,
+              aadm.email AS approved_by_email,
+              aa.status  AS application_status,
+              aa.applied_at,
+              aa.decided_at AS application_decided_at,
+              aa.rejection_reason,
+              aa.decided_by_admin_id,
+              dadm.name  AS decided_by_name,
+              dadm.email AS decided_by_email
          FROM affiliate_users au
          JOIN users u ON u.id = au.user_id
          LEFT JOIN affiliate_groups g ON g.id = au.group_id
+         LEFT JOIN affiliate_applications aa ON aa.user_id = au.user_id
+         LEFT JOIN admin_users aadm ON aadm.id = au.approved_by_admin_id
+         LEFT JOIN admin_users dadm ON dadm.id = aa.decided_by_admin_id
          LEFT JOIN LATERAL (
            SELECT phone_number FROM user_phone_numbers
             WHERE user_id = u.id ORDER BY is_primary DESC, id ASC LIMIT 1
@@ -533,6 +550,32 @@ export class AffiliateRevShareService {
         paymentMethod: af.payment_method,
         paymentDetails: af.payment_details,
         approvedAt: af.approved_at,
+        // Who acted. `approvedBy` is null on legacy rows approved before the
+        // admin id was recorded, and on any row where the affiliate predates
+        // that column. `application` is null for affiliates created through
+        // the manual "make affiliate" route — they never filed one.
+        approvedBy: af.approved_by_admin_id != null
+          ? {
+              adminId: Number(af.approved_by_admin_id),
+              name: af.approved_by_name,
+              email: af.approved_by_email,
+            }
+          : null,
+        application: af.application_status != null
+          ? {
+              status: af.application_status,
+              appliedAt: af.applied_at,
+              decidedAt: af.application_decided_at,
+              rejectionReason: af.rejection_reason ?? null,
+              decidedBy: af.decided_by_admin_id != null
+                ? {
+                    adminId: Number(af.decided_by_admin_id),
+                    name: af.decided_by_name,
+                    email: af.decided_by_email,
+                  }
+                : null,
+            }
+          : null,
       },
       kpis: {
         lifetimePaid: parseFloat(paidRows[0].v),

@@ -17,6 +17,7 @@ import {
 import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import { VerificationService } from '../verification/verification.service';
+import { assertPhoneAvailable } from '../common/phone.util';
 
 // Mirrors the affiliate "Change Status" modal (ACTIVE = the only working
 // state; every other value makes is_active FALSE, pausing commission/weekly
@@ -304,6 +305,12 @@ export class AffiliateAdminService {
           ORDER BY is_primary DESC, id ASC LIMIT 1`,
         [userId],
       );
+      // Same one-number-one-account rule as the member routes: never let an
+      // affiliate edit take over a number that belongs to another account.
+      await assertPhoneAvailable(this.dataSource, dto.phone, {
+        excludePhoneId: existing.length ? existing[0].id : undefined,
+        message: 'Phone number already registered to another account',
+      });
       if (existing.length) {
         await this.dataSource.query(
           `UPDATE user_phone_numbers SET phone_number = $1, updated_at = NOW() WHERE id = $2`,
