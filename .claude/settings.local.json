@@ -3,7 +3,9 @@
     "allow": [
       "mcp__claude_ai_Postman__createCollectionResponse",
       "PowerShell(git rev-list --left-right --count origin/dev...dev)",
-      "PowerShell(git rev-list --left-right --count origin/master...master)"
+      "PowerShell(git rev-list --left-right --count origin/master...master)",
+      "Bash(export PGPASSWORD='Ynbvctbb@#$')",
+      "Bash(psql -h 15.207.97.72 -p 5432 -U postgres -d postgres -X -A '-F | ' -c ' *)"
     ]
   }
 }

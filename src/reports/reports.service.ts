@@ -7,6 +7,7 @@
 // date-boundable to keep it cheap on large player tables.
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import * as XLSX from 'xlsx';
 import {
   PlayerReportQueryDto,
   PlayerDrillQueryDto,
@@ -164,8 +165,16 @@ export class ReportsService {
     };
   }
 
-  /** CSV variant for the Export button (no pagination, hard cap). */
-  async getMemberSummaryCsv(q: MemberSummaryQueryDto): Promise<string> {
+  /**
+   * XLSX variant for the Export button (no pagination, hard cap).
+   *
+   * Username / Member ID are written as an actual .xlsx (not CSV) with those
+   * two columns forced to Excel's Text format. A plain CSV can't express
+   * "keep this as text" — Excel auto-detects any bare digit-only cell as a
+   * Number on open, and long ids (e.g. phone-number usernames) collapse into
+   * scientific notation with lost precision (`1349002233` -> `1.35E+09`).
+   */
+  async getMemberSummaryXlsx(q: MemberSummaryQueryDto): Promise<Buffer> {
     const { rows } = await this.memberSummaryRows(q, 10_000, 0);
     const data = rows.map((r: any) => this.mapSummaryRow(r));
 
@@ -181,24 +190,39 @@ export class ReportsService {
       'Count From Affiliate', 'Count To Affiliate',
       'Affiliate Transfer Count', 'Transfer From Affiliate', 'Transfer To Affiliate', 'Affiliate Transfer Total',
     ];
-    const esc = (v: any) => {
-      const s = String(v ?? '');
-      return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-    };
-    const lines = data.map((d) => [
-      d.username, d.memberId, d.groupName,
-      d.deposit.count, d.deposit.total, d.deposit.fee,
-      d.withdrawal.count, d.withdrawal.total, d.withdrawal.fee,
-      d.totalProfit,
-      d.adjustment.count, d.adjustment.in, d.adjustment.out, d.adjustment.total,
-      d.bet.count, d.bet.amount, d.bet.validAmount, d.bet.settleAmount, d.bet.winLoss, d.bet.turnover,
-      d.promotion.bonusTurnover, d.vip, d.rebate, d.depositBonus,
-      d.referral.commission, d.referral.bonus,
-      d.referral.countFromAffiliate, d.referral.countToAffiliate,
-      d.affiliateTransfer.count, d.affiliateTransfer.transferFromAffiliate,
-      d.affiliateTransfer.transferToAffiliate, d.affiliateTransfer.total,
-    ].map(esc).join(','));
-    return [header.join(','), ...lines].join('\r\n');
+    const aoa = [
+      header,
+      ...data.map((d) => [
+        d.username, d.memberId, d.groupName,
+        d.deposit.count, d.deposit.total, d.deposit.fee,
+        d.withdrawal.count, d.withdrawal.total, d.withdrawal.fee,
+        d.totalProfit,
+        d.adjustment.count, d.adjustment.in, d.adjustment.out, d.adjustment.total,
+        d.bet.count, d.bet.amount, d.bet.validAmount, d.bet.settleAmount, d.bet.winLoss, d.bet.turnover,
+        d.promotion.bonusTurnover, d.vip, d.rebate, d.depositBonus,
+        d.referral.commission, d.referral.bonus,
+        d.referral.countFromAffiliate, d.referral.countToAffiliate,
+        d.affiliateTransfer.count, d.affiliateTransfer.transferFromAffiliate,
+        d.affiliateTransfer.transferToAffiliate, d.affiliateTransfer.total,
+      ]),
+    ];
+
+    const sheet = XLSX.utils.aoa_to_sheet(aoa);
+    // Username = column A, Member ID = column B. Both can be long digit-only
+    // strings, so force Text format on every data row (row 0 is the header).
+    for (const col of ['A', 'B']) {
+      for (let row = 1; row < aoa.length; row++) {
+        const cell = sheet[`${col}${row + 1}`];
+        if (cell) {
+          cell.t = 's';
+          cell.z = '@';
+        }
+      }
+    }
+
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, sheet, 'Member Summary');
+    return XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }) as Buffer;
   }
 
   private async memberSummaryRows(

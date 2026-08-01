@@ -35,21 +35,24 @@ export class ReportsController {
     return this.reports.getMemberSummary(q);
   }
 
-  // GET /reports/member-summary/export — CSV download (Export button)
+  // GET /reports/member-summary/export — XLSX download (Export button)
   @Get('member-summary/export')
   @RequirePermissions('reports', 'export')
   async memberSummaryExport(
     @Query() q: MemberSummaryQueryDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const csv = await this.reports.getMemberSummaryCsv(q);
+    const xlsx = await this.reports.getMemberSummaryXlsx(q);
     const stamp = new Date().toISOString().slice(0, 10);
-    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader(
+      'Content-Type',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    );
     res.setHeader(
       'Content-Disposition',
-      `attachment; filename="member-report-${stamp}.csv"`,
+      `attachment; filename="member-report-${stamp}.xlsx"`,
     );
-    return csv;
+    return xlsx;
   }
 
   // GET /reports/players
