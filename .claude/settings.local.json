@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__claude_ai_Postman__createCollectionResponse",
+      "PowerShell(git rev-list --left-right --count origin/dev...dev)",
+      "PowerShell(git rev-list --left-right --count origin/master...master)"
+    ]
+  }
+}

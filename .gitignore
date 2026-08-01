@@ -2,7 +2,7 @@
 /dist
 /node_modules
 /build
-
+/claude-backup
 # Logs
 logs
 *.log
