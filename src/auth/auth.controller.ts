@@ -295,7 +295,13 @@ async register(
   });
 
   try {
-    const result = await this.authService.register(dto);
+    // Origin identifies which of our public domains the signup came from. It is
+    // set by the browser, so unlike a body field it cannot be forged by the
+    // caller — and it needs no frontend change to start working.
+    const result = await this.authService.register(
+      dto,
+      (req.headers['origin'] as string) ?? (req.headers['referer'] as string),
+    );
 
     // 🍪 Set cookies — user is immediately authenticated after register
     res.cookie('accessToken', result.accessToken, {

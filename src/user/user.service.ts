@@ -311,6 +311,68 @@ export class UserService {
   }
 
   // ═════════════════════════════════════════════════════════════
+  // ACQUISITION CHANNEL (member list "Channel Type / Channel Name")
+  //
+  // Where a player came from, resolved from four independent sources that were
+  // each built separately and never shared a schema:
+  //
+  //   Affiliate       referrals                 → affiliate's username
+  //   Refer A Friend  friend_referrals          → referrer's username
+  //   Marketing       user_channel_attribution  → ad campaign code
+  //   Direct          users.signup_domain       → which of our domains
+  //
+  // PRECEDENCE is by who gets paid: an affiliate earns revshare, a friend earns
+  // the ৳500 bonus, an agency gets credited for ad spend, nobody is owed for a
+  // direct signup. Ordering it this way keeps the member list consistent with
+  // what finance actually pays out when a player somehow matches two sources.
+  //
+  // Direct is the fallback and never null — a player registered before
+  // signup_domain existed shows type Direct with a null name, which is honest.
+  // There is no backfill for a header nobody stored.
+  // ═════════════════════════════════════════════════════════════
+
+  /** Lateral joins resolving each attribution source. Requires alias `u`. */
+  private static readonly CHANNEL_JOINS = `
+    LEFT JOIN LATERAL (
+      SELECT au.username
+        FROM referrals r
+        JOIN users au ON au.id = r.referrer_user_id
+       WHERE r.referee_user_id = u.id
+       LIMIT 1
+    ) aff ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT ru.username
+        FROM friend_referrals fr
+        JOIN users ru ON ru.id = fr.referrer_user_id
+       WHERE fr.referee_user_id = u.id
+       LIMIT 1
+    ) frd ON TRUE
+    LEFT JOIN LATERAL (
+      SELECT uca.channel_code, mc.name AS channel_label
+        FROM user_channel_attribution uca
+        LEFT JOIN marketing_channels mc ON mc.id = uca.channel_id
+       WHERE uca.user_id = u.id
+       LIMIT 1
+    ) mkt ON TRUE
+  `;
+
+  /** The two derived columns. Must be used together with CHANNEL_JOINS. */
+  private static readonly CHANNEL_COLUMNS = `
+    CASE
+      WHEN aff.username IS NOT NULL THEN 'Affiliate'
+      WHEN frd.username IS NOT NULL THEN 'Refer A Friend'
+      WHEN mkt.channel_code IS NOT NULL THEN 'Marketing'
+      ELSE 'Direct'
+    END AS channel_type,
+    CASE
+      WHEN aff.username IS NOT NULL THEN aff.username
+      WHEN frd.username IS NOT NULL THEN frd.username
+      WHEN mkt.channel_code IS NOT NULL THEN COALESCE(mkt.channel_label, mkt.channel_code)
+      ELSE u.signup_domain
+    END AS channel_name
+  `;
+
+  // ═════════════════════════════════════════════════════════════
   // ADMIN: LIST ALL USERS
   // ═════════════════════════════════════════════════════════════
   async getAllUsers(page = 1, limit = 20) {
@@ -353,7 +415,9 @@ export class UserService {
        uv.rejection_reason    AS kyc_rejection_reason,
        uv.submission_count    AS kyc_submission_count,
        uv.updated_at          AS kyc_updated_at,
- 
+
+       ${UserService.CHANNEL_COLUMNS},
+
        COUNT(*) OVER() AS total_count
      FROM users u
      LEFT JOIN wallets w
@@ -368,6 +432,7 @@ export class UserService {
      ) p ON true
      LEFT JOIN user_verifications uv
        ON uv.user_id = u.id
+     ${UserService.CHANNEL_JOINS}
      ORDER BY u.created_at DESC
      LIMIT $1 OFFSET $2`,
     [limit, offset],
@@ -443,10 +508,12 @@ export class UserService {
                     'is_primary', upn.is_primary, 'is_verified', upn.is_verified)
                     ORDER BY upn.is_primary DESC, upn.id ASC)
            FROM user_phone_numbers upn WHERE upn.user_id = u.id
-         ), '[]'::json) AS phone_numbers
+         ), '[]'::json) AS phone_numbers,
+         ${UserService.CHANNEL_COLUMNS}
        FROM users u
        LEFT JOIN wallets w ON w.user_id = u.id
        LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
+       ${UserService.CHANNEL_JOINS}
        ${whereClause}
        ORDER BY u.created_at DESC
        LIMIT 50`,
@@ -640,11 +707,14 @@ export class UserService {
            WHERE mgu.user_id = u.id
          ), '[]'::json) AS member_groups,
 
+         ${UserService.CHANNEL_COLUMNS},
+
          COUNT(*) OVER() AS total_count
        FROM users u
        LEFT JOIN wallets w           ON w.user_id = u.id
        LEFT JOIN vip_level_config vc ON vc.level = u.vip_level
        LEFT JOIN users ru            ON ru.id = u.referred_by_user_id
+       ${UserService.CHANNEL_JOINS}
        ${whereClause}
        ORDER BY u.created_at DESC
        LIMIT ${limitP} OFFSET ${offsetP}`,

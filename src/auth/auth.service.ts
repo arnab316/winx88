@@ -52,7 +52,14 @@ export class AuthService {
   //   User can log in right away.
   //   OTP verification is a separate step done later.
   // ═════════════════════════════════════════════════════════════
-async register(dto: any) {
+/**
+ * @param originHeader Browser Origin (or Referer) of the signup request. We run
+ *   more than one public domain, and for a player with no other attribution the
+ *   useful answer to "where did they come from" is which site they used. Taken
+ *   from the header rather than the payload so it needs no frontend change and
+ *   cannot be spoofed by editing the request body.
+ */
+async register(dto: any, originHeader?: string) {
   const { full_name, username, phone_number, password, email } = dto;
 
   if (!full_name || !username || !phone_number || !password) {
@@ -95,9 +102,12 @@ async register(dto: any) {
 
     // Create user
     const result = await qr.query(
-      `INSERT INTO users (full_name, email, password, user_code, username, referral_code)
-       VALUES ($1,$2,$3,$4,$5,$6) RETURNING id`,
-      [full_name, email ?? null, hashedPassword, userCode, username, referralCode],
+      `INSERT INTO users (full_name, email, password, user_code, username, referral_code, signup_domain)
+       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`,
+      [
+        full_name, email ?? null, hashedPassword, userCode, username, referralCode,
+        this.hostFromOrigin(originHeader),
+      ],
     );
     const userId = result[0].id;
 
@@ -912,6 +922,25 @@ async register(dto: any) {
   }
 
   // ─── Private helpers ─────────────────────────────────────────
+
+  /**
+   * Reduce an Origin/Referer header to a bare hostname for `users.signup_domain`
+   * — "https://winx88.net/register?x=1" becomes "winx88.net". Returns null for
+   *  anything unparseable (a same-origin or server-to-server call sends no
+   *  Origin at all), which the member list renders as Direct with no name.
+   */
+  private hostFromOrigin(origin?: string): string | null {
+    const raw = (origin ?? '').trim();
+    if (!raw) return null;
+    try {
+      return new URL(raw).hostname.replace(/^www\./, '').slice(0, 120) || null;
+    } catch {
+      // Bare host with no scheme, e.g. "winx88.net"
+      const bare = raw.replace(/^www\./, '').split('/')[0].split(':')[0].trim();
+      return /^[a-z0-9.-]+\.[a-z]{2,}$/i.test(bare) ? bare.slice(0, 120) : null;
+    }
+  }
+
   private generateOtp(): string {
     const crypto = require('crypto');
     return crypto.randomInt(100000, 1000000).toString();
