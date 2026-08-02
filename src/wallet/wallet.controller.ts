@@ -91,7 +91,9 @@ export class WalletController {
 
   // POST /wallet/deposit
   // form-data: screenshot=<file>, gatewayId, amount, transactionNumber,
-  //            agentId (recommended), promotionId (optional)
+  //            agentId (recommended), promotionId (optional),
+  //            playerNumber (optional — which of the player's own numbers they
+  //            paid from; GET /user/profile lists them for the dropdown)
   @UseGuards(JwtAuthGuard)
   @Post('deposit')
   @UseInterceptors(
@@ -157,9 +159,13 @@ export class WalletController {
       screenshotUrl,
       agentId:           body.agentId    ? parseInt(body.agentId, 10)    : undefined,
       promotionId:       body.promotionId ? parseInt(body.promotionId, 10) : undefined,
+      // Which of the player's own numbers they paid from (dropdown selection).
+      // Validated against user_phone_numbers in the service; omit to default to
+      // their primary number, which is what happened before this existed.
+      playerNumber:      body.playerNumber,
     });
   }
- 
+
   // POST /wallet/withdraw
   // body: { gatewayId, amount, receiveNumber }
   @UseGuards(JwtAuthGuard)

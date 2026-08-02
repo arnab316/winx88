@@ -55,6 +55,8 @@ export interface DepositRequestDto {
   screenshotUrl: string;    // S3 key/URL — uploaded before calling this,
   agentId?: number;        // Optional agent ID for tracking,
   promotionId?: number;    // Optional promotion ID for tracking,
+  playerNumber?: string;   // Which of the player's own phone numbers they sent
+                           // the money from. Omit to fall back to their primary.
 }
 
 export interface WithdrawalRequestDto {

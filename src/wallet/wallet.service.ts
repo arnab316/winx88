@@ -30,6 +30,7 @@ import { TurnoverService } from '../turnover/turnover.service';
 import { GameValidationService } from '../game/game-validation.service';
 import { PromotionEngineService } from '../promotion/promotion-engine.service';
 import { ReferralEngineService } from '../referral/referral-engine.service';
+import { phoneMatchForms } from '../common/phone.util';
 
 @Injectable()
 export class WalletService {
@@ -206,6 +207,52 @@ export class WalletService {
     }
   }
 
+  /**
+   * Resolve the "sender number" a player picked for a deposit.
+   *
+   * A player may hold up to three numbers, and the deposit form lets them
+   * choose which one they paid from — the admin sees it as `player_number`
+   * when approving. Selection therefore has to be verified server-side: a
+   * client could otherwise submit a number belonging to someone else, or one
+   * that does not exist, and the approving admin would have no way to tell.
+   *
+   * Returns the number AS STORED on the row (not the caller's spelling), or
+   * the primary number when nothing was chosen — preserving the previous
+   * behaviour for clients that don't send the field.
+   */
+  private async resolveOwnPhone(
+    qr: QueryRunner,
+    userId: number,
+    picked?: string,
+  ): Promise<string | null> {
+    const raw = picked?.trim();
+    if (!raw) {
+      const [primary] = await qr.query(
+        `SELECT phone_number FROM user_phone_numbers
+          WHERE user_id = $1 AND is_primary = true LIMIT 1`,
+        [userId],
+      );
+      return primary?.phone_number ?? null;
+    }
+
+    const forms = phoneMatchForms(raw);
+    if (!forms.length) throw new BadRequestException('playerNumber is not a valid phone number');
+
+    const [owned] = await qr.query(
+      `SELECT phone_number FROM user_phone_numbers
+        WHERE user_id = $1
+          AND regexp_replace(phone_number, '\\D', '', 'g') = ANY($2::text[])
+        LIMIT 1`,
+      [userId, forms],
+    );
+    if (!owned) {
+      throw new BadRequestException(
+        'playerNumber must be one of your own registered phone numbers',
+      );
+    }
+    return owned.phone_number;
+  }
+
   // ═════════════════════════════════════════════════════════════
   // DEPOSIT: USER REQUESTS
   //   Re-runs the shared deposit gate inside the transaction (catches
@@ -225,12 +272,22 @@ export class WalletService {
         promotionId: dto.promotionId,
       });
 
+      // Which of the player's own numbers they sent the money from. The client
+      // picks it from a dropdown, but the choice is re-checked here against
+      // user_phone_numbers — otherwise anyone could type a stranger's number
+      // and have it shown to the approving admin as the sender. Compared
+      // digits-only so "+8801..." and "01..." both match the stored value; the
+      // STORED string is the row's own, never the caller's spelling.
+      const playerNumber = await this.resolveOwnPhone(
+        qr, dto.userId, dto.playerNumber,
+      );
+
       const deposit = await qr.query(
         `INSERT INTO deposits
            (deposit_code, user_id, gateway_id, agent_id, promotion_id,
-            amount, transaction_number, screenshot_url, status,
+            amount, transaction_number, player_number, screenshot_url, status,
             requested_at, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'PENDING',NOW(),NOW(),NOW())
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,'PENDING',NOW(),NOW(),NOW())
          RETURNING id`,
         [
           generateCode('DP'),
@@ -240,6 +297,7 @@ export class WalletService {
           dto.promotionId ?? null,
           dto.amount,
           dto.transactionNumber,
+          playerNumber,
           dto.screenshotUrl,
         ],
       );
