@@ -15,7 +15,7 @@ import {
   BadRequestException,
 } from '@nestjs/common';
 import { AuthService } from '../auth/auth.service';
-import { AffiliateService } from './affiliate.service';
+import { AffiliateService, REVIEW_WINDOW_HOURS } from './affiliate.service';
 import { AffiliateRevShareService } from './affiliate-revshare.service';
 import { AffiliateWeeklyService } from './affiliate-weekly.service';
 import { AffiliateTransferService } from './affiliate-transfer.service';
@@ -88,8 +88,16 @@ export class AffiliateController {
     return {
       success: true,
       code: 201,
-      message: 'Account created. Affiliate application submitted for review.',
-      data: { ...result, affiliate: { status: 'PENDING' } },
+      message:
+        `Account created. Your affiliate application has been submitted for review — ` +
+        `approval can take up to ${REVIEW_WINDOW_HOURS} hours.`,
+      data: {
+        ...result,
+        affiliate: {
+          status: 'PENDING',
+          reviewWindowHours: REVIEW_WINDOW_HOURS,
+        },
+      },
     };
   }
 
@@ -106,6 +114,21 @@ export class AffiliateController {
   ) {
     const result = await this.authService.login(body);
     const affiliate = await this.affiliateService.getMyAffiliateStatus(result.user.id);
+
+    // Only approved, active partners get into the portal. Runs BEFORE the
+    // cookies are set and before the login event is recorded, so a pending or
+    // rejected applicant never ends up holding a portal session.
+    try {
+      this.affiliateService.assertPortalAccess(affiliate);
+    } catch (e) {
+      // The password was correct, so authService.login already persisted a
+      // refresh token. Revoke it rather than leaving a usable session behind
+      // for an account we just turned away.
+      await this.authService
+        .logout({ refreshToken: result.refreshToken })
+        .catch(() => undefined);
+      throw e;
+    }
 
     res.cookie('accessToken', result.accessToken, {
       httpOnly: true,

@@ -13,9 +13,105 @@ import {
   ToggleAffiliateDto,
 } from './dto';
 
+// How long an affiliate application is advertised to take. Only used for the
+// messages the partner portal shows — nothing expires or auto-decides at the
+// deadline; it is the SLA we quote, not a timer.
+export const REVIEW_WINDOW_HOURS = Number(process.env.AFFILIATE_REVIEW_HOURS) > 0
+  ? Math.floor(Number(process.env.AFFILIATE_REVIEW_HOURS))
+  : 72;
+
 @Injectable()
 export class AffiliateService {
   constructor(private dataSource: DataSource) {}
+
+  // ─────────────────────────────────────────────────────────────
+  // PARTNER PORTAL: who may enter
+  //   Called by POST /affiliate/login AFTER the password has been checked.
+  //   The credentials are valid at this point — this decides whether the
+  //   account belongs in the affiliate portal at all, and throws a message
+  //   the portal can display verbatim.
+  //
+  //   Every rejection is a 403 carrying a machine-readable `reason` so the
+  //   frontend can branch (show the review notice, the rejection reason, or
+  //   the "apply now" call to action) without string-matching the message.
+  // ─────────────────────────────────────────────────────────────
+  assertPortalAccess(affiliate: {
+    isAffiliate: boolean;
+    isActive: boolean;
+    application: {
+      status?: string;
+      applied_at?: string | Date | null;
+      rejection_reason?: string | null;
+    } | null;
+  }): void {
+    // Happy path: an approved, active partner.
+    if (affiliate.isAffiliate && affiliate.isActive) return;
+
+    // Was an affiliate, but the row is switched off (INACTIVE / SUSPENDED /
+    // LOCKED / BLOCKED all force is_active = false).
+    if (affiliate.isAffiliate) {
+      throw new ForbiddenException({
+        reason: 'AFFILIATE_INACTIVE',
+        message:
+          'Your affiliate account is currently inactive. Please contact support.',
+      });
+    }
+
+    const app = affiliate.application;
+    const status = app?.status?.toUpperCase();
+
+    if (status === 'PENDING') {
+      const appliedAt = app?.applied_at ? new Date(app.applied_at) : null;
+      const deadline = appliedAt
+        ? new Date(appliedAt.getTime() + REVIEW_WINDOW_HOURS * 3_600_000)
+        : null;
+      // Clamped at 0: an application sitting past the SLA still says
+      // "under review", never a negative countdown.
+      const hoursRemaining = deadline
+        ? Math.max(0, Math.ceil((deadline.getTime() - Date.now()) / 3_600_000))
+        : null;
+
+      throw new ForbiddenException({
+        reason: 'APPLICATION_PENDING',
+        message:
+          `Your affiliate application is still under review. Approval can take up ` +
+          `to ${REVIEW_WINDOW_HOURS} hours from submission — you will be able to ` +
+          `sign in as soon as it is approved.`,
+        appliedAt: appliedAt ? appliedAt.toISOString() : null,
+        reviewDeadline: deadline ? deadline.toISOString() : null,
+        hoursRemaining,
+        reviewWindowHours: REVIEW_WINDOW_HOURS,
+      });
+    }
+
+    if (status === 'REJECTED') {
+      const reason = app?.rejection_reason?.trim() || null;
+      throw new ForbiddenException({
+        reason: 'APPLICATION_REJECTED',
+        message: reason
+          ? `Your affiliate application was rejected: ${reason}`
+          : 'Your affiliate application was rejected.',
+        rejectionReason: reason,
+      });
+    }
+
+    // Approved on paper but no affiliate_users row — a data problem, not
+    // something the partner can fix by applying again.
+    if (status === 'APPROVED') {
+      throw new ForbiddenException({
+        reason: 'AFFILIATE_SETUP_INCOMPLETE',
+        message:
+          'Your application was approved but your partner account is not set up yet. Please contact support.',
+      });
+    }
+
+    // A normal player who never applied, using the partner login screen.
+    throw new ForbiddenException({
+      reason: 'NOT_AN_AFFILIATE',
+      message:
+        'This account is not registered as an affiliate. Please apply for the partner program first.',
+    });
+  }
 
   // ─────────────────────────────────────────────────────────────
   // USER: apply to become affiliate
