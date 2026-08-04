@@ -237,7 +237,10 @@ export class WalletController {
   // fields (member group / member id / user id / phone / trx id / dp id /
   // date range / gateway) — mirrors the admin-panel "Use deposit filters".
   @UseGuards(AdminGuard, PermissionsGuard)
-  @RequirePermissions('deposit', 'view')
+  // TEMP (2026-08-05, owner request): deposit.view gate lifted while staff role
+  // permissions are being set up — any logged-in admin can view. Re-enable by
+  // uncommenting the line below. Mutating actions stay gated.
+  // @RequirePermissions('deposit', 'view')
   @Get('admin/deposits')
   getDeposits(
     @Req() req: any,
@@ -293,7 +296,9 @@ export class WalletController {
     // Single deposit detail — full info including who approved it.
 
   @UseGuards(AdminGuard, PermissionsGuard)
-  @RequirePermissions('deposit', 'view')
+  // TEMP (2026-08-05): lifted together with the list gate above — the detail
+  // page must open when the list does. Re-enable both at the same time.
+  // @RequirePermissions('deposit', 'view')
   @Get('admin/deposits/:id')
   getDepositById(@Param('id', ParseIntPipe) depositId: number) {
     return this.walletService.getDepositById(depositId);
@@ -343,7 +348,9 @@ export class WalletController {
   // RBAC: withdraw.view to open the list; withdraw.filter to use the search
   // fields — mirrors the deposit search panel.
   @UseGuards(AdminGuard, PermissionsGuard)
-  @RequirePermissions('withdraw', 'view')
+  // TEMP (2026-08-05, owner request): withdraw.view gate lifted — see the
+  // matching note on GET admin/deposits. Re-enable by uncommenting.
+  // @RequirePermissions('withdraw', 'view')
   @Get('admin/withdrawals')
   getPendingWithdrawals(
     @Req() req: any,
