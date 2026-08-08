@@ -369,7 +369,7 @@ export class ChannelsService {
    */
   async createApiKey(vendorId: number, dto: CreateApiKeyDto, adminId: number) {
     const [vendor] = await this.dataSource.query(
-      `SELECT id FROM marketing_vendors WHERE id = $1`, [vendorId],
+      `SELECT id, name FROM marketing_vendors WHERE id = $1`, [vendorId],
     );
     if (!vendor) throw new NotFoundException('Vendor not found');
 
@@ -391,6 +391,13 @@ export class ChannelsService {
       data: {
         ...row,
         id: Number(row.id),
+        // Echo the owner back explicitly. The binding comes from the URL path
+        // (POST /vendors/:id/keys), so the request body alone gives no hint of
+        // who the key is for — and handing the right key to the wrong agency is
+        // not something you can discover later, because the secret is never
+        // shown again.
+        vendor_id: Number(vendorId),
+        vendor_name: vendor.name,
         apiKey: `${prefix}.${secret}`,
         warning: 'Store this key now — it will never be shown again.',
       },
