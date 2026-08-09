@@ -3,7 +3,11 @@
 For media buyers running paid traffic to WinX88. Gives you per-campaign clicks,
 registrations, first-time deposits (FTDs) and deposit totals.
 
-**Base URL:** `https://winx-88.com`
+**Base URL:** `https://safurion.online`
+
+> Tracking links and API calls both go to this host — it is the platform API.
+> Links pointing at `winx-88.com/c/...` will NOT register clicks; that domain
+> serves the player website, not the API.
 
 ---
 
@@ -11,7 +15,7 @@ registrations, first-time deposits (FTDs) and deposit totals.
 
 | Item | Example | Notes |
 |---|---|---|
-| Tracking link (one per campaign) | `https://winx-88.com/c/fb_bd_q3` | Point your ad's destination URL here |
+| Tracking link (one per campaign) | `https://safurion.online/c/fb_bd_q3` | Point your ad's destination URL here |
 | API key | `mk_FjPuftDN.xxxxxxxxxxxxxxxxxxxxxxxxx` | Shown once. Store it securely — it cannot be recovered |
 
 Campaign codes are created by us on request. Tell us the codes you want before
@@ -24,14 +28,14 @@ launch and we will register them and send the links back.
 Set your ad destination to:
 
 ```
-https://winx-88.com/c/<campaign_code>
+https://safurion.online/c/<campaign_code>
 ```
 
 We record the click and redirect the visitor to the registration page. You may
 append `?sub=<value>` to pass an ad-set or creative id through:
 
 ```
-https://winx-88.com/c/fb_bd_q3?sub=adset_77
+https://safurion.online/c/fb_bd_q3?sub=adset_77
 ```
 
 **Do not modify the link beyond `sub`.** Rewriting or shortening it through a
@@ -72,7 +76,7 @@ widen its scope.
 Lists your campaigns and their tracking links.
 
 ```bash
-curl -H "x-api-key: $KEY" https://winx-88.com/partner/channels
+curl -H "x-api-key: $KEY" https://safurion.online/partner/channels
 ```
 
 ```json
@@ -85,7 +89,7 @@ curl -H "x-api-key: $KEY" https://winx-88.com/partner/channels
       "platform": "FACEBOOK",
       "isActive": true,
       "createdAt": "2026-08-01T17:12:39.389Z",
-      "trackingUrl": "https://winx-88.com/c/fb_bd_q3"
+      "trackingUrl": "https://safurion.online/c/fb_bd_q3"
     }
   ]
 }
@@ -113,7 +117,7 @@ may not exceed **92 days**. Wider ranges return `400`.
 
 ```bash
 curl -H "x-api-key: $KEY" \
-  "https://winx-88.com/partner/stats?dateFrom=2026-08-01&dateTo=2026-08-31&granularity=day"
+  "https://safurion.online/partner/stats?dateFrom=2026-08-01&dateTo=2026-08-31&granularity=day"
 ```
 
 ```json
