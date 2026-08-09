@@ -6,6 +6,12 @@ ever attributed**, so the media buyer's report shows clicks and zero signups.
 
 ---
 
+> **The tracking link host is `safurion.online`, not the website.**
+> `https://winx-88.com/c/<code>` does NOT work — the website has no `/c/` route,
+> so it serves the app shell (or a 404) and the click is lost with no trace.
+> Nothing in this document changes that; see "Optional: serving links from the
+> brand domain" at the end if you want the brand-domain form.
+
 ## Why the frontend is involved at all
 
 The backend can log the click (it happens on our server, at `/c/:code`). But
@@ -17,7 +23,7 @@ The journey looks like this:
 
 ```
 1. User clicks an ad
-   → lands on  https://winx-88.com/c/fb_bd_q3
+   → lands on  https://safurion.online/c/fb_bd_q3
    → BACKEND logs the click, generates a click id (cid), redirects to:
      https://winx-88.com/register?channel=fb_bd_q3&cid=8b41...
 
@@ -160,7 +166,7 @@ actually belongs to the submitted channel and silently discards it if not.
 
 ## Testing
 
-1. Open `https://winx-88.com/c/fb_bd_q3` in a clean browser profile. You should
+1. Open `https://safurion.online/c/fb_bd_q3` in a clean browser profile. You should
    land on `/register?channel=fb_bd_q3&cid=<uuid>`.
 2. Check `localStorage.mkt_attr` — it should hold both values.
 3. Navigate away, close the tab, reopen the site normally. `mkt_attr` should
@@ -184,3 +190,37 @@ actually belongs to the submitted channel and silently discards it if not.
 
 `/c/track` is rate limited to 120 requests per minute per IP — call it once per
 session, not per page view.
+
+---
+
+## Optional: serving links from the brand domain
+
+Everything above works with links of the form
+`https://safurion.online/c/<code>`. If you want the link to read
+`https://winx-88.com/c/<code>` instead — nicer for Facebook, which scrutinises
+ads pointing at unfamiliar redirect hosts — that is a **separate, independent
+job**. Implementing the capture/forward steps above does not create the `/c/`
+route; the website would still 404.
+
+Two ways to get it, pick one:
+
+**A. Edge rewrite (recommended — no app code).** Cloudflare sits in front of
+the domains, so a Rule or Worker forwarding `/c/*` to the API does it:
+
+```nginx
+location /c/ {
+    proxy_pass https://safurion.online;
+    proxy_set_header Host $host;
+}
+```
+
+The backend keeps doing the logging and redirecting, exactly as now. Nothing in
+this document changes.
+
+**B. A frontend route.** Add a `/c/:code` route that calls
+`POST {API}/c/track` with the code, stores the returned `cid`, then sends the
+user to `/register`. Works, but it is strictly worse than A: the click is only
+recorded if JavaScript runs, so ad-blockers and fast bounces lose clicks that
+the server-side path would have caught.
+
+Until one of these ships, **give the vendor `safurion.online/c/<code>` links.**
