@@ -54,7 +54,10 @@
       "Bash(grep -nE \"async |commission_balance|SELECT|/\\\\*\\\\*|GET \")",
       "Bash(awk 'NR<=477 && /async [a-zA-Z]+\\\\\\(/ {line=NR\": \"$0} END{}' src/affiliate/affiliate.service.ts)",
       "Bash(awk -F: '$1<477')",
-      "Bash(PORT=3015 NODE_ENV=development DB_HOST=13.205.246.184 DB_PORT=5432 DB_USER=postgres DB_PASS='T56654@' DB_NAME=postgres node dist/src/main.js)"
+      "Bash(PORT=3015 NODE_ENV=development DB_HOST=13.205.246.184 DB_PORT=5432 DB_USER=postgres DB_PASS='T56654@' DB_NAME=postgres node dist/src/main.js)",
+      "Bash(curl -s -i --max-time 25 \"https://winx-88.com/c/hggh\")",
+      "Bash(curl -s -i --max-time 25 https://winx-88.com/c/hggh?cb=__TRACKED_VAR____TRACKED_VAR__)",
+      "Bash(curl -s -i --max-time 25 https://winx-88.com/c/neverseen__TRACKED_VAR__)"
     ]
   }
 }

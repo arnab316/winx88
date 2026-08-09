@@ -46,6 +46,10 @@ export class ChannelsPublicController {
       landingPath: req.originalUrl,
       subId: (req.query.sub ?? req.query.sub_id) as string | undefined,
       source: 'REDIRECT',
+      // Facebook appends fbclid to the ad's destination URL. Captured here so
+      // the server-side conversion sent at deposit approval — days later, with
+      // no browser involved — can still be matched to the ad that produced it.
+      fbclid: req.query.fbclid as string | undefined,
     });
 
     const base = (
@@ -57,12 +61,29 @@ export class ChannelsPublicController {
     // An unrecognised code still redirects — never 404 a paid click. The click
     // is recorded as unknown and surfaces in the admin unknown-codes feed.
     const path = result.landingPath ?? '/register';
-    const cid = result.clickUid ? `&cid=${encodeURIComponent(result.clickUid)}` : '';
 
-    return res.redirect(
-      302,
-      `${base}${path}?channel=${encodeURIComponent(channel ?? '')}${cid}`,
-    );
+    // Carry the INCOMING query string through to the landing page before adding
+    // our own params.
+    //
+    // Ad platforms attach their own click identifier to the destination URL —
+    // Facebook `fbclid`, Google `gclid`, TikTok `ttclid` — and the pixel on the
+    // landing page needs it to tie that pageview back to the ad. Building a
+    // fresh query string here silently dropped them, which breaks the
+    // advertiser's conversion attribution and, later, any server-side
+    // Conversions API match. Ours are set last so a caller cannot spoof them.
+    const out = new URLSearchParams();
+    for (const [k, v] of Object.entries(req.query)) {
+      if (k === 'channel' || k === 'cid') continue; // ours win, see below
+      if (Array.isArray(v)) v.forEach((x) => out.append(k, String(x)));
+      else if (v != null) out.append(k, String(v));
+    }
+    out.set('channel', channel ?? '');
+    if (result.clickUid) out.set('cid', result.clickUid);
+    // The campaign's bound pixel, for the frontend to fire ALONGSIDE ours.
+    // Absent when the channel has no pixel configured.
+    if (result.pixelId) out.set('pixel', result.pixelId);
+
+    return res.redirect(302, `${base}${path}?${out.toString()}`);
   }
 
   /**
@@ -86,7 +107,15 @@ export class ChannelsPublicController {
       landingPath: dto.landingPath,
       subId: dto.subId,
       source: 'PARAM',
+      fbclid: dto.fbclid,
+      // The browser's own _fbp cookie, if the pixel has already set one. Meta
+      // matches noticeably better with it than on fbclid alone.
+      fbp: dto.fbp,
     });
-    return { ok: result.ok, cid: result.clickUid ?? null };
+    return {
+      ok: result.ok,
+      cid: result.clickUid ?? null,
+      pixel: result.pixelId ?? null,
+    };
   }
 }

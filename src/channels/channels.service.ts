@@ -91,8 +91,15 @@ export class ChannelsService {
       landingPath?: string;
       subId?: string;
       source?: 'REDIRECT' | 'PARAM';
+      fbclid?: string;
+      fbp?: string;
     } = {},
-  ): Promise<{ ok: boolean; clickUid?: string; landingPath?: string }> {
+  ): Promise<{
+    ok: boolean;
+    clickUid?: string;
+    landingPath?: string;
+    pixelId?: string | null;
+  }> {
     const ch = this.normalizeCode(code);
     if (!ch) return { ok: false };
 
@@ -100,7 +107,7 @@ export class ChannelsService {
       // An unregistered code is still logged (is_unknown) — a typo in a live
       // campaign must surface in the unknown feed, never silently vanish.
       const rows = await this.dataSource.query(
-        `SELECT id, vendor_id, landing_path, is_active
+        `SELECT id, vendor_id, landing_path, is_active, pixel_id
            FROM marketing_channels WHERE code = $1 LIMIT 1`,
         [ch],
       );
@@ -112,8 +119,8 @@ export class ChannelsService {
       await this.dataSource.query(
         `INSERT INTO marketing_clicks
            (click_uid, channel_code, channel_id, vendor_id, is_unknown,
-            sub_id, ip, user_agent, referer, landing_path)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+            sub_id, ip, user_agent, referer, landing_path, fbclid, fbc, fbp)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [
           clickUid,
           ch,
@@ -125,6 +132,9 @@ export class ChannelsService {
           first(meta.userAgent),
           first(meta.referer),
           meta.landingPath ?? null,
+          meta.fbclid ?? null,
+          this.toFbc(meta.fbclid),
+          meta.fbp ?? null,
         ],
       );
 
@@ -132,12 +142,27 @@ export class ChannelsService {
         ok: true,
         clickUid,
         landingPath: channel?.landing_path ?? '/register',
+        pixelId: channel?.pixel_id ?? null,
       };
     } catch (e: any) {
       // Best-effort: swallow so the caller can still redirect.
       this.logger.warn(`recordChannelClick failed for "${ch}": ${e?.message}`);
       return { ok: false };
     }
+  }
+
+  /**
+   * Facebook's click id in the cookie format Meta's Conversions API expects:
+   * `fb.<subdomainIndex>.<creationTimeMs>.<fbclid>`.
+   *
+   * Derived and stored at click time because the timestamp must be when the
+   * click happened — recomputing it later (at deposit approval, possibly days
+   * on) would produce a value Meta cannot match, quietly degrading attribution.
+   */
+  private toFbc(fbclid?: string): string | null {
+    const id = (fbclid ?? '').trim();
+    if (!id) return null;
+    return `fb.1.${Date.now()}.${id}`.slice(0, 128);
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -474,9 +499,11 @@ export class ChannelsService {
     try {
       const [row] = await this.dataSource.query(
         `INSERT INTO marketing_channels
-           (code, name, vendor_id, platform, landing_path, created_by_admin_id)
-         VALUES ($1,$2,$3,$4,COALESCE($5,'/register'),$6)
-         RETURNING id, code, name, vendor_id, platform, landing_path, is_active, created_at`,
+           (code, name, vendor_id, platform, landing_path, created_by_admin_id,
+            pixel_id, capi_access_token)
+         VALUES ($1,$2,$3,$4,COALESCE($5,'/register'),$6,$7,$8)
+         RETURNING id, code, name, vendor_id, platform, landing_path, is_active,
+                   pixel_id, created_at`,
         [
           code,
           dto.name.trim(),
@@ -484,6 +511,8 @@ export class ChannelsService {
           dto.platform ?? null,
           dto.landingPath ?? null,
           adminId,
+          dto.pixelId?.trim() || null,
+          dto.capiAccessToken?.trim() || null,
         ],
       );
       this.logger.log(`Channel created code="${code}" vendor=${dto.vendorId ?? '-'} by admin=${adminId}`);
@@ -513,6 +542,13 @@ export class ChannelsService {
     if (dto.platform !== undefined) { fields.push(`platform = $${i++}`); vals.push(dto.platform); }
     if (dto.landingPath !== undefined) { fields.push(`landing_path = $${i++}`); vals.push(dto.landingPath); }
     if (dto.isActive !== undefined) { fields.push(`is_active = $${i++}`); vals.push(dto.isActive); }
+    // Empty string clears the binding, so a pixel can be unbound as well as set.
+    if (dto.pixelId !== undefined) {
+      fields.push(`pixel_id = $${i++}`); vals.push(dto.pixelId.trim() || null);
+    }
+    if (dto.capiAccessToken !== undefined) {
+      fields.push(`capi_access_token = $${i++}`); vals.push(dto.capiAccessToken.trim() || null);
+    }
     if (!fields.length) throw new BadRequestException('No fields to update');
     fields.push(`updated_at = NOW()`);
     vals.push(id);
@@ -520,7 +556,8 @@ export class ChannelsService {
     const row = this.firstRow(
       await this.dataSource.query(
         `UPDATE marketing_channels SET ${fields.join(', ')} WHERE id = $${i}
-         RETURNING id, code, name, vendor_id, platform, landing_path, is_active, created_at`,
+         RETURNING id, code, name, vendor_id, platform, landing_path, is_active,
+                   pixel_id, created_at`,
         vals,
       ),
     );

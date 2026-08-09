@@ -86,6 +86,18 @@ export class CreateChannelDto {
 
   @IsOptional() @IsString() @MaxLength(255)
   landingPath?: string;
+
+  // The media buyer's own Meta pixel. When set, this campaign's links carry it
+  // and conversions are reported to it — in addition to our own site pixel,
+  // never instead of it.
+  @IsOptional() @IsString() @MaxLength(32)
+  @Matches(/^[0-9]+$/, { message: 'pixelId must be numeric' })
+  pixelId?: string;
+
+  // Optional per-vendor CAPI token, for a buyer whose pixel lives in their own
+  // Business Manager. Falls back to the platform token when absent.
+  @IsOptional() @IsString()
+  capiAccessToken?: string;
 }
 
 export class UpdateChannelDto {
@@ -103,6 +115,25 @@ export class UpdateChannelDto {
 
   @IsOptional() @IsBoolean()
   isActive?: boolean;
+
+  @IsOptional() @IsString() @MaxLength(32)
+  @Matches(/^[0-9]*$/, { message: 'pixelId must be numeric' })
+  pixelId?: string;
+
+  @IsOptional() @IsString()
+  capiAccessToken?: string;
+}
+
+// ─── ADMIN: CAPI outbox health ──────────────────────────────────
+export class CapiEventQueryDto {
+  @IsOptional() @IsIn(['PENDING', 'SENT', 'FAILED', 'SKIPPED'])
+  status?: string;
+
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1)
+  page?: number = 1;
+
+  @IsOptional() @Type(() => Number) @IsInt() @Min(1) @Max(200)
+  limit?: number = 50;
 }
 
 // ─── ADMIN: list queries ────────────────────────────────────────
@@ -144,4 +175,13 @@ export class TrackClickDto {
 
   @IsOptional() @IsString()
   referer?: string;
+
+  // Ad-platform click identifiers, forwarded by the frontend when the visitor
+  // landed with ?fbclid= rather than passing through /c/:code. Both feed the
+  // server-side conversion match at deposit approval.
+  @IsOptional() @IsString() @MaxLength(255)
+  fbclid?: string;
+
+  @IsOptional() @IsString() @MaxLength(64)
+  fbp?: string;
 }

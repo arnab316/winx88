@@ -31,6 +31,7 @@ import { GameValidationService } from '../game/game-validation.service';
 import { PromotionEngineService } from '../promotion/promotion-engine.service';
 import { ReferralEngineService } from '../referral/referral-engine.service';
 import { phoneMatchForms } from '../common/phone.util';
+import { MetaCapiService } from '../meta/meta-capi.service';
 
 @Injectable()
 export class WalletService {
@@ -46,6 +47,8 @@ export class WalletService {
     private referralEngine: ReferralEngineService,
      @Inject(forwardRef(() => WalletGateway))
     private readonly walletGateway: WalletGateway,
+    // Meta conversions. From the @Global MetaModule, so no import cycle.
+    private readonly metaCapi: MetaCapiService,
   ) {}
 
   // ─── Helper: lock wallet row ──────────────────────────────────
@@ -421,6 +424,16 @@ export class WalletService {
       if (dto.action === 'APPROVE') {
         const newBal = bal + amt;
 
+        // Is this the player's first-ever approved deposit? Must be asked
+        // BEFORE the status UPDATE below, or this deposit counts itself.
+        // Served by idx_deposits_user_decided_approved (migration 2050…).
+        const [{ c: priorApproved }] = await qr.query(
+          `SELECT COUNT(*)::int AS c FROM deposits
+            WHERE user_id = $1 AND status = 'APPROVED'`,
+          [dep.user_id],
+        );
+        const isFtd = Number(priorApproved) === 0;
+
         await qr.query(
           `UPDATE wallets
            SET balance = $1, total_deposited = total_deposited + $2, updated_at = NOW()
@@ -515,6 +528,19 @@ export class WalletService {
         // Refer-a-friend deposit progress (referrer + referee sides). Isolated
         // via a SAVEPOINT inside the engine — never breaks the deposit.
         await this.referralEngine.onDeposit(qr, dep.user_id, amt);
+
+        // Meta conversion, queued in THIS transaction so it cannot exist for a
+        // deposit that rolls back nor be lost for one that commits. Only
+        // players attributed to a campaign with a bound pixel produce a row;
+        // the call is a no-op for everyone else and never throws.
+        await this.metaCapi.enqueue(qr, {
+          eventName: 'Purchase',
+          eventId: MetaCapiService.eventIdFor('dep', dto.depositId),
+          userId: Number(dep.user_id),
+          depositId: Number(dto.depositId),
+          value: amt,
+          isFtd,
+        });
 
         await qr.commitTransaction();
          await this.walletGateway.pushBalanceUpdate(dep.user_id)

@@ -25,7 +25,9 @@ import {
   UpdateChannelDto,
   ChannelListQueryDto,
   UnknownClickQueryDto,
+  CapiEventQueryDto,
 } from './dto/channels.dto';
+import { MetaCapiService } from '../meta/meta-capi.service';
 
 /**
  * Admin management of marketing vendors, their campaign channels, and the
@@ -39,7 +41,10 @@ import {
 @UseGuards(AdminGuard, PermissionsGuard)
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class ChannelsAdminController {
-  constructor(private readonly channels: ChannelsService) {}
+  constructor(
+    private readonly channels: ChannelsService,
+    private readonly metaCapi: MetaCapiService,
+  ) {}
 
   // ── Vendors ──────────────────────────────────────────────────
   @Get('vendors')
@@ -111,5 +116,16 @@ export class ChannelsAdminController {
   @RequirePermissions('marketing', 'view')
   unknownClicks(@Query() q: UnknownClickQueryDto) {
     return this.channels.listUnknownClicks(q);
+  }
+
+  /**
+   * Meta Conversions API outbox — the screen that answers "why has Facebook
+   * stopped receiving our conversions". Pending/sent/failed counts, the last
+   * error per event, and whether sending is enabled at all.
+   */
+  @Get('capi/events')
+  @RequirePermissions('marketing', 'view')
+  capiEvents(@Query() q: CapiEventQueryDto) {
+    return this.metaCapi.listEvents(q);
   }
 }

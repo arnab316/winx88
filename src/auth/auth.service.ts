@@ -13,6 +13,7 @@ import { TwilioService } from '../twilio/twilio.service';
 import { PromotionEngineService } from '../promotion/promotion-engine.service';
 import { LaafficService } from '../laaffic/laaffic.service';
 import { assertPhoneAvailable } from '../common/phone.util';
+import { MetaCapiService } from '../meta/meta-capi.service';
 @Injectable()
 export class AuthService {
   private readonly logger = new Logger(AuthService.name);
@@ -23,6 +24,8 @@ export class AuthService {
     private twilioService: TwilioService,
     private promotionEngine: PromotionEngineService,
     private laafficService: LaafficService,
+    // Meta conversions. From the @Global MetaModule, so no import cycle.
+    private readonly metaCapi: MetaCapiService,
   ) {}
 
   // ─── Fraud tracking: log REGISTER/LOGIN with IP + device fingerprint ──
@@ -494,6 +497,21 @@ async register(dto: any, originHeader?: string) {
           clickId ? 'REDIRECT' : 'PARAM',
         ],
       );
+
+      // Meta conversion for the signup. Runs after the attribution row exists,
+      // since enqueue resolves the pixel through it. No-op when the campaign
+      // has no pixel bound, and never throws.
+      const chQr = this.dataSource.createQueryRunner();
+      await chQr.connect();
+      try {
+        await this.metaCapi.enqueue(chQr, {
+          eventName: 'CompleteRegistration',
+          eventId: MetaCapiService.eventIdFor('reg', userId),
+          userId,
+        });
+      } finally {
+        await chQr.release();
+      }
 
       this.logger.log(
         `Channel attributed: userId=${userId} channel="${code}" ` +

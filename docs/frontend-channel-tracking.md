@@ -62,6 +62,7 @@ export function captureChannel() {
   localStorage.setItem(KEY, JSON.stringify({
     channel,
     cid: params.get('cid') || null,
+    pixel: params.get('pixel') || null,   // campaign's bound Meta pixel, if any
     ts: Date.now(),
   }));
 }
@@ -120,6 +121,40 @@ export async function beaconChannel() {
   }
 }
 ```
+
+### 3b. Meta pixel binding — fire the campaign's pixel too
+
+A campaign can have the media buyer's own Facebook pixel bound to it. When it
+does, the redirect adds `&pixel=<id>` to the landing URL. Capture it in step 1
+alongside `channel`/`cid`, then:
+
+```js
+const attr = getChannelAttribution();
+if (attr?.pixel) {
+  fbq('init', attr.pixel);   // IN ADDITION to the site pixel already in index.html
+}
+```
+
+**Never replace the existing site pixel.** Both must fire. If only the buyer's
+pixel runs, all the audience data and algorithmic learning from traffic we paid
+for accrues to their ad account and is lost to us when the relationship ends.
+Facebook handles multiple pixels on one page without complaint.
+
+### 3c. Registration event — with deduplication
+
+After a successful registration:
+
+```js
+fbq('track', 'CompleteRegistration', {}, { eventID: `reg_${userId}` });
+```
+
+The `eventID` **must** be `reg_<userId>` using the id returned by the register
+response. The backend queues a server-side event with exactly that id, and Meta
+uses it to merge the two into one conversion. Get it wrong — or omit it — and
+every registration is counted twice, inflating the numbers the buyer is paid on.
+
+Deposits need no frontend work: they are approved by an admin long after the
+browser has gone, so the backend sends those events on its own.
 
 ### 4. Registration — forward both values
 

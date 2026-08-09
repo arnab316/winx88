@@ -37,10 +37,15 @@ export class ClickRetentionService {
       // UPDATE ... RETURNING in TypeORM yields [rows, affectedCount]; take the
       // count defensively since the shape differs from a plain SELECT.
       const res = await this.dataSource.query(
+        // fbclid / fbc / fbp identify a person to Meta just as an IP does, so
+        // they fall under the same retention rule. Meta's match window is 7
+        // days — well inside this — so nothing usable is lost.
         `UPDATE marketing_clicks
-            SET ip = NULL, user_agent = NULL
+            SET ip = NULL, user_agent = NULL,
+                fbclid = NULL, fbc = NULL, fbp = NULL
           WHERE created_at < NOW() - ($1 || ' days')::interval
-            AND (ip IS NOT NULL OR user_agent IS NOT NULL)`,
+            AND (ip IS NOT NULL OR user_agent IS NOT NULL
+                 OR fbclid IS NOT NULL OR fbc IS NOT NULL OR fbp IS NOT NULL)`,
         [String(days)],
       );
       const scrubbed = Array.isArray(res) ? (res[1] ?? 0) : 0;
