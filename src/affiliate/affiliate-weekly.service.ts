@@ -412,7 +412,14 @@ export class AffiliateWeeklyService {
         [af.id],
       ),
       this.dataSource.query(
-        `SELECT user_code FROM users WHERE id = $1`,
+        `SELECT user_code, wallet_balance, bonus_balance FROM (
+           SELECT u.user_code,
+                  COALESCE(w.balance, 0)       AS wallet_balance,
+                  COALESCE(w.bonus_balance, 0) AS bonus_balance
+             FROM users u
+             LEFT JOIN wallets w ON w.user_id = u.id
+            WHERE u.id = $1
+         ) x`,
         [Number(af.user_id)],
       ),
     ]);
@@ -435,8 +442,27 @@ export class AffiliateWeeklyService {
     const balance = parseFloat(af.commission_balance);
     const lifetime = parseFloat(af.lifetime_commission);
 
+    // An affiliate is also a player, so they hold TWO separate pots and the two
+    // are constantly confused:
+    //
+    //   commissionBalance  what they have EARNED as an affiliate. Not spendable
+    //                      until transferred to the wallet (admin-approved).
+    //   wallet.balance     their ordinary player money, credited by deposits and
+    //                      by admin balance adjustments.
+    //
+    // An admin adjusting a *player* balance moves wallet.balance and leaves
+    // commission untouched, and vice versa — so both are returned side by side.
+    // `balance` is kept as an alias of commissionBalance for existing clients.
+    const walletBalance = parseFloat(userRows[0]?.wallet_balance ?? 0);
+    const bonusBalance = parseFloat(userRows[0]?.bonus_balance ?? 0);
+
     return {
-      balance,
+      balance,                    // legacy alias of commissionBalance
+      commissionBalance: balance, // affiliate earnings (needs transfer to spend)
+      wallet: {
+        balance: walletBalance,   // player money, spendable now
+        bonusBalance,
+      },
       members: {
         total: t.member_total,
         activePlayers: calc.activePlayerCount, // deposited in the current cycle
@@ -467,6 +493,40 @@ export class AffiliateWeeklyService {
    * member list, active players, week deposits/withdrawals, projected
    * commission, commission balance ("Earnings") and lifetime earnings.
    */
+  /**
+   * Current-week deposit / withdrawal / commission-basis totals for one
+   * affiliate, for reuse by the admin detail screen.
+   *
+   * Exposed so the admin view quotes the SAME numbers the weekly payout engine
+   * uses. Re-deriving them with a second query is how an admin screen ends up
+   * disagreeing with what was actually paid.
+   *
+   * NOTE `netAmount` is Σ per-player max(deposits − withdrawals, 0) — NOT
+   * `totalDeposits − totalWithdrawals`. A player who withdrew more than they
+   * deposited contributes 0, never a negative that would subsidise the rest.
+   * The two figures therefore will not reconcile by simple subtraction, and
+   * that is deliberate.
+   */
+  async getCurrentWeekTotals(ownerUserId: number): Promise<{
+    weekStart: string;
+    weekEnd: string;
+    totalDeposits: number;
+    totalWithdrawals: number;
+    netAmount: number;
+    activePlayerCount: number;
+  }> {
+    const { weekStart, weekEnd } = this.currentWeekBounds();
+    const calc = await this.computeWeek(ownerUserId, weekStart, weekEnd);
+    return {
+      weekStart,
+      weekEnd,
+      totalDeposits: calc.totalDeposits,
+      totalWithdrawals: calc.totalWithdrawals,
+      netAmount: calc.netAmount,
+      activePlayerCount: calc.activePlayerCount,
+    };
+  }
+
   async getWeeklyOverview(userId: number) {
     const af = await this.requireAffiliate(userId);
     const { weekStart, weekEnd } = this.currentWeekBounds();

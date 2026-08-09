@@ -8,8 +8,15 @@
 //                active-player minimum + payout threshold, roll forward
 //                sub-threshold balances, and queue payable rows.
 //   Finance then marks rows paid by the 5th.
-import { Injectable, NotFoundException, BadRequestException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  BadRequestException,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { AffiliateWeeklyService } from './affiliate-weekly.service';
 import { Cron } from '@nestjs/schedule';
 
 export interface RevShareConfig {
@@ -27,7 +34,13 @@ export interface RevShareConfig {
 
 @Injectable()
 export class AffiliateRevShareService {
-  constructor(private dataSource: DataSource) {}
+  constructor(
+    private dataSource: DataSource,
+    // Used so the admin detail screen quotes the same current-week figures the
+    // payout engine uses, rather than re-deriving them.
+    @Inject(forwardRef(() => AffiliateWeeklyService))
+    private readonly weekly: AffiliateWeeklyService,
+  ) {}
 
   // ── period helpers (UTC; convert at the edge per §10 timezone note) ──
   private periodBounds(period: string): { start: string; end: string } {
@@ -473,7 +486,8 @@ export class AffiliateRevShareService {
       af.id, Number(af.user_id), period, cfg, customRate, groupRate,
     );
 
-    const [paidRows, refRows, depRows, clickRows] = await Promise.all([
+    const [paidRows, refRows, depRows, clickRows, wdRows, ownWalletRows, week] =
+      await Promise.all([
       this.dataSource.query(
         `SELECT COALESCE(SUM(payable_amount),0) AS v
            FROM affiliate_monthly_ngr WHERE affiliate_user_id = $1 AND status = 'PAID'`,
@@ -493,6 +507,24 @@ export class AffiliateRevShareService {
         `SELECT COUNT(*) AS v FROM affiliate_clicks WHERE referrer_user_id = $1`,
         [af.user_id],
       ),
+      // Lifetime withdrawals across the downline — the counterpart to
+      // playerDeposits, so an admin can see both halves of the commission
+      // formula instead of only the deposits side.
+      this.dataSource.query(
+        `SELECT COALESCE(SUM(w.total_withdrawn),0) AS v
+           FROM referrals r JOIN wallets w ON w.user_id = r.referee_user_id
+          WHERE r.referrer_user_id = $1`,
+        [af.user_id],
+      ),
+      // The affiliate's own two pots — commission earned vs playable wallet.
+      this.dataSource.query(
+        `SELECT COALESCE(w.balance,0) AS wallet_balance,
+                COALESCE(w.bonus_balance,0) AS bonus_balance
+           FROM wallets w WHERE w.user_id = $1`,
+        [af.user_id],
+      ),
+      // Current-week figures straight from the payout engine.
+      this.weekly.getCurrentWeekTotals(Number(af.user_id)),
     ]);
 
     // Payouts feed = WEEKLY COMMISSION credits + admin ADJUSTMENTS (credit/
@@ -582,9 +614,33 @@ export class AffiliateRevShareService {
         // MTD commission = Σ per-player max(deposits − withdrawals, 0) × rate.
         pendingCommission: live.grossEarning,
         playerDeposits: parseFloat(depRows[0].v),
+        // Counterpart to playerDeposits so both halves of the commission
+        // formula are visible. CAUTION: commission is NOT
+        // (playerDeposits − playerWithdrawals) × rate — the real basis clamps
+        // each player at 0 individually, so a player who withdrew more than
+        // they deposited contributes nothing rather than a negative. Use the
+        // netAmount figures below for anything that must reconcile.
+        playerWithdrawals: parseFloat(wdRows[0].v),
         referredPlayers: Number(refRows[0].v),
         activePlayers: live.activePlayerCount,
         totalClicks: Number(clickRows[0].v),
+        // The affiliate's own money, in two separate pots:
+        //   commissionBalance — earned, needs an approved transfer to spend
+        //   walletBalance     — ordinary player money, spendable now
+        commissionBalance: parseFloat(af.commission_balance ?? '0'),
+        lifetimeCommission: parseFloat(af.lifetime_commission ?? '0'),
+        walletBalance: parseFloat(ownWalletRows[0]?.wallet_balance ?? 0),
+        bonusBalance: parseFloat(ownWalletRows[0]?.bonus_balance ?? 0),
+      },
+      // Straight from the weekly payout engine — the same numbers that decide
+      // what actually gets paid on Friday.
+      currentWeek: {
+        start: week.weekStart,
+        end: week.weekEnd,
+        totalDeposits: week.totalDeposits,
+        totalWithdrawals: week.totalWithdrawals,
+        netAmount: week.netAmount,        // Σ per-player max(dep − wd, 0)
+        activePlayers: week.activePlayerCount,
       },
       currentMonth: {
         period,

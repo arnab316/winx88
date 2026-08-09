@@ -46,7 +46,15 @@
       "Bash(curl -s -o /dev/null -w \"winx88.net/c/hggh     -> %{http_code} %{content_type} \\(redirect: %{redirect_url}\\)\\\\n\" --max-time 25 \"https://winx88.net/c/hggh\")",
       "Bash(curl -s -i --max-time 25 \"https://safurion.online/c/hggh\")",
       "Bash(curl -s -o /dev/null -w \"winx-88.com/test      -> %{http_code}\\\\n\" --max-time 25 \"https://winx-88.com/test\")",
-      "Bash(curl -s -o /dev/null -w \"winx-88.com/register  -> %{http_code}\\\\n\" --max-time 25 \"https://winx-88.com/register\")"
+      "Bash(curl -s -o /dev/null -w \"winx-88.com/register  -> %{http_code}\\\\n\" --max-time 25 \"https://winx-88.com/register\")",
+      "Bash(PORT=3013 NODE_ENV=development DB_HOST=13.205.246.184 DB_PORT=5432 DB_USER=postgres DB_PASS='T56654@' DB_NAME=postgres node dist/src/main.js)",
+      "Bash(PORT=3014 NODE_ENV=development DB_HOST=13.205.246.184 DB_PORT=5432 DB_USER=postgres DB_PASS='T56654@' DB_NAME=postgres node dist/src/main.js)",
+      "Bash(curl -s -H 'Authorization: Bearer __TRACKED_VAR__' localhost:3014/affiliate/admin/755/detail --max-time 60)",
+      "Bash(timeout 40 psql -h 13.205.246.184 -p 5432 -U postgres -d postgres -X -A '-F | ' -c ' *)",
+      "Bash(grep -nE \"async |commission_balance|SELECT|/\\\\*\\\\*|GET \")",
+      "Bash(awk 'NR<=477 && /async [a-zA-Z]+\\\\\\(/ {line=NR\": \"$0} END{}' src/affiliate/affiliate.service.ts)",
+      "Bash(awk -F: '$1<477')",
+      "Bash(PORT=3015 NODE_ENV=development DB_HOST=13.205.246.184 DB_PORT=5432 DB_USER=postgres DB_PASS='T56654@' DB_NAME=postgres node dist/src/main.js)"
     ]
   }
 }
