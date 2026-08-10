@@ -14,7 +14,8 @@
       "Bash(node -e ' *)",
       "Bash(curl -s -w '\\\\n[http %{http_code}]\\\\n' -X POST localhost:3000/user/phone/908/send-otp -H 'Authorization: Bearer __TRACKED_VAR__' --max-time 60)",
       "Bash(curl -s -X POST localhost:3020/wallet/admin/deposits/359/decide -H 'Authorization: Bearer __TRACKED_VAR__' -H 'Content-Type: application/json' -d '{\"action\":\"REJECT\",\"rejectionReason\":\"test\"}' --max-time 90)",
-      "Bash(psql -h 13.205.246.184 -p 5432 -U postgres -d postgres -X -A -t -c ' *)"
+      "Bash(psql -h 13.205.246.184 -p 5432 -U postgres -d postgres -X -A -t -c ' *)",
+      "Bash(node \"/c/Users/found/AppData/Local/Temp/claude/c--Users-found-Desktop-WORK-winx88/6b8cf43f-b49a-4015-bcca-15f9959bbfed/scratchpad/validate-collection.js\")"
     ]
   }
 }
