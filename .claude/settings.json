@@ -15,7 +15,17 @@
       "Bash(curl -s -w '\\\\n[http %{http_code}]\\\\n' -X POST localhost:3000/user/phone/908/send-otp -H 'Authorization: Bearer __TRACKED_VAR__' --max-time 60)",
       "Bash(curl -s -X POST localhost:3020/wallet/admin/deposits/359/decide -H 'Authorization: Bearer __TRACKED_VAR__' -H 'Content-Type: application/json' -d '{\"action\":\"REJECT\",\"rejectionReason\":\"test\"}' --max-time 90)",
       "Bash(psql -h 13.205.246.184 -p 5432 -U postgres -d postgres -X -A -t -c ' *)",
-      "Bash(node \"/c/Users/found/AppData/Local/Temp/claude/c--Users-found-Desktop-WORK-winx88/6b8cf43f-b49a-4015-bcca-15f9959bbfed/scratchpad/validate-collection.js\")"
+      "Bash(node \"/c/Users/found/AppData/Local/Temp/claude/c--Users-found-Desktop-WORK-winx88/6b8cf43f-b49a-4015-bcca-15f9959bbfed/scratchpad/validate-collection.js\")",
+      "WebFetch(domain:ggr.gitbook.io)",
+      "Bash(curl -s -X POST https://api.nexusggr.com -H 'Content-Type: application/json' -d '{\"method\":\"provider_list\",\"agent_code\":\"darksveer_BDT\",\"agent_token\":\"06213d5bde3f9c98ab74a2b9fa07e7e0\"}' --max-time 25)",
+      "Bash(curl -s -X POST https://api.nexusggr.com -H 'Content-Type: application/json' -d '{\"method\":\"provider_list\",\"agent_code\":\"darksveer_BDT\",\"agent_token\":\"06213d5bde3f9c98ab74a2b9fa07e7e0\"}' --max-time 30)",
+      "Bash(cd \"/c/Users/found/Desktop/WORK/winx88\" && cat \"/c/Users/found/AppData/Local/Temp/claude/c--Users-found-Desktop-WORK-winx88/6b8cf43f-b49a-4015-bcca-15f9959bbfed/scratchpad/prov.json\" | head -c 400)",
+      "Read(//c/Users/found/AppData/Local/Temp/claude/c--Users-found-Desktop-WORK-winx88/6b8cf43f-b49a-4015-bcca-15f9959bbfed/scratchpad/**)",
+      "Bash(curl -s -4 -X POST https://api.nexusggr.com -H 'Content-Type: application/json' -d '{\"method\":\"provider_list\",\"agent_code\":\"darksveer_BDT\",\"agent_token\":\"06213d5bde3f9c98ab74a2b9fa07e7e0\"}' --max-time 30)",
+      "Bash(curl -s -6 -X POST https://api.nexusggr.com -H 'Content-Type: application/json' -d '{\"method\":\"provider_list\",\"agent_code\":\"darksveer_BDT\",\"agent_token\":\"06213d5bde3f9c98ab74a2b9fa07e7e0\"}' --max-time 30)",
+      "Bash(PORT=3032 NODE_ENV=development DB_HOST=13.205.246.184 DB_PORT=5432 DB_USER=postgres DB_PASS='T56654@' DB_NAME=postgres NEXUS_AGENT_CODE=darksveer_BDT NEXUS_AGENT_TOKEN=06213d5bde3f9c98ab74a2b9fa07e7e0 NEXUS_AGENT_SECRET=dade54471925c85e5b23d8775f6fb0e3 node dist/src/main.js)",
+      "Bash(PORT=3033 NODE_ENV=development DB_HOST=13.205.246.184 DB_PORT=5432 DB_USER=postgres DB_PASS='T56654@' DB_NAME=postgres NEXUS_AGENT_CODE=darksveer_BDT NEXUS_AGENT_TOKEN=06213d5bde3f9c98ab74a2b9fa07e7e0 NEXUS_AGENT_SECRET=dade54471925c85e5b23d8775f6fb0e3 node dist/src/main.js)",
+      "Bash(curl -s -X POST localhost:3033/nexus/admin/sync -H 'Authorization: Bearer __TRACKED_VAR__' -H 'Content-Type: application/json' -d '{}' --max-time 900)"
     ]
   }
 }

@@ -1,4 +1,11 @@
-import { Injectable, Logger, HttpException, HttpStatus } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  HttpException,
+  HttpStatus,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { HttpService } from '@nestjs/axios';
 import { DataSource, QueryRunner } from 'typeorm';
@@ -17,6 +24,7 @@ import {
 import { SlotGameCallbackDataDTO } from './dto/slotgamecallback.dto';
 import { SportsCallbackDataDTO } from './dto/sportscallback.dto';
 import { TurnoverService } from '../turnover/turnover.service';
+import { NexusService } from '../nexus/nexus.service';
 
 function wait(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -115,6 +123,10 @@ export class SportsService {
     private readonly dataSource: DataSource,
     private readonly walletGateway: WalletGateway,
     private readonly turnoverService: TurnoverService,
+    // Nexus games share this catalog, so the shared launch path needs to reach
+    // its client. forwardRef: NexusModule imports WalletModule, which SportsModule also pulls in.
+    @Inject(forwardRef(() => NexusService))
+    private readonly nexusService: NexusService,
   ) {
     this.casinoInfo = {
       apiUrl:
@@ -481,6 +493,21 @@ export class SportsService {
     const user = userRows[0];
 
     if (query?.searchType === 'real') {
+      // Nexus is checked FIRST and by aggregator, not by type: its catalog
+      // contains slots as well as live games, so a type-based check further
+      // down would route a Nexus slot into the Palace flow and fail.
+      if (game.aggregator === 'NEXUS') {
+        this.logger.log(
+          `[getGameUrl] NEXUS path - provider: ${game.vendor_code}, game: ${game.game_code}`,
+        );
+        try {
+          return await this.nexusService.getLaunchUrl(userId, uuid, 'en');
+        } catch (error: any) {
+          this.logger.error(`[getGameUrl] NEXUS error: ${error?.message}`);
+          return null;
+        }
+      }
+
       if (
         game.type === 'slots' ||
         game.provider === 'Spribe' ||
@@ -907,8 +934,13 @@ export class SportsService {
         `[OroPlay] Found ${liveVendors.length} live casino vendors`,
       );
 
+      // Scoped away from Nexus rows: this reload clears the whole live catalog
+      // by type, which would otherwise wipe every game synced from the Nexus
+      // aggregator (they share this table and use the same live types).
       await this.dataSource.query(
-        `DELETE FROM casino_games WHERE type NOT IN ('slots', 'instant')`,
+        `DELETE FROM casino_games
+          WHERE type NOT IN ('slots', 'instant')
+            AND aggregator IS DISTINCT FROM 'NEXUS'`,
       );
 
       let totalInserted = 0;
@@ -1309,8 +1341,12 @@ export class SportsService {
     try {
       const apiProvidersEndpoint = `${this.slotInfo.apiUrl}/v4/game/providers`;
       const apiGamesEndpoint = `${this.slotInfo.apiUrl}/v4/game/games`;
+      // Same guard as the live sync above — Nexus slots live in this table too
+      // and must survive a Palace catalog reload.
       await this.dataSource.query(
-        `DELETE FROM casino_games WHERE type = 'slots'`,
+        `DELETE FROM casino_games
+          WHERE type = 'slots'
+            AND aggregator IS DISTINCT FROM 'NEXUS'`,
       );
 
       const providersResponse = await firstValueFrom(

@@ -57,7 +57,22 @@
       "Bash(PORT=3015 NODE_ENV=development DB_HOST=13.205.246.184 DB_PORT=5432 DB_USER=postgres DB_PASS='T56654@' DB_NAME=postgres node dist/src/main.js)",
       "Bash(curl -s -i --max-time 25 \"https://winx-88.com/c/hggh\")",
       "Bash(curl -s -i --max-time 25 https://winx-88.com/c/hggh?cb=__TRACKED_VAR____TRACKED_VAR__)",
-      "Bash(curl -s -i --max-time 25 https://winx-88.com/c/neverseen__TRACKED_VAR__)"
+      "Bash(curl -s -i --max-time 25 https://winx-88.com/c/neverseen__TRACKED_VAR__)",
+      "WebFetch(domain:ggr.gitbook.io)",
+      "Bash(curl -s -X POST https://api.nexusggr.com -H 'Content-Type: application/json' -d '{\"method\":\"provider_list\",\"agent_code\":\"winx88\",\"agent_token\":\"06213d5bde3f9c98ab74a2b9fa07e7e0\"}' --max-time 30)",
+      "Bash(awk 'NR>=446 && NR<=505 && /const userId/ {print NR\": \"$0}' src/sports/sports.service.ts)",
+      "Bash(PORT=3030 NODE_ENV=development DB_HOST=13.205.246.184 DB_PORT=5432 DB_USER=postgres DB_PASS='T56654@' DB_NAME=postgres NEXUS_AGENT_CODE=testagent NEXUS_AGENT_SECRET=dade54471925c85e5b23d8775f6fb0e3 node dist/src/main.js)",
+      "Bash(curl -s -X POST localhost:3030/gold_api -H 'Content-Type: application/json' -d '{\"method\":\"transaction\",\"agent_code\":\"testagent\",\"agent_secret\":\"__TRACKED_VAR__\",\"user_code\":\"karfa12\",\"game_type\":\"SB\",\"SB\":{\"provider_code\":\"SPORTSBOOK\",\"game_code\":\"SPORTSBOOK\",\"type\":\"accumulator\",\"bet_money\":25,\"win_money\":0,\"round_id\":561435,\"txn_id\":\"SB_1\",\"txn_type\":\"debit\"}}' --max-time 30)",
+      "Bash(curl -s -X POST localhost:3030/gold_api -H 'Content-Type: application/json' -d '{\"method\":\"transaction\",\"agent_code\":\"testagent\",\"agent_secret\":\"__TRACKED_VAR__\",\"user_code\":\"karfa12\",\"game_type\":\"bingo\",\"bingo\":{\"txn_id\":\"X1\",\"bet_money\":10}}' --max-time 30)",
+      "Bash(curl -s -X POST localhost:3030/gold_api -H 'Content-Type: application/json' -d '{\"method\":\"transaction\",\"agent_code\":\"testagent\",\"agent_secret\":\"__TRACKED_VAR__\",\"user_code\":\"karfa12\",\"game_type\":\"slot\"}' --max-time 30)",
+      "Bash(curl -s -X POST localhost:3030/gold_api -H 'Content-Type: application/json' -d '{\"method\":\"nonsense\",\"agent_code\":\"testagent\",\"agent_secret\":\"__TRACKED_VAR__\"}' --max-time 30)",
+      "Bash(node -e \"const jwt=require\\('jsonwebtoken'\\);console.log\\(jwt.sign\\({sub:2,role:'SUPER_ADMIN',type:'ADMIN'},'your-secret-key',{expiresIn:'1h'}\\)\\);\")",
+      "Bash(curl -s -X POST localhost:3030/sports/updateSlotGames -H 'Authorization: Bearer __TRACKED_VAR__' --max-time 600)",
+      "Bash(node -e \"const jwt=require\\('jsonwebtoken'\\);console.log\\(jwt.sign\\({sub:755,role:'USER'},'your-secret-key',{expiresIn:'30m'}\\)\\);\")",
+      "Bash(curl -s -H 'Authorization: Bearer __TRACKED_VAR__' localhost:3030/game-history/me?limit=10 --max-time 60)",
+      "Bash(curl -s -H 'Authorization: Bearer __TRACKED_VAR__' localhost:3030/me/game-history?limit=10 --max-time 60)",
+      "Bash(PORT=3031 NODE_ENV=development DB_HOST=13.205.246.184 DB_PORT=5432 DB_USER=postgres DB_PASS='T56654@' DB_NAME=postgres NEXUS_AGENT_CODE=testagent NEXUS_AGENT_SECRET=dade54471925c85e5b23d8775f6fb0e3 node dist/src/main.js)",
+      "Bash(curl -s -H 'Authorization: Bearer __TRACKED_VAR__' localhost:3031/me/game-history?limit=10 --max-time 60)"
     ]
   }
 }

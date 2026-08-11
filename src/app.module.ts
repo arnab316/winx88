@@ -42,6 +42,7 @@ import { CatalogModule } from './catalog/catalog.module';
 import { RbacModule } from './rbac/rbac.module';
 import { ChannelsModule } from './channels/channels.module';
 import { MetaModule } from './meta/meta.module';
+import { NexusModule } from './nexus/nexus.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -100,6 +101,7 @@ import { MetaModule } from './meta/meta.module';
   RbacModule,
   ChannelsModule,
   MetaModule,
+  NexusModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],

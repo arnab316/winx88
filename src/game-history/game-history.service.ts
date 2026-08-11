@@ -11,6 +11,18 @@ export type GameCategory =
   | 'POKER'
   | 'SPORTS';
 
+// Categories a Nexus round can land in. Nexus reports its own game_type
+// (slot | live | SB | MN), which maps onto the existing categories rather than
+// introducing new ones — the player sees one "Slots" tab regardless of which
+// aggregator supplied the game.
+export const NEXUS_CATEGORIES: GameCategory[] = [
+  'SLOT',
+  'LIVE',
+  'SPORTS',
+  'CRASH',
+  'FISHING',
+];
+
 // Categories that are sourced from oroplay_transactions (split by vendor_code
 // prefix: fishing-* → FISHING, mini-* → CRASH, poker-* → POKER, casino-* → LIVE).
 // Used to decide when to include the OroPlay source in the union.
@@ -220,6 +232,58 @@ export class GameHistoryService {
     `;
   }
 
+  /**
+   * Nexus rounds, grouped by round_id.
+   *
+   * One round can arrive as several transactions (a debit then a credit), or
+   * as a single `debit_credit` carrying both. Grouping by round and summing
+   * bet_money / win_money handles both shapes identically.
+   *
+   * Nexus's game_type maps onto the existing categories rather than adding new
+   * ones — a player should see one "Slots" tab whichever aggregator supplied
+   * the game.
+   */
+  private nexusSourceSql(): string {
+    return `
+      SELECT
+        COALESCE(nt.round_id, nt.txn_id)                      AS ref_id,
+        COALESCE(nt.round_id, nt.txn_id)                      AS ref_code,
+        CASE MAX(nt.game_type)
+          WHEN 'slot' THEN 'SLOT'
+          WHEN 'live' THEN 'LIVE'
+          WHEN 'SB'   THEN 'SPORTS'
+          WHEN 'MN'   THEN 'CRASH'
+          WHEN 'FH'   THEN 'FISHING'
+          ELSE 'SLOT'
+        END                                                   AS category,
+        MAX(nt.game_code)                                     AS game_code,
+        COALESCE(MAX(cg.name), MAX(nt.game_code))             AS game_name,
+        NULL::int                                             AS provider_id,
+        MAX(nt.provider_code)                                 AS provider_name,
+        NULL::text                                            AS bet_number,
+        COALESCE(SUM(nt.bet_money) FILTER (WHERE nt.is_canceled = FALSE), 0) AS bet_amount,
+        NULL::numeric                                         AS payout_multiplier,
+        NULL::numeric                                         AS potential_payout,
+        COALESCE(SUM(nt.win_money) FILTER (WHERE nt.is_canceled = FALSE), 0) AS actual_payout,
+        CASE
+          WHEN bool_and(nt.is_canceled) THEN 'CANCELLED'
+          WHEN COALESCE(SUM(nt.win_money) FILTER (WHERE nt.is_canceled = FALSE), 0) > 0 THEN 'WON'
+          ELSE 'LOST'
+        END                                                   AS status,
+        MIN(nt.created_at)                                    AS placed_at,
+        MAX(nt.created_at)                                    AS settled_at,
+        COALESCE(nt.round_id, nt.txn_id)                      AS round_code,
+        NULL::text                                            AS result_number
+      FROM nexus_transactions nt
+      LEFT JOIN casino_games cg
+        ON cg.aggregator = 'NEXUS'
+       AND cg.vendor_code = nt.provider_code
+       AND cg.game_code  = nt.game_code
+      WHERE nt.user_id = $1
+      GROUP BY COALESCE(nt.round_id, nt.txn_id)
+    `;
+  }
+
   async getHistory(userId: number, q: GameHistoryQuery) {
     const page  = Math.max(q.page ?? 1, 1);
     const limit = Math.min(Math.max(q.limit ?? 20, 1), 100);
@@ -246,6 +310,12 @@ export class GameHistoryService {
     }
     if (!category || category === 'SPORTS') {
       parts.push(sportsSelect);
+    }
+    // Nexus spans several categories (its game_type maps onto SLOT/LIVE/
+    // SPORTS/CRASH), so it is included whenever the filter could match one of
+    // them. The outer category filter then narrows the rows.
+    if (!category || NEXUS_CATEGORIES.includes(category)) {
+      parts.push(this.nexusSourceSql());
     }
 
     // Outer query applies category/status/date filters + pagination uniformly.
