@@ -61,4 +61,15 @@ export class NexusController {
   launch(@Req() req: any, @Query('uuid') uuid: string, @Query('lang') lang?: string) {
     return this.nexus.getLaunchUrl(req.user.sub, uuid, lang ?? 'en');
   }
+
+  /**
+   * Launch the sportsbook lobby. This is the endpoint behind a "Sports" nav
+   * button — the sportsbook is one lobby, not a grid of game tiles, so it does
+   * not appear in the game list and has no uuid.
+   */
+  @UseGuards(JwtAuthGuard)
+  @Get('sportsbook/launch')
+  launchSportsbook(@Req() req: any, @Query('lang') lang?: string) {
+    return this.nexus.launchSportsbook(req.user.sub, lang ?? 'en');
+  }
 }

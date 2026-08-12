@@ -184,6 +184,39 @@ export class NexusService {
     return { url: res.launchUrl };
   }
 
+  /**
+   * Launch the Nexus sportsbook.
+   *
+   * Unlike slots and live tables, the sportsbook is a single LOBBY, not a
+   * catalog of games: `game_list` returns nothing for it, and it launches with
+   * `provider_code: SPORTSBOOK` and an EMPTY `game_code`. So it has no
+   * casino_games row and is surfaced as a dedicated "Sports" entry rather than
+   * a game tile — this is the endpoint behind that button.
+   *
+   * Bets already settle through the same /gold_api callback (game_type "SB");
+   * this only produces the URL to open.
+   *
+   * The Login URL / Deposit URL the sportsbook needs when a player is logged
+   * out or short of funds are configured in the NEXUS BACK OFFICE, not here.
+   */
+  async launchSportsbook(userId: number, lang = 'en'): Promise<{ url: string }> {
+    const [user] = await this.dataSource.query(
+      `SELECT username FROM users WHERE id = $1 LIMIT 1`,
+      [userId],
+    );
+    if (!user?.username) throw new NotFoundException('User not found');
+
+    const res = await this.client.gameLaunch({
+      userCode: user.username,
+      providerCode: 'SPORTSBOOK',
+      // Empty game_code = the whole sportsbook lobby, per Nexus docs.
+      lang,
+      lobbyUrl: process.env.PUBLIC_SITE_URL ?? process.env.LOBBY_URL ?? 'https://winx-88.com',
+    });
+    if (!res.ok) throw new BadRequestException(`Nexus sportsbook launch failed: ${res.error}`);
+    return { url: res.launchUrl };
+  }
+
   /** Admin view: what is in the catalog from Nexus, by provider. */
   async listSynced() {
     const rows = await this.dataSource.query(
