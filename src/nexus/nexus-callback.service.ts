@@ -93,10 +93,74 @@ export class NexusCallbackService {
     return code === expectedCode && secret === expectedSecret;
   }
 
+  /**
+   * One-line identity for a callback, repeated on the `→` and `←` lines so a
+   * request and its reply can be grepped together out of a busy pm2 log.
+   */
+  private tag(body: any): string {
+    const method = String(body?.method ?? '-');
+    const gameType = String(body?.game_type ?? '');
+    const g = gameType ? body?.[gameType] : undefined;
+    const parts = [
+      `method=${method}`,
+      `user=${body?.user_code ?? '-'}`,
+      gameType ? `type=${gameType}` : null,
+      g?.provider_code ? `provider=${g.provider_code}` : null,
+      g?.txn_type ? `txn_type=${g.txn_type}` : null,
+      g?.txn_id ? `txn=${g.txn_id}` : null,
+      g?.round_id ? `round=${g.round_id}` : null,
+      g?.bet_money != null ? `bet=${g.bet_money}` : null,
+      g?.win_money != null ? `win=${g.win_money}` : null,
+    ].filter(Boolean);
+    return parts.join(' ');
+  }
+
+  /** Body dump for the log, minus the shared secret, capped so one giant SB payload can't flood the file. */
+  private safeBody(body: any): string {
+    try {
+      const { agent_secret, agent_code, ...rest } = body ?? {};
+      const s = JSON.stringify(rest);
+      return s.length > 4000 ? `${s.slice(0, 4000)}…[truncated ${s.length} chars]` : s;
+    } catch {
+      return '[unserialisable body]';
+    }
+  }
+
   // ═════════════════════════════════════════════════════════════
   // ENTRY POINT — /gold_api dispatches on `method`
+  //
+  // Wraps the dispatch in a request/reply trace. Every hit produces a `→` line
+  // and a matching `→`/`←` pair, because the failure mode we cannot otherwise
+  // see is the one where the player gets "An error occurred" in the sportsbook
+  // UI: that is Nexus reacting to a `status: 0` we sent, and without the `←`
+  // line there is no record of which msg went back — or whether Nexus reached
+  // us at all.
+  //
+  // Set NEXUS_LOG_BODY=1 to also dump the full payload (secrets stripped).
+  // Leave it off in steady state; SB payloads are large.
   // ═════════════════════════════════════════════════════════════
   async handle(body: any, sourceIp?: string): Promise<NexusReply> {
+    const startedAt = Date.now();
+    const tag = this.tag(body);
+
+    this.logger.log(`[Nexus] → ${tag} ip=${sourceIp ?? '-'}`);
+    if (String(process.env.NEXUS_LOG_BODY ?? '') === '1') {
+      this.logger.log(`[Nexus] → body ${this.safeBody(body)}`);
+    }
+
+    const reply = await this.dispatch(body, sourceIp);
+
+    const ms = Date.now() - startedAt;
+    if (reply.status === 1) {
+      this.logger.log(`[Nexus] ← OK ${tag} balance=${reply.user_balance ?? '-'} ${ms}ms`);
+    } else {
+      // WARN, not debug: this is the line that explains a failed bet.
+      this.logger.warn(`[Nexus] ← FAIL ${tag} msg="${reply.msg ?? '-'}" ${ms}ms`);
+    }
+    return reply;
+  }
+
+  private async dispatch(body: any, sourceIp?: string): Promise<NexusReply> {
     try {
       if (!this.authOk(body)) {
         // Logged with the source IP: this endpoint is unauthenticated at the
@@ -131,7 +195,10 @@ export class NexusCallbackService {
   // ═════════════════════════════════════════════════════════════
   private async userBalance(body: any): Promise<NexusReply> {
     const userCode = String(body?.user_code ?? '').trim();
-    if (!userCode) return { status: 0, msg: ERR.INVALID_USER };
+    if (!userCode) {
+      this.logger.warn('[Nexus] user_balance: body carried no user_code');
+      return { status: 0, msg: ERR.INVALID_USER };
+    }
 
     const rows = await this.dataSource.query(
       `SELECT w.balance
@@ -159,9 +226,16 @@ export class NexusCallbackService {
     const userCode = String(body?.user_code ?? '').trim();
     const gameType = String(body?.game_type ?? '') as GameType;
 
-    if (!userCode) return { status: 0, msg: ERR.INVALID_USER };
+    if (!userCode) {
+      this.logger.warn('[Nexus] transaction: body carried no user_code');
+      return { status: 0, msg: ERR.INVALID_USER };
+    }
     if (!GAME_TYPES.includes(gameType)) {
-      this.logger.warn(`[Nexus] unsupported game_type "${gameType}"`);
+      // Every new Nexus product lands here first — the fix is to add the key to
+      // GAME_TYPES, so log the value we actually received.
+      this.logger.warn(
+        `[Nexus] unsupported game_type "${gameType}" (known: ${GAME_TYPES.join('|')})`,
+      );
       return { status: 0, msg: ERR.INVALID_REQUEST };
     }
 
@@ -173,7 +247,12 @@ export class NexusCallbackService {
     }
 
     const txnId = String(g.txn_id ?? '').trim();
-    if (!txnId) return { status: 0, msg: ERR.INVALID_REQUEST };
+    if (!txnId) {
+      this.logger.warn(
+        `[Nexus] transaction: ${gameType} object has no txn_id — ${this.safeBody(body)}`,
+      );
+      return { status: 0, msg: ERR.INVALID_REQUEST };
+    }
 
     const bet = this.money(g.bet_money);
     const win = this.money(g.win_money);
@@ -306,9 +385,12 @@ export class NexusCallbackService {
         .pushBalanceUpdate(userId)
         .catch((e) => this.logger.warn(`[Nexus] WS push failed user=${userId}: ${e?.message}`));
 
+      // `nexus_transactions.id` is on the line so a pm2 entry can be taken
+      // straight to the stored row (and its `raw` payload) when a bet is disputed.
       this.logger.log(
-        `[Nexus] ${gameType}/${g.provider_code ?? '-'} ${g.txn_type ?? '-'} ` +
-          `user=${userCode} bet=${bet} win=${win} ${before} → ${after} txn=${txnId}`,
+        `[Nexus] WROTE nexus_transactions#${rowId} ${gameType}/${g.provider_code ?? '-'} ` +
+          `${g.txn_type ?? '-'} user=${userCode} bet=${bet} win=${win} ` +
+          `${before} → ${after} txn=${txnId} round=${g.round_id ?? '-'}`,
       );
       return { status: 1, user_balance: after };
     } catch (e: any) {
