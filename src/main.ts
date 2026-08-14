@@ -9,7 +9,7 @@ import { json, urlencoded } from 'express';
    
 
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const cookieParser = require('cookie-parser');
+const cookieParser = require('cookie-parser'); 
      
 async function bootstrap() {
   const app = await NestFactory.create<NestExpressApplication>(AppModule, {
