@@ -18,7 +18,7 @@ import {
 } from './dto/outbound.dto';
 
 /**
- * Frontend-facing endpoints. Your mobile / web app hits these — they
+ * C Your mobile / web app hits these — they
  * translate to Palace API calls and handle the user_code mapping.
  *
  * All routes require JWT auth (the user must be logged in to your platform).
