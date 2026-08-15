@@ -93,6 +93,17 @@ export class ChannelsAdminController {
   }
 
   // ── Channels ─────────────────────────────────────────────────
+  /**
+   * Domains a channel may be published on — this is what the "Domain" dropdown
+   * on the create-channel form reads. Returns the platform default first.
+   */
+  @Get('domains')
+  @RequirePermissions('marketing', 'view')
+  domains() {
+    const domains = this.channels.allowedDomains();
+    return { success: true, data: { domains, default: domains[0] } };
+  }
+
   @Get('channels')
   @RequirePermissions('marketing', 'view')
   listChannels(@Query() q: ChannelListQueryDto) {

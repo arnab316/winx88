@@ -73,8 +73,52 @@ export class ChannelsService {
     return (process.env.APP_BASE_URL ?? 'https://winx-88.com').replace(/\/+$/, '');
   }
 
-  private trackingUrl(code: string): string {
-    return `${this.trackingBase()}/c/${encodeURIComponent(code)}`;
+  /**
+   * Domains a channel may be published on, from TRACKING_DOMAINS
+   * ("https://winx-88.com,https://winx88.net"). The platform default is always
+   * included, so a single-domain deployment needs no config at all.
+   *
+   * An allowlist rather than free text on purpose: the value goes straight into
+   * a link handed to a media buyer who then spends money driving traffic at it.
+   * A typo'd domain is not a validation error the admin sees later — it is a
+   * dead campaign nobody notices until the invoice.
+   */
+  allowedDomains(): string[] {
+    const configured = (process.env.TRACKING_DOMAINS ?? '')
+      .split(',')
+      .map((d) => d.trim().replace(/\/+$/, ''))
+      .filter(Boolean);
+    const all = [this.trackingBase(), ...configured];
+    return [...new Set(all)];
+  }
+
+  /**
+   * Normalise + validate an admin-supplied domain. Returns null for "use the
+   * default", which is what an omitted or emptied field means.
+   */
+  private resolveDomain(domain?: string | null): string | null {
+    const raw = domain?.trim().replace(/\/+$/, '');
+    if (!raw) return null;
+    const allowed = this.allowedDomains();
+    const match = allowed.find((d) => d.toLowerCase() === raw.toLowerCase());
+    if (!match) {
+      throw new BadRequestException(
+        `domain "${raw}" is not an allowed tracking domain. Allowed: ${allowed.join(', ')}`,
+      );
+    }
+    return match;
+  }
+
+  /** "EAAG…7xKq" — enough to tell two tokens apart, useless if the list leaks. */
+  private maskSecret(v?: string | null): string | null {
+    const s = String(v ?? '');
+    if (!s) return null;
+    return s.length <= 8 ? '********' : `${s.slice(0, 4)}…${s.slice(-4)}`;
+  }
+
+  private trackingUrl(code: string, domain?: string | null): string {
+    const base = (domain?.replace(/\/+$/, '') || this.trackingBase());
+    return `${base}/c/${encodeURIComponent(code)}`;
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -171,7 +215,7 @@ export class ChannelsService {
 
   async getVendorChannels(vendorId: number) {
     const rows = await this.dataSource.query(
-      `SELECT code, name, platform, is_active, created_at
+      `SELECT code, name, platform, is_active, tracking_domain, created_at
          FROM marketing_channels
         WHERE vendor_id = $1
         ORDER BY code ASC`,
@@ -185,7 +229,7 @@ export class ChannelsService {
         platform: r.platform,
         isActive: r.is_active,
         createdAt: r.created_at,
-        trackingUrl: this.trackingUrl(r.code),
+        trackingUrl: this.trackingUrl(r.code, r.tracking_domain),
       })),
     };
   }
@@ -455,7 +499,8 @@ export class ChannelsService {
 
     const rows = await this.dataSource.query(
       `SELECT ch.id, ch.code, ch.name, ch.platform, ch.landing_path, ch.is_active,
-              ch.vendor_id, v.name AS vendor_name, ch.created_at,
+              ch.vendor_id, v.name AS vendor_name, ch.tracking_domain,
+              ch.pixel_id, ch.capi_access_token, ch.created_at,
               (SELECT COUNT(*)::int FROM marketing_clicks k WHERE k.channel_id = ch.id) AS clicks,
               (SELECT COUNT(*)::int FROM user_channel_attribution a WHERE a.channel_id = ch.id) AS registrations
          FROM marketing_channels ch
@@ -473,12 +518,23 @@ export class ChannelsService {
 
     return {
       success: true,
-      data: rows.map((r: any) => ({
-        ...r,
-        id: Number(r.id),
-        vendor_id: r.vendor_id === null ? null : Number(r.vendor_id),
-        trackingUrl: this.trackingUrl(r.code),
-      })),
+      data: rows.map((r: any) => {
+        // The CAPI token is a live Meta credential belonging to the media
+        // buyer. The list is readable by anyone with marketing.view, so the
+        // row reports whether one is SET and shows enough to identify it —
+        // never the value itself. Setting a new one does not require reading
+        // the old one.
+        const { capi_access_token, ...rest } = r;
+        return {
+          ...rest,
+          id: Number(r.id),
+          vendor_id: r.vendor_id === null ? null : Number(r.vendor_id),
+          pixel_id: r.pixel_id ?? null,
+          capi_token_set: Boolean(capi_access_token),
+          capi_access_token_masked: this.maskSecret(capi_access_token),
+          trackingUrl: this.trackingUrl(r.code, r.tracking_domain),
+        };
+      }),
       page,
       limit,
       total,
@@ -500,10 +556,10 @@ export class ChannelsService {
       const [row] = await this.dataSource.query(
         `INSERT INTO marketing_channels
            (code, name, vendor_id, platform, landing_path, created_by_admin_id,
-            pixel_id, capi_access_token)
-         VALUES ($1,$2,$3,$4,COALESCE($5,'/register'),$6,$7,$8)
+            pixel_id, capi_access_token, tracking_domain)
+         VALUES ($1,$2,$3,$4,COALESCE($5,'/register'),$6,$7,$8,$9)
          RETURNING id, code, name, vendor_id, platform, landing_path, is_active,
-                   pixel_id, created_at`,
+                   pixel_id, tracking_domain, created_at`,
         [
           code,
           dto.name.trim(),
@@ -513,6 +569,7 @@ export class ChannelsService {
           adminId,
           dto.pixelId?.trim() || null,
           dto.capiAccessToken?.trim() || null,
+          this.resolveDomain(dto.domain),
         ],
       );
       this.logger.log(`Channel created code="${code}" vendor=${dto.vendorId ?? '-'} by admin=${adminId}`);
@@ -522,7 +579,7 @@ export class ChannelsService {
           ...row,
           id: Number(row.id),
           vendor_id: row.vendor_id === null ? null : Number(row.vendor_id),
-          trackingUrl: this.trackingUrl(row.code),
+          trackingUrl: this.trackingUrl(row.code, row.tracking_domain),
         },
       };
     } catch (e: any) {
@@ -549,6 +606,10 @@ export class ChannelsService {
     if (dto.capiAccessToken !== undefined) {
       fields.push(`capi_access_token = $${i++}`); vals.push(dto.capiAccessToken.trim() || null);
     }
+    // Empty string resets the channel to the platform default domain.
+    if (dto.domain !== undefined) {
+      fields.push(`tracking_domain = $${i++}`); vals.push(this.resolveDomain(dto.domain));
+    }
     if (!fields.length) throw new BadRequestException('No fields to update');
     fields.push(`updated_at = NOW()`);
     vals.push(id);
@@ -557,7 +618,7 @@ export class ChannelsService {
       await this.dataSource.query(
         `UPDATE marketing_channels SET ${fields.join(', ')} WHERE id = $${i}
          RETURNING id, code, name, vendor_id, platform, landing_path, is_active,
-                   pixel_id, created_at`,
+                   pixel_id, tracking_domain, created_at`,
         vals,
       ),
     );
@@ -568,7 +629,7 @@ export class ChannelsService {
         ...row,
         id: Number(row.id),
         vendor_id: row.vendor_id === null ? null : Number(row.vendor_id),
-        trackingUrl: this.trackingUrl(row.code),
+        trackingUrl: this.trackingUrl(row.code, row.tracking_domain),
       },
     };
   }

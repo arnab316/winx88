@@ -98,6 +98,13 @@ export class CreateChannelDto {
   // Business Manager. Falls back to the platform token when absent.
   @IsOptional() @IsString()
   capiAccessToken?: string;
+
+  // Which brand domain this campaign's tracking link is published on, e.g.
+  // "https://winx88.net". Must be one of TRACKING_DOMAINS (see
+  // GET /admin/marketing/domains, which is what the dropdown reads).
+  // Omit for the platform default.
+  @IsOptional() @IsString() @MaxLength(255)
+  domain?: string;
 }
 
 export class UpdateChannelDto {
@@ -122,6 +129,12 @@ export class UpdateChannelDto {
 
   @IsOptional() @IsString()
   capiAccessToken?: string;
+
+  // Empty string resets the channel to the platform default domain.
+  // ⚠️ Changing this on a LIVE campaign invalidates links already in ad
+  // creatives — the old domain keeps working only if it still routes /c/.
+  @IsOptional() @IsString() @MaxLength(255)
+  domain?: string;
 }
 
 // ─── ADMIN: CAPI outbox health ──────────────────────────────────
