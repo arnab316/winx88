@@ -52,11 +52,29 @@ export class ChannelsPublicController {
       fbclid: req.query.fbclid as string | undefined,
     });
 
-    const base = (
-      process.env.PUBLIC_SITE_URL ??
-      process.env.APP_BASE_URL ??
-      'https://winx-88.com'
-    ).replace(/\/+$/, '');
+    // Stay on the domain the click arrived on. The brand runs on several
+    // (winx-88.com, winx88.net, …) and a campaign's creatives are approved
+    // against one of them — bouncing a winx88.net visitor to winx-88.com is a
+    // cross-domain redirect the ad reviewer never saw, and it drops the
+    // first-party cookies (_fbp/_fbc) the landing pixel depends on.
+    //
+    // Falls back to the configured site only when the host is unreadable.
+    const forwardedHost = String(req.headers['x-forwarded-host'] ?? '')
+      .split(',')[0]
+      .trim();
+    const host = forwardedHost || req.headers.host;
+    const proto =
+      String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() ||
+      req.protocol ||
+      'https';
+
+    const base = host
+      ? `${proto}://${host}`
+      : (
+          process.env.PUBLIC_SITE_URL ??
+          process.env.APP_BASE_URL ??
+          'https://winx-88.com'
+        ).replace(/\/+$/, '');
 
     // An unrecognised code still redirects — never 404 a paid click. The click
     // is recorded as unknown and surfaces in the admin unknown-codes feed.
