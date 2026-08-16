@@ -30,6 +30,15 @@ export class ChannelStatsQueryDto {
   granularity?: 'day' | 'total' = 'total';
 }
 
+/**
+ * Same funnel, admin side. `vendorId` omitted = every vendor, which is the
+ * "how is marketing doing overall" view; set it to look at one partner.
+ */
+export class AdminChannelStatsQueryDto extends ChannelStatsQueryDto {
+  @IsOptional() @Type(() => Number) @IsInt()
+  vendorId?: number;
+}
+
 // ─── ADMIN: vendors ─────────────────────────────────────────────
 export class CreateVendorDto {
   @IsString() @IsNotEmpty() @MaxLength(120)

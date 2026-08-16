@@ -14,6 +14,7 @@ import { DataSource } from 'typeorm';
 import * as crypto from 'crypto';
 import {
   ChannelStatsQueryDto,
+  AdminChannelStatsQueryDto,
   CreateVendorDto,
   UpdateVendorDto,
   CreateApiKeyDto,
@@ -243,7 +244,18 @@ export class ChannelsService {
    *
    * Only aggregates are returned: never an IP, user agent, username or user id.
    */
-  async getVendorStats(vendorId: number, q: ChannelStatsQueryDto) {
+  /**
+   * Admin view of the same funnel the vendor sees, unscoped.
+   *
+   * Deliberately a separate entry point rather than an extra optional argument
+   * on the vendor route: `getVendorStats` is reached with an API key and MUST
+   * stay pinned to that key's vendor. Only this method may pass a null scope.
+   */
+  async getAdminStats(q: AdminChannelStatsQueryDto) {
+    return this.getVendorStats(q.vendorId ?? null, q);
+  }
+
+  async getVendorStats(vendorId: number | null, q: ChannelStatsQueryDto) {
     const { start, end } = this.bounds(q.dateFrom, q.dateTo);
     const channel = q.channel ? this.normalizeCode(q.channel) : null;
     const daily = q.granularity === 'day';
@@ -288,6 +300,9 @@ export class ChannelsService {
         ch.code                                   AS channel,
         ch.name                                   AS channel_name,
         ch.platform,
+        ch.vendor_id,
+        v.name                                    AS vendor_name,
+        ch.tracking_domain,
         ${dayCol}
         COALESCE(clk.c, 0)                        AS clicks,
         COALESCE(reg.c, 0)                        AS registrations,
@@ -296,6 +311,7 @@ export class ChannelsService {
         COALESCE(dep.c, 0)                        AS deposit_count,
         COALESCE(dep.amt, 0)                      AS deposit_total
       FROM marketing_channels ch
+      LEFT JOIN marketing_vendors v ON v.id = ch.vendor_id
       ${daySource}
       LEFT JOIN LATERAL (
         SELECT COUNT(*)::int AS c
@@ -328,7 +344,7 @@ export class ChannelsService {
           JOIN deposits d ON d.user_id = a.user_id AND d.status = 'APPROVED'
          WHERE a.channel_id = ch.id AND ${bounded('d.decided_at')}
       ) dep ON TRUE
-      WHERE ch.vendor_id = $1
+      WHERE ($1::bigint IS NULL OR ch.vendor_id = $1::bigint)
         AND ($4::text IS NULL OR ch.code = $4)
       ORDER BY ch.code ASC${dayOrder}
     `;
@@ -340,7 +356,7 @@ export class ChannelsService {
       `SELECT MIN(k.created_at) AS since
          FROM marketing_clicks k
          JOIN marketing_channels ch ON ch.id = k.channel_id
-        WHERE ch.vendor_id = $1`,
+        WHERE ($1::bigint IS NULL OR ch.vendor_id = $1::bigint)`,
       [vendorId],
     );
 
@@ -355,6 +371,9 @@ export class ChannelsService {
         channel: r.channel,
         channelName: r.channel_name,
         platform: r.platform,
+        vendorId: r.vendor_id === null ? null : Number(r.vendor_id),
+        vendorName: r.vendor_name ?? null,
+        trackingUrl: this.trackingUrl(r.channel, r.tracking_domain),
         ...(daily ? { date: r.date } : {}),
         clicks: n(r.clicks),
         registrations: n(r.registrations),

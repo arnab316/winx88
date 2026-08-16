@@ -24,6 +24,7 @@ import {
   CreateChannelDto,
   UpdateChannelDto,
   ChannelListQueryDto,
+  AdminChannelStatsQueryDto,
   UnknownClickQueryDto,
   CapiEventQueryDto,
 } from './dto/channels.dto';
@@ -93,6 +94,21 @@ export class ChannelsAdminController {
   }
 
   // ── Channels ─────────────────────────────────────────────────
+  /**
+   * Campaign performance: clicks → registrations → FTDs → deposits, per
+   * channel. The same numbers the media buyer pulls from /partner/stats, so
+   * the admin screen and the vendor's invoice never disagree.
+   *
+   *   GET /admin/marketing/stats?vendorId=&channel=&dateFrom=&dateTo=&granularity=
+   *
+   * vendorId omitted = all vendors. granularity=day needs dateFrom+dateTo.
+   */
+  @Get('stats')
+  @RequirePermissions('marketing', 'view')
+  stats(@Query() q: AdminChannelStatsQueryDto) {
+    return this.channels.getAdminStats(q);
+  }
+
   /**
    * Domains a channel may be published on — this is what the "Domain" dropdown
    * on the create-channel form reads. Returns the platform default first.
