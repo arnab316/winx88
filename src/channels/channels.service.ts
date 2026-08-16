@@ -143,6 +143,7 @@ export class ChannelsService {
     clickUid?: string;
     landingPath?: string;
     pixelId?: string | null;
+    trackingDomain?: string | null;
   }> {
     const ch = this.normalizeCode(code);
     if (!ch) return { ok: false };
@@ -151,7 +152,7 @@ export class ChannelsService {
       // An unregistered code is still logged (is_unknown) — a typo in a live
       // campaign must surface in the unknown feed, never silently vanish.
       const rows = await this.dataSource.query(
-        `SELECT id, vendor_id, landing_path, is_active, pixel_id
+        `SELECT id, vendor_id, landing_path, is_active, pixel_id, tracking_domain
            FROM marketing_channels WHERE code = $1 LIMIT 1`,
         [ch],
       );
@@ -187,6 +188,7 @@ export class ChannelsService {
         clickUid,
         landingPath: channel?.landing_path ?? '/register',
         pixelId: channel?.pixel_id ?? null,
+        trackingDomain: channel?.tracking_domain ?? null,
       };
     } catch (e: any) {
       // Best-effort: swallow so the caller can still redirect.

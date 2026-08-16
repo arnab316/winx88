@@ -52,29 +52,52 @@ export class ChannelsPublicController {
       fbclid: req.query.fbclid as string | undefined,
     });
 
-    // Stay on the domain the click arrived on. The brand runs on several
-    // (winx-88.com, winx88.net, …) and a campaign's creatives are approved
-    // against one of them — bouncing a winx88.net visitor to winx-88.com is a
-    // cross-domain redirect the ad reviewer never saw, and it drops the
-    // first-party cookies (_fbp/_fbc) the landing pixel depends on.
+    // WHERE TO SEND THE PLAYER.
     //
-    // Falls back to the configured site only when the host is unreadable.
+    // Preference order, and each step exists because of a way this breaks:
+    //
+    //  1. The arriving host, when it is an allowlisted brand domain. The brand
+    //     runs on several (winx-88.com, winx88.net, …) and a campaign's
+    //     creatives are approved against one of them, so a visitor must stay on
+    //     the domain they clicked — a cross-domain hop is one the ad reviewer
+    //     never saw, and it drops the first-party _fbp/_fbc cookies the landing
+    //     pixel needs. `x-forwarded-host` wins over `host` so a proxy can
+    //     assert the public domain.
+    //
+    //  2. The channel's configured domain, then PUBLIC_SITE_URL. Reached when
+    //     the click lands on a host that is NOT a brand domain — which is what
+    //     happens when the brand domain 301-redirects to the API instead of
+    //     proxying: by then Host is the API's, and the API serves no
+    //     player-facing pages. Redirecting there strands the visitor.
     const forwardedHost = String(req.headers['x-forwarded-host'] ?? '')
       .split(',')[0]
       .trim();
-    const host = forwardedHost || req.headers.host;
-    const proto =
-      String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() ||
-      req.protocol ||
-      'https';
+    const arrivingHost = forwardedHost || String(req.headers.host ?? '').trim();
 
-    const base = host
-      ? `${proto}://${host}`
-      : (
+    // Never emit http:// for a public host: a downgraded redirect is blocked by
+    // modern browsers and loses Secure cookies. Only localhost stays as-is.
+    const isLocal = /^(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$/i.test(arrivingHost);
+    const proto = isLocal
+      ? String(req.headers['x-forwarded-proto'] ?? '').split(',')[0].trim() ||
+        req.protocol ||
+        'http'
+      : 'https';
+
+    const arrivingOrigin = arrivingHost ? `${proto}://${arrivingHost}` : '';
+    const isBrandHost =
+      isLocal ||
+      this.channels
+        .allowedDomains()
+        .some((d) => d.toLowerCase() === arrivingOrigin.toLowerCase());
+
+    const base = (
+      isBrandHost && arrivingOrigin
+        ? arrivingOrigin
+        : result.trackingDomain ??
           process.env.PUBLIC_SITE_URL ??
           process.env.APP_BASE_URL ??
           'https://winx-88.com'
-        ).replace(/\/+$/, '');
+    ).replace(/\/+$/, '');
 
     // An unrecognised code still redirects — never 404 a paid click. The click
     // is recorded as unknown and surfaces in the admin unknown-codes feed.
