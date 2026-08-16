@@ -139,6 +139,18 @@ export class ChannelsAdminController {
   }
 
   // ── Unknown codes (typo watch during a campaign launch) ──────
+  /**
+   * Removes a channel created by mistake. Refuses once it has clicks,
+   * registrations or queued conversions — deactivate those instead, since the
+   * FKs are ON DELETE SET NULL and a delete would detach the vendor's history
+   * without raising anything.
+   */
+  @Delete('channels/:id')
+  @RequirePermissions('marketing', 'manage')
+  deleteChannel(@Param('id', ParseIntPipe) id: number) {
+    return this.channels.deleteChannel(id);
+  }
+
   @Get('clicks/unknown')
   @RequirePermissions('marketing', 'view')
   unknownClicks(@Query() q: UnknownClickQueryDto) {

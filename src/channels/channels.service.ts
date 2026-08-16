@@ -656,6 +656,65 @@ export class ChannelsService {
   }
 
   /**
+   * Delete a channel — only while it has no history.
+   *
+   * Every FK to marketing_channels is ON DELETE SET NULL, so a plain DELETE
+   * does NOT fail on a channel with traffic: it succeeds and quietly detaches
+   * every click, registration and queued conversion. The vendor's reporting —
+   * which is what they are invoiced on — would silently drop to zero with no
+   * error anywhere.
+   *
+   * So this removes mistakes (a typo'd or test channel nobody clicked) and
+   * refuses anything with history, pointing at isActive:false instead. That
+   * retires a campaign while keeping its numbers, and its links keep
+   * redirecting so paid clicks are never dropped.
+   */
+  async deleteChannel(id: number) {
+    const [ch] = await this.dataSource.query(
+      `SELECT id, code FROM marketing_channels WHERE id = $1 LIMIT 1`,
+      [id],
+    );
+    if (!ch) throw new NotFoundException('Channel not found');
+
+    const [usage] = await this.dataSource.query(
+      `SELECT
+         (SELECT COUNT(*)::int FROM marketing_clicks           WHERE channel_id = $1) AS clicks,
+         (SELECT COUNT(*)::int FROM user_channel_attribution   WHERE channel_id = $1) AS registrations,
+         (SELECT COUNT(*)::int FROM meta_capi_events           WHERE channel_id = $1) AS capi_events`,
+      [id],
+    );
+    const clicks = Number(usage?.clicks ?? 0);
+    const registrations = Number(usage?.registrations ?? 0);
+    const capiEvents = Number(usage?.capi_events ?? 0);
+
+    if (clicks || registrations || capiEvents) {
+      throw new BadRequestException({
+        message:
+          `Channel "${ch.code}" has tracked history and cannot be deleted ` +
+          `(${clicks} click(s), ${registrations} registration(s), ${capiEvents} conversion event(s)). ` +
+          `Retire it instead: PATCH /admin/marketing/channels/${id} { "isActive": false }.`,
+        reason: 'CHANNEL_HAS_HISTORY',
+        clicks,
+        registrations,
+        capiEvents,
+      });
+    }
+
+    // UPDATE/DELETE ... RETURNING comes back as [rows, count] — unwrap via
+    // firstRow or a "no rows matched" reads as success.
+    const row = this.firstRow(
+      await this.dataSource.query(
+        `DELETE FROM marketing_channels WHERE id = $1 RETURNING id, code`,
+        [id],
+      ),
+    );
+    if (!row) throw new NotFoundException('Channel not found');
+
+    this.logger.log(`Channel deleted id=${id} code="${row.code}" (no tracked history)`);
+    return { success: true, message: `Channel "${row.code}" deleted.` };
+  }
+
+  /**
    * Codes seen in the wild that match no registered channel — i.e. a typo in a
    * live campaign, or traffic from a link nobody told us about. Check this
    * daily during a launch. Registering the channel afterwards does NOT
