@@ -31,12 +31,21 @@ export class AgentsService {
     );
     if (!gw.length) throw new BadRequestException('Payment gateway not found');
 
+    // A QR destination with no poster would hand the player a deposit screen
+    // with nothing to scan, and they cannot pay at all. Fail at creation rather
+    // than at the moment someone tries to deposit.
+    if (dto.walletType === 'QR' && !dto.qrImageUrl?.trim()) {
+      throw new BadRequestException(
+        'qrImageUrl is required for a QR agent — upload the poster via POST /agents/admin/qr-image first',
+      );
+    }
+
     try {
       const result = await this.dataSource.query(
         `INSERT INTO agents
            (gateway_id, wallet_type, agent_number, agent_code,
-            start_date, stop_date, status, created_by_admin_id)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+            start_date, stop_date, status, created_by_admin_id, qr_image_url)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
          RETURNING *`,
         [
           dto.gatewayId,
@@ -47,6 +56,7 @@ export class AgentsService {
           dto.stopDate ?? null,
           dto.status ?? 'ACTIVE',
           adminId,
+          dto.qrImageUrl?.trim() || null,
         ],
       );
       return result[0];
@@ -70,6 +80,21 @@ export class AgentsService {
     );
     if (!existing.length) throw new NotFoundException('Agent not found');
 
+    // Validate the state the row will be IN after this patch, not the patch
+    // itself — otherwise clearing the poster on an existing QR agent, or
+    // switching a wallet agent to QR without one, both slip through and only
+    // surface when a player opens the deposit screen and has nothing to scan.
+    const nextWalletType = dto.walletType ?? existing[0].wallet_type;
+    const nextQrImage =
+      dto.qrImageUrl === undefined
+        ? existing[0].qr_image_url
+        : dto.qrImageUrl.trim() || null;
+    if (nextWalletType === 'QR' && !nextQrImage) {
+      throw new BadRequestException(
+        'A QR agent must keep a qrImageUrl — upload one via POST /agents/admin/qr-image',
+      );
+    }
+
     // Build dynamic SET clause — only update provided fields
     const fields: string[] = [];
     const values: any[] = [];
@@ -83,6 +108,9 @@ export class AgentsService {
       start_date:   dto.startDate,
       stop_date:    dto.stopDate,
       status:       dto.status,
+      // Empty string clears the poster; undefined leaves it untouched.
+      qr_image_url:
+        dto.qrImageUrl === undefined ? undefined : dto.qrImageUrl.trim() || null,
     };
 
     for (const [col, val] of Object.entries(map)) {
@@ -234,14 +262,25 @@ export class AgentsService {
 
       await qr.commitTransaction();
 
+      // `type` is the discriminator the deposit screen switches on: QR renders
+      // the poster to scan, WALLET renders the number to type. Everything after
+      // this point — validate, submit trx + screenshot, admin approval — is
+      // identical for both.
+      const isQr = Boolean(agent.qr_image_url);
+
       return {
         agentId:     agent.id,
+        type:        isQr ? 'QR' : 'WALLET',
         walletType:  agent.wallet_type,
         agentNumber: agent.agent_number,
         agentCode:   agent.agent_code,
         gatewayName: agent.gateway_name,
-        instruction: `Send the deposit amount to ${agent.wallet_type} number ${agent.agent_number}. ` +
-                     `Then submit your transaction ID and screenshot.`,
+        qrImageUrl:  agent.qr_image_url ?? null,
+        instruction: isQr
+          ? `Scan the QR code with your banking app and pay the deposit amount. ` +
+            `Then submit your transaction ID and screenshot.`
+          : `Send the deposit amount to ${agent.wallet_type} number ${agent.agent_number}. ` +
+            `Then submit your transaction ID and screenshot.`,
       };
     } catch (e) {
       await qr.rollbackTransaction();

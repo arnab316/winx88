@@ -74,6 +74,40 @@ async uploadDepositScreenshot(file: Express.Multer.File): Promise<string> {
   }
 }
 
+  /**
+   * Merchant QR poster for a QR deposit destination. Cached hard like a
+   * promotion banner: the key is a fresh UUID per upload, so replacing a
+   * poster produces a new URL rather than fighting a CDN cache.
+   */
+  async uploadAgentQr(file: Express.Multer.File): Promise<string> {
+    if (!file || !file.buffer) {
+      throw new InternalServerErrorException('File buffer is empty');
+    }
+    if (!this.bucket) {
+      throw new InternalServerErrorException(
+        'AWS_BUCKET_NAME is not set in environment variables',
+      );
+    }
+
+    const ext = extname(file.originalname) || '.png';
+    const key = `agents/qr/${randomUUID()}${ext}`;
+
+    try {
+      await this.s3.send(
+        new PutObjectCommand({
+          Bucket:       this.bucket,
+          Key:          key,
+          Body:         file.buffer,
+          ContentType:  file.mimetype,
+          CacheControl: 'public, max-age=31536000, immutable',
+        }),
+      );
+      return `https://${this.bucket}.s3.${process.env.AWS_REGION}.amazonaws.com/${key}`;
+    } catch (err: any) {
+      throw new InternalServerErrorException(`QR upload failed: ${err.message}`);
+    }
+  }
+
  async uploadPromotionBanner(
   file: Express.Multer.File,
   variant: 'banner_en' | 'banner_bn' | 'small_banner_en' | 'small_banner_bn',

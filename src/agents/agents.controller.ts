@@ -29,12 +29,15 @@ import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { WINSTON_MODULE_PROVIDER } from 'nest-winston';
 import { Logger } from 'winston';
+import { memoryStorage } from 'multer';
+import { S3Service } from '../wallet/s3.service';
 import type { Request, Response } from 'express';
 @Controller('agents')
 @UsePipes(new ValidationPipe({ whitelist: true, transform: true }))
 export class AgentsController {
   constructor(
     private agentService: AgentsService,
+    private readonly s3: S3Service,
     @Inject(WINSTON_MODULE_PROVIDER)
     private readonly logger: Logger,
   ) {}
@@ -92,6 +95,32 @@ export class AgentsController {
     });
     throw error;
    }
+  }
+
+  // POST /agents/admin/qr-image   form-data: image=<file>
+  //   Step 1 of adding a QR destination. Upload the merchant poster, then pass
+  //   the returned url as `qrImageUrl` on POST /agents/admin.
+  @UseGuards(AdminGuard)
+  @Post('admin/qr-image')
+  @UseInterceptors(
+    FileInterceptor('image', {
+      storage: memoryStorage(),
+      limits: { fileSize: 5 * 1024 * 1024 },
+      fileFilter: (_req, file, cb) => {
+        const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+        if (allowed.includes(file.mimetype)) cb(null, true);
+        else cb(new BadRequestException('Only JPG, PNG, WEBP allowed'), false);
+      },
+    }),
+  )
+  async uploadQrImage(@UploadedFile() image: Express.Multer.File) {
+    if (!image) {
+      throw new BadRequestException(
+        'QR image is required. Send as form-data with key "image"',
+      );
+    }
+    const url = await this.s3.uploadAgentQr(image);
+    return { status: 'success', data: { qrImageUrl: url } };
   }
 
   // POST /agents/admin

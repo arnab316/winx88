@@ -15,7 +15,8 @@ export class CreateAgentDto {
   @IsInt()
   gatewayId: number;
 
-  @IsIn(['bKash', 'Nagad', 'Rocket', 'Bank', 'Crypto'])
+  // 'QR' = a scannable merchant poster rather than a number to type in.
+  @IsIn(['bKash', 'Nagad', 'Rocket', 'Bank', 'Crypto', 'QR'])
   walletType: string;
 
   @IsString()
@@ -39,6 +40,14 @@ export class CreateAgentDto {
   @IsOptional()
   @IsIn(['ACTIVE', 'INACTIVE'])
   status?: 'ACTIVE' | 'INACTIVE';
+
+  // S3 URL of the merchant QR poster, from POST /agents/admin/qr-image.
+  // REQUIRED when walletType is 'QR' — without it the player gets a deposit
+  // screen with nothing to scan.
+  @IsOptional()
+  @IsString()
+  @Length(1, 500)
+  qrImageUrl?: string;
 }
 
 export class UpdateAgentDto {
@@ -47,7 +56,8 @@ export class UpdateAgentDto {
   gatewayId?: number;
 
   @IsOptional()
-  @IsIn(['bKash', 'Nagad', 'Rocket', 'Bank', 'Crypto'])
+  // 'QR' = a scannable merchant poster rather than a number to type in.
+  @IsIn(['bKash', 'Nagad', 'Rocket', 'Bank', 'Crypto', 'QR'])
   walletType?: string;
 
   @IsOptional()
@@ -71,6 +81,13 @@ export class UpdateAgentDto {
   @IsOptional()
   @IsIn(['ACTIVE', 'INACTIVE'])
   status?: 'ACTIVE' | 'INACTIVE';
+
+  // Empty string clears the poster (and turns a QR destination back into a
+  // plain wallet agent).
+  @IsOptional()
+  @IsString()
+  @Length(0, 500)
+  qrImageUrl?: string;
 }
 
 export class ListAgentsQueryDto {
@@ -83,7 +100,8 @@ export class ListAgentsQueryDto {
   gatewayId?: number;
 
   @IsOptional()
-  @IsIn(['bKash', 'Nagad', 'Rocket', 'Bank', 'Crypto'])
+  // 'QR' = a scannable merchant poster rather than a number to type in.
+  @IsIn(['bKash', 'Nagad', 'Rocket', 'Bank', 'Crypto', 'QR'])
   walletType?: string;
 
   @IsOptional()
