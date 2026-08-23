@@ -762,7 +762,7 @@ export class UserController {
 
   // POST /user/admin/:userId/remarks   body: { remark: string }
   @UseGuards(AdminGuard, PermissionsGuard)
-  @RequirePermissions('all_members', 'add_remark')
+  // @RequirePermissions('all_members', 'add_remark')
   @Post('admin/:userId/remarks')
   async addRemark(
     @Req() req: any,
