@@ -31,7 +31,8 @@
       "mcp__claude_ai_Postman__updateCollectionRequest",
       "mcp__claude_ai_Postman__createCollectionRequest",
       "Bash(curl -s -o /dev/null -w \"status=%{http_code} location=%{redirect_url} server=%{time_total}s\\\\n\" -I \"https://winx-88.com/c/hggh\" --max-time 20)",
-      "Bash(curl -s -o /dev/null -w \"status=%{http_code} location=%{redirect_url}\\\\n\" -I \"https://safurion.online/c/hggh\" --max-time 20)"
+      "Bash(curl -s -o /dev/null -w \"status=%{http_code} location=%{redirect_url}\\\\n\" -I \"https://safurion.online/c/hggh\" --max-time 20)",
+      "mcp__claude_ai_Postman__createCollectionResponse"
     ]
   }
 }
