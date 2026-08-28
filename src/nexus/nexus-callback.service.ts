@@ -20,9 +20,14 @@ import { WalletGateway } from '../wallet/wallet.gateway';
  *     the first call or their ledger and ours diverge. (The OroPlay handler
  *     returns an error here; Palace gets it right. We follow Palace.)
  *
- * The unique index on nexus_transactions.txn_id — not the pre-SELECT — is what
- * actually prevents a double debit: two concurrent retries both pass the
- * SELECT, and only the constraint stops the second write.
+ * The unique index — not the pre-SELECT — is what actually prevents a double
+ * debit: two concurrent retries both pass the SELECT, and only the constraint
+ * stops the second write.
+ *
+ * That key is (txn_id, txn_type), NOT txn_id alone. Nexus reuses the coupon id
+ * as txn_id and sends the bet as txn_type 'debit' and the settlement later as
+ * 'credit' with the SAME id, so a txn_id-only key silently swallows every
+ * sportsbook win as a replay.
  */
 
 /** Error strings Nexus documents / expects back. */
@@ -247,6 +252,12 @@ export class NexusCallbackService {
     }
 
     const txnId = String(g.txn_id ?? '').trim();
+    // Nexus reuses the COUPON id as txn_id and separates the legs with
+    // txn_type ('debit' = bet, 'credit' = settlement). The dedup key is the
+    // PAIR — on txn_id alone every settlement looks like a replay of its own
+    // bet and the player is never paid. Normalised to match the unique index
+    // uq_nexus_txn_id_kind, which is on lower(COALESCE(txn_type,'')).
+    const txnKind = String(g.txn_type ?? '').trim().toLowerCase();
     if (!txnId) {
       this.logger.warn(
         `[Nexus] transaction: ${gameType} object has no txn_id — ${this.safeBody(body)}`,
@@ -267,12 +278,16 @@ export class NexusCallbackService {
     try {
       // ── Replay? Answer with the balance we recorded the first time. ──
       const prior = await qr.query(
-        `SELECT balance_after FROM nexus_transactions WHERE txn_id = $1 LIMIT 1`,
-        [txnId],
+        `SELECT balance_after FROM nexus_transactions
+          WHERE txn_id = $1 AND lower(COALESCE(txn_type, '')) = $2
+          LIMIT 1`,
+        [txnId, txnKind],
       );
       if (prior.length) {
         await qr.rollbackTransaction();
-        this.logger.log(`[Nexus] duplicate txn_id=${txnId} — replaying stored balance`);
+        this.logger.log(
+          `[Nexus] duplicate txn_id=${txnId} kind=${txnKind || '-'} — replaying stored balance`,
+        );
         return { status: 1, user_balance: this.money(prior[0].balance_after) };
       }
 
@@ -343,10 +358,14 @@ export class NexusCallbackService {
         if (e?.code === '23505') {
           await qr.rollbackTransaction();
           const [row] = await this.dataSource.query(
-            `SELECT balance_after FROM nexus_transactions WHERE txn_id = $1 LIMIT 1`,
-            [txnId],
+            `SELECT balance_after FROM nexus_transactions
+              WHERE txn_id = $1 AND lower(COALESCE(txn_type, '')) = $2
+              LIMIT 1`,
+            [txnId, txnKind],
           );
-          this.logger.log(`[Nexus] race on txn_id=${txnId} — returning winner's balance`);
+          this.logger.log(
+            `[Nexus] race on txn_id=${txnId} kind=${txnKind || '-'} — returning winner's balance`,
+          );
           return { status: 1, user_balance: this.money(row?.balance_after ?? before) };
         }
         throw e;
