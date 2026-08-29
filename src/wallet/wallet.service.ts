@@ -1217,12 +1217,19 @@ export class WalletService {
 
     // ─── TURNOVER ON CREDIT ──────────────────────────────────────
     // A credit adjustment (e.g. "Weekly Loss Bonus") can carry a wagering
-    // requirement: amount × multiplier. multiplier 0 → no requirement (the
-    // user is free to withdraw). Debits never create turnover — they just
-    // appear in the transaction history. The description becomes the
+    // requirement: amount × multiplier. Debits never create turnover — they
+    // just appear in the transaction history. The description becomes the
     // requirement's header on the user's wagering page.
+    //
+    // multiplier 0 still creates a row, with target 0 and status COMPLETED, so
+    // the credit is VISIBLE on the wagering and admin turnover pages as an
+    // adjustment that required no wagering. Skipping the insert entirely made
+    // a 0× adjustment invisible there — indistinguishable from one that was
+    // never granted — which is exactly the audit trail those pages exist for.
+    // It imposes no obligation: insertRequirement stores a zero-target row as
+    // COMPLETED, so it never gates a withdrawal.
     let turnover: { requirementId: number; targetAmount: number } | null = null;
-    if (dto.amount > 0 && turnoverMultiplier > 0) {
+    if (dto.amount > 0) {
       turnover = await this.turnoverService.insertRequirement(qr, {
         userId:     dto.userId,
         sourceType: 'MANUAL',

@@ -453,11 +453,20 @@ export class TurnoverService {
       [data.userId],
     );
 
+    // A zero-target requirement is a RECORD, not an obligation: it exists so a
+    // no-wagering credit is still visible on the wagering and admin pages.
+    // It MUST NOT be stored as ACTIVE — ensureNoActiveReqs blocks a withdrawal
+    // on any ACTIVE row regardless of its target, so an ACTIVE 0× row would
+    // lock the player out over a requirement that asks nothing of them.
+    const settled = !(Number(data.targetAmount) > 0);
+
     const result = await qr.query(
       `INSERT INTO turnover_requirements
         (user_id, source_type, source_id, base_amount, multiplier,
-         target_amount, current_amount, status, created_by_admin_id, label)
-       VALUES ($1,$2,$3,$4,$5,$6,0,'ACTIVE',$7,$8)
+         target_amount, current_amount, status, created_by_admin_id, label,
+         completed_at)
+       VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9,
+               CASE WHEN $10::boolean THEN NOW() ELSE NULL END)
        RETURNING id, target_amount`,
       [
         data.userId,
@@ -466,8 +475,10 @@ export class TurnoverService {
         data.baseAmount,
         data.multiplier,
         data.targetAmount,
+        settled ? 'COMPLETED' : 'ACTIVE',
         data.adminId ?? null,
         data.label ?? null,
+        settled,
       ],
     );
 
