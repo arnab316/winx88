@@ -2,6 +2,7 @@ import { Body, Controller, Get, HttpCode, Logger, Param, Post, Query, Req, UseGu
 import { ApiTags, ApiOperation, ApiResponse, ApiBearerAuth, ApiQuery, ApiHeader } from '@nestjs/swagger';
 import { SportsService } from './sports.service';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
+import { ActiveAccountGuard } from 'src/common/guards/active-account.guard';
 import { AdminGuard } from 'src/common/guards/admin.guard';
 import { SportsCallbackDTO } from './dto/sportscallback.dto';
 // import { GetMiniBalanceDTO, MiniBetWinDTO, MiniDepositDTO, MiniWithdrawDTO } from './dto/minicallback.dto'; // MINI GAME — disabled
@@ -68,7 +69,7 @@ export class SportsController {
     return await this.sportsService.getAuthGames(query, userPayload, isMobile);
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @ApiBearerAuth()
   @Get('games/:id')
   @ApiOperation({ summary: 'Launch a game and get redirect / iframe URL' })
@@ -215,7 +216,7 @@ export class SportsController {
     }
   }
 
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @ApiBearerAuth()
   @Get('sports-link')
   @ApiOperation({ summary: 'Get sportsbook dashboard launch link' })

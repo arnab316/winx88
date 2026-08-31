@@ -1,0 +1,1415 @@
+{
+  "info": {
+    "_postman_id": "c9e4d1a7-3b2f-4c8e-9a1d-nexusggr000001",
+    "name": "Nexus GGR — Game API + Seamless Wallet",
+    "description": "Integration with Nexus GGR (https://api.nexusggr.com) — slots, live casino, sportsbook, fish and mini games via a SEAMLESS wallet.\n\n## Read this first\n\nThere are TWO directions, and confusing them is the main source of pain:\n\n**Folder 1 — Game API.** WE call THEM. One endpoint (`{{apiEndpoint}}`), one flat JSON body, dispatched on `method`, authenticated with `agent_code` + **agent_token**.\n\n**Folder 2 — Seamless Wallet.** THEY call US at `{{siteEndpoint}}/gold_api` on every bet and win. Authenticated with `agent_code` + **agent_secret** (a DIFFERENT value from the token). This is where real money moves.\n\nSeamless means Nexus holds no player funds — our wallet is the source of truth, and every spin is a live HTTP call to our server.\n\n## Two traps that cost hours\n\n**1. Token vs Secret.** Outbound calls use `agent_token`; inbound callbacks carry `agent_secret`. Swapping them fails with `Invalid Agent`.\n\n**2. IPv4 only.** Nexus authorises by IP, and the address registered in their panel is your IPv4 one. Verified against the live API: the identical request over IPv4 returns SUCCESS, over IPv6 returns `INVALID_IP`. If a call fails with INVALID_IP from a machine you know is whitelisted, you are egressing over IPv6. (Our backend client forces `family: 4` for this reason.)\n\n## Saved responses\n\nEvery example in this collection was captured from the LIVE API on 2026-08-12 with the real agent account, not copied from the docs. Where the docs and reality disagree, the saved response is the truth — see 1.2, where games carry no `type` field despite the docs implying otherwise.\n\n---\n\n## SPORTSBOOK — Nexus back-office setup (do this in THEIR panel)\n\nThe sportsbook needs configuration in the Nexus admin panel (Profile → Sportsbook Configuration), NOT in our code. These fields tell the sportsbook iframe how to hand control back to our site when it needs to.\n\n| Field | Set it to | Why |\n|---|---|---|\n| Login URL | `https://winx-88.com/login`  OR  `sendPostMessage` | Where the iframe sends a logged-OUT visitor who taps a bet. A real URL redirects there; `sendPostMessage` instead posts a browser message to your page so your own login modal opens (needs a frontend listener). |\n| Deposit URL | `https://winx-88.com/deposit`  OR  `sendPostMessage` | Same idea, for a player with insufficient balance who taps Place Bet. |\n| Theme | Dark | Cosmetic. Match your site. |\n| Cashout RTP (%) | 92 (their default) | The return applied when a player cashes out a bet before the event settles — 92 means a 100 fair value is offered at 92. Lower = more house margin on early cashouts. |\n| Min / Max Stake | 5 / 1000 | Per-bet limits, in whole BDT. |\n| Default Stake Amounts | 5,25,50,100 | The quick-stake chips in the bet slip. |\n\n**Which to choose for Login/Deposit URL.** Because a player is ALREADY logged into your site before they can open the sportsbook, `sendPostMessage` is the cleaner option — the iframe messages your page (\"needs deposit\") and your existing deposit modal opens, with no full-page redirect. But it requires the frontend to add a `window.addEventListener(\"message\", ...)` handler. If that listener is not built, use the real `/login` and `/deposit` URLs so the flow at least works by redirect.\n\n**Nothing about sportsbook BETS changes on our side.** They arrive as `game_type: \"SB\"` on the same `/gold_api` callback (folder 2.4), already handled and tested. The only new pieces are launching the lobby (folder 3.6) and this panel config.\n",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "apiEndpoint",
+      "value": "https://api.nexusggr.com",
+      "type": "string"
+    },
+    {
+      "key": "siteEndpoint",
+      "value": "https://beta.safurion.online",
+      "type": "string"
+    },
+    {
+      "key": "agentCode",
+      "value": "darksveer_BDT",
+      "type": "string"
+    },
+    {
+      "key": "agentToken",
+      "value": "06213d5bde3f9c98ab74a2b9fa07e7e0",
+      "type": "string"
+    },
+    {
+      "key": "agentSecret",
+      "value": "dade54471925c85e5b23d8775f6fb0e3",
+      "type": "string"
+    },
+    {
+      "key": "userCode",
+      "value": "karfa12",
+      "type": "string"
+    },
+    {
+      "key": "providerCode",
+      "value": "PRAGMATIC",
+      "type": "string"
+    },
+    {
+      "key": "gameCode",
+      "value": "vs243mwarrior",
+      "type": "string"
+    },
+    {
+      "key": "userToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Game API — we call Nexus",
+      "description": "Outbound. Every request is `POST {{apiEndpoint}}` with a flat JSON body; `method` selects the operation. Auth is `agent_code` + `agent_token`.\n\nOrdered as their documentation lists them.",
+      "item": [
+        {
+          "name": "1.1 Provider List",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"provider_list\",\n  \"agent_code\": \"{{agentCode}}\",\n  \"agent_token\": \"{{agentToken}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{apiEndpoint}}",
+              "host": [
+                "{{apiEndpoint}}"
+              ]
+            },
+            "description": "Start here. Also the fastest connectivity/credentials check.\n\n**The `type` field on each provider is the authority for categorising its games** — the game list itself carries no type. Values seen on this account: `slot`, `live`, `SB`, `MN` (mini/instant), `FH` (fish hunter).\n\nNote `FH` exists on the account but is absent from their written docs. Any integration that only handles slot/live/SB/MN will reject every fish-game bet."
+          },
+          "response": [
+            {
+              "name": "200 — 25 providers (live capture)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{apiEndpoint}}",
+                  "host": [
+                    "{{apiEndpoint}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"msg\": \"SUCCESS\",\n  \"providers\": [\n    { \"code\": \"PRAGMATIC\",   \"name\": \"Pragmatic Play\", \"type\": \"slot\", \"status\": 1 },\n    { \"code\": \"HABANERO\",    \"name\": \"Habanero\",       \"type\": \"slot\", \"status\": 1 },\n    { \"code\": \"BOOONGO\",     \"name\": \"Booongo\",        \"type\": \"slot\", \"status\": 1 },\n    { \"code\": \"PLAYSON\",     \"name\": \"Playson\",        \"type\": \"slot\", \"status\": 1 },\n    { \"code\": \"CQ9\",         \"name\": \"CQ9\",            \"type\": \"slot\", \"status\": 1 },\n    { \"code\": \"EVOPLAY\",     \"name\": \"Evoplay\",        \"type\": \"slot\", \"status\": 1 },\n    { \"code\": \"PGSOFT\",      \"name\": \"PG Soft\",        \"type\": \"slot\", \"status\": 1 },\n    { \"code\": \"HACKSAW\",     \"name\": \"Hacksaw\",        \"type\": \"slot\", \"status\": 1 },\n    { \"code\": \"PP_LIVE_PRO\", \"name\": \"PP Live\",        \"type\": \"live\", \"status\": 1 },\n    { \"code\": \"SPORTSBOOK\",  \"name\": \"Sportsbook\",     \"type\": \"SB\",   \"status\": 1 },\n    { \"code\": \"SPRIBE\",      \"name\": \"Spribe\",         \"type\": \"MN\",   \"status\": 1 },\n    { \"code\": \"FISHHUNTER\",  \"name\": \"Fish Hunter\",    \"type\": \"FH\",   \"status\": 1 }\n  ]\n}\n\n// TRUNCATED for readability — the live account returns 25 providers:\n//   SLOT (21): PRAGMATIC, HABANERO, BOOONGO, PLAYSON, CQ9, EVOPLAY, TOPTREND,\n//              DREAMTECH, REELKINGDOM, PGSOFT, HACKSAW, FATPANDA, FACHAI,\n//              PLAYNGO, AMUSNET, EGT, SPADEGAMING, FASTSPIN, JOKERGAMING,\n//              RUBYPLAY, AMATIC\n//   LIVE (1): PP_LIVE_PRO     SB (1): SPORTSBOOK\n//   MN (1):   SPRIBE          FH (1): FISHHUNTER",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "0 — INVALID_IP (you are on IPv6)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{apiEndpoint}}",
+                  "host": [
+                    "{{apiEndpoint}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n    \"status\": \"0\",\n    \"code\": \"INVALID_IP\",\n    \"message\": \"Your IP 2405:201:9013:d879:d86b:efea:1f5b:4673 should be registered in the whitelist of the API panel.\"\n}\n\n// The address shown is an IPv6 one. The SAME request over IPv4 succeeds.\n// Postman: Settings > General > turn OFF \"Use IPv6\", or the address in the\n// message is the one to whitelist. Note IPv6 privacy extensions rotate the\n// suffix, so whitelisting an IPv6 address does not stay valid.",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "0 — Invalid Agent (wrong agent_code)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{apiEndpoint}}",
+                  "host": [
+                    "{{apiEndpoint}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": 0,\n  \"msg\": \"Invalid Agent.\"\n}\n\n// Also what you get if you send agent_secret where agent_token belongs.",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "1.2 Game List",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"game_list\",\n  \"agent_code\": \"{{agentCode}}\",\n  \"agent_token\": \"{{agentToken}}\",\n  \"provider_code\": \"{{providerCode}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{apiEndpoint}}",
+              "host": [
+                "{{apiEndpoint}}"
+              ]
+            },
+            "description": "Games for ONE provider. PRAGMATIC alone returns 614.\n\n**Games carry NO `type` field** — only `id`, `game_code`, `game_name`, `banner`, `status`. Their category must be taken from the PROVIDER's type in 1.1. Deriving it from the game (e.g. by name) files every slot as a live game.\n\n`status: 1` means playable. Skip anything else rather than listing a game that will not launch."
+          },
+          "response": [
+            {
+              "name": "200 — 614 Pragmatic games (live capture)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{apiEndpoint}}",
+                  "host": [
+                    "{{apiEndpoint}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"msg\": \"SUCCESS\",\n  \"games\": [\n    {\n      \"id\": 1,\n      \"game_code\": \"vs243mwarrior\",\n      \"game_name\": \"Monkey Warrior\",\n      \"banner\": \"https://assets.bd34fgabh.com/apps/game-assets/vs243mwarrior/vs243mwarrior_800x600_NB.avif\",\n      \"status\": 1\n    }\n  ]\n}\n\n// 614 entries for PRAGMATIC. Note the absence of any `type` field —\n// that is why the provider's type from 1.1 is the authority.",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "1.3 Game Launch",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"game_launch\",\n  \"agent_code\": \"{{agentCode}}\",\n  \"agent_token\": \"{{agentToken}}\",\n  \"user_code\": \"{{userCode}}\",\n  \"provider_code\": \"{{providerCode}}\",\n  \"game_code\": \"{{gameCode}}\",\n  \"lang\": \"en\",\n  \"lobby_url\": \"https://winx-88.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{apiEndpoint}}",
+              "host": [
+                "{{apiEndpoint}}"
+              ]
+            },
+            "description": "Returns a playable URL to put in an iframe or redirect to.\n\n**`user_code` MUST be our `users.username`.** It is the identity Nexus echoes back on every /gold_api callback, and our handler resolves the wallet by that username. Send anything else and bets arrive for a player we cannot find. The user is auto-created on Nexus's side at first launch — no separate registration call.\n\n`game_code` is optional for LIVE providers; omit it to get a lobby URL instead of a specific table.\n\n`rtp` is optional and uses the account default when omitted."
+          },
+          "response": [
+            {
+              "name": "200 — playable launch URL (live capture)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{apiEndpoint}}",
+                  "host": [
+                    "{{apiEndpoint}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"msg\": \"SUCCESS\",\n  \"launch_url\": \"https://6uypabdp5n.oaxznmnojw.net/gs2c/html5Game.do?jackpotid=0&gname=Monkey%20Warrior&extGame=1&ext=0&cb_target=exist_tab&symbol=vs243mwarrior&jurisdictionID=99&lobbyUrl=js://window.close();&minilobby=false&mgckey=e045160206cdcf1b460a7879f6f4dd69&tabName=\"\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "0 — INVALID_PROVIDER",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{apiEndpoint}}",
+                  "host": [
+                    "{{apiEndpoint}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": 0,\n  \"msg\": \"INVALID_PROVIDER\"\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "1.4 Agent & User Info",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"money_info\",\n  \"agent_code\": \"{{agentCode}}\",\n  \"agent_token\": \"{{agentToken}}\",\n  \"user_code\": \"{{userCode}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{apiEndpoint}}",
+              "host": [
+                "{{apiEndpoint}}"
+              ]
+            },
+            "description": "`money_info` covers both: omit `user_code` for the agent balance alone, include it to get the user block too.\n\n**`agent.balance` is your credit float with Nexus** — worth monitoring, since running dry is a \"games stop working\" event rather than a gradual degradation.\n\n**`user.balance` is ALWAYS 0 in seamless mode**, and that is correct. Nexus holds no player funds; our `wallets` table is the source of truth. Do not treat this as the player's balance."
+          },
+          "response": [
+            {
+              "name": "200 — agent + user (live capture, note user balance 0)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{apiEndpoint}}",
+                  "host": [
+                    "{{apiEndpoint}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"msg\": \"SUCCESS\",\n  \"agent\": {\n    \"agent_code\": \"darksveer_BDT\",\n    \"balance\": 1025000\n  },\n  \"user\": {\n    \"user_code\": \"karfa12\",\n    \"balance\": 0\n  }\n}\n\n// user.balance = 0 is EXPECTED under seamless. The real balance lives in\n// our wallets table and is served through /gold_api user_balance (2.1).",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "200 — agent only (omit user_code)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{apiEndpoint}}",
+                  "host": [
+                    "{{apiEndpoint}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"msg\": \"SUCCESS\",\n  \"agent\": {\n    \"agent_code\": \"darksveer_BDT\",\n    \"balance\": 1025000\n  }\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "1.5 Game Log",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"get_game_log\",\n  \"agent_code\": \"{{agentCode}}\",\n  \"agent_token\": \"{{agentToken}}\",\n  \"user_code\": \"{{userCode}}\",\n  \"game_type\": \"slot\",\n  \"start\": \"2026-08-01 00:00:00\",\n  \"end\": \"2026-08-12 23:59:00\",\n  \"page\": 0,\n  \"perPage\": 100\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{apiEndpoint}}",
+              "host": [
+                "{{apiEndpoint}}"
+              ]
+            },
+            "description": "Nexus's own record of rounds — the authority when reconciling a dispute against our `nexus_transactions` table.\n\n`game_type` names the array in the response (`slot`, `live`, `SB`, `MN`, `FH`), exactly like the callback payload.\n\n`page` is ZERO-indexed. Dates are `YYYY-MM-DD HH:mm:ss`.\n\nThe `user_start_balance` / `user_end_balance` fields are what Nexus believes our wallet did. If they disagree with `nexus_transactions.balance_before/after`, something is wrong on one side — this is the first place to look."
+          },
+          "response": [
+            {
+              "name": "200 — empty range (live capture)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{apiEndpoint}}",
+                  "host": [
+                    "{{apiEndpoint}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"total_count\": 0,\n  \"page\": 0,\n  \"perPage\": 10,\n  \"slot\": []\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "200 — with rounds (shape from Nexus docs)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{apiEndpoint}}",
+                  "host": [
+                    "{{apiEndpoint}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"total_count\": 340,\n  \"page\": 0,\n  \"perPage\": 1000,\n  \"slot\": [\n    {\n      \"history_id\": 777,\n      \"agent_code\": \"admin\",\n      \"user_code\": \"test\",\n      \"provider_code\": \"PRAGMATIC\",\n      \"game_code\": \"vs20doghouse\",\n      \"type\": \"BASE\",\n      \"bet_money\": 2000,\n      \"win_money\": 0,\n      \"txn_id\": \"64a83f2fc597acc9004eec52c3f84c30\",\n      \"txn_type\": \"debit_credit\",\n      \"user_start_balance\": 230500,\n      \"user_end_balance\": 228500,\n      \"agent_start_balance\": 22092000,\n      \"agent_end_balance\": 22092000,\n      \"created_at\": \"2021-09-17T12:50:42.000Z\"\n    }\n  ]\n}\n\n// `txn_id` here is the SAME value sent to /gold_api, so it joins directly\n// to our nexus_transactions.txn_id for reconciliation.",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "1.6 In-Game History",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"get_game_history\",\n  \"agent_code\": \"{{agentCode}}\",\n  \"agent_token\": \"{{agentToken}}\",\n  \"user_code\": \"{{userCode}}\",\n  \"provider_code\": \"PRAGMATIC\",\n  \"game_code\": \"{{gameCode}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{apiEndpoint}}",
+              "host": [
+                "{{apiEndpoint}}"
+              ]
+            },
+            "description": "Returns a URL to the provider's own round-replay screen — useful when a player disputes a result.\n\n**PRAGMATIC only.** Every other provider returns `Invalid Provider`, confirmed live. Do not surface this button for non-Pragmatic games."
+          },
+          "response": [
+            {
+              "name": "200 — replay URL (live capture)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{apiEndpoint}}",
+                  "host": [
+                    "{{apiEndpoint}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"msg\": \"SUCCESS\",\n  \"history_url\": \"https://6uypabdp5n.oaxznmnojw.net/gs2c/lastGameHistory.do?symbol=vs243mwarrior&mgckey=2f356257e269b86b0fabc660835ed471\"\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "0 — Invalid Provider (any non-Pragmatic, live capture)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{apiEndpoint}}",
+                  "host": [
+                    "{{apiEndpoint}}"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "body": "{\n  \"status\": 0,\n  \"msg\": \"Invalid Provider\"\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Seamless Wallet — Nexus calls US",
+      "description": "Inbound. Nexus POSTs to `{{siteEndpoint}}/gold_api` on every balance check, bet and win. Auth is `agent_code` + **agent_secret** in the BODY (not a header, and not the token).\n\nYou do not run these in production — they are here to simulate Nexus and prove the endpoint behaves before real money flows.\n\n**Every response is HTTP 200**, success or failure. A 4xx/5xx makes Nexus mark the call failed and retry — after we may already have moved the money.\n\nSet `siteEndpoint` to your deployed host. Nexus appends `/gold_api` itself, so the value in their panel must NOT include it.",
+      "item": [
+        {
+          "name": "2.1 user_balance",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"user_balance\",\n  \"agent_code\": \"{{agentCode}}\",\n  \"agent_secret\": \"{{agentSecret}}\",\n  \"user_code\": \"{{userCode}}\",\n  \"user_token\": \"c3041c6d9146a164387fa454eff7b432\",\n  \"game_code\": \"{{gameCode}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{siteEndpoint}}/gold_api",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "gold_api"
+              ]
+            },
+            "description": "Called when a game opens and periodically during play. Returns the player's REAL wallet balance from our database.\n\nNote `agent_secret` here, not `agent_token`."
+          },
+          "response": [
+            {
+              "name": "200 — balance returned",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/gold_api",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "gold_api"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"user_balance\": 1000\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "200 — unknown player",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/gold_api",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "gold_api"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": 0,\n  \"user_balance\": 0,\n  \"msg\": \"INVALID_USER\"\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "200 — wrong agent_secret (still HTTP 200)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/gold_api",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "gold_api"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": 0,\n  \"msg\": \"INVALID_AGENT\"\n}\n\n// Note the HTTP status is still 200. Failures are in the body, never the\n// status line — otherwise Nexus retries a call we may already have applied.",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "2.2 transaction — debit (a bet)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"transaction\",\n  \"agent_code\": \"{{agentCode}}\",\n  \"agent_secret\": \"{{agentSecret}}\",\n  \"agent_balance\": 1025000,\n  \"user_code\": \"{{userCode}}\",\n  \"user_token\": \"c3041c6d9146a164387fa454eff7b432\",\n  \"user_balance\": 1000,\n  \"game_type\": \"slot\",\n  \"slot\": {\n    \"provider_code\": \"PRAGMATIC\",\n    \"game_code\": \"{{gameCode}}\",\n    \"type\": \"BASE\",\n    \"bet_money\": 100,\n    \"win_money\": 0,\n    \"round_id\": 63792613432127,\n    \"txn_id\": \"TXN_DEMO_001\",\n    \"txn_type\": \"debit\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{siteEndpoint}}/gold_api",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "gold_api"
+              ]
+            },
+            "description": "A bet. Money leaves the player's wallet.\n\n**The bet lives under a key NAMED BY `game_type`** — `slot`, `live`, `SB`, `MN` or `FH`. That dynamic key is why our handler takes the body untyped: a DTO with `whitelist: true` would strip it and we would process an empty transaction.\n\n`txn_type` is `debit` | `credit` | `debit_credit`.\n\nAmounts are WHOLE BDT, not paisa — confirmed by the sportsbook stake config (min 5, max 1000, defaults 5/25/50/100)."
+          },
+          "response": [
+            {
+              "name": "200 — 1000 → 900",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/gold_api",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "gold_api"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"user_balance\": 900\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "200 — REPLAY of the same txn_id (idempotent)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/gold_api",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "gold_api"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"user_balance\": 900\n}\n\n// THE MOST IMPORTANT TEST IN THIS COLLECTION.\n// Send 2.2 twice with the same txn_id. The second call must return the SAME\n// balance (900), not deduct again (800), and must return status 1 rather than\n// an error — a retry has to look identical to the original from Nexus's side.\n// Verified live, including 5 simultaneous identical requests: one debit\n// applied, four replayed, exactly one database row.",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "200 — INSUFFICIENT_USER_FUNDS (balance untouched)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/gold_api",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "gold_api"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": 0,\n  \"user_balance\": 1050,\n  \"msg\": \"INSUFFICIENT_USER_FUNDS\"\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "2.3 transaction — debit_credit (bet and win together)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"transaction\",\n  \"agent_code\": \"{{agentCode}}\",\n  \"agent_secret\": \"{{agentSecret}}\",\n  \"agent_balance\": 1025000,\n  \"user_code\": \"{{userCode}}\",\n  \"user_token\": \"c3041c6d9146a164387fa454eff7b432\",\n  \"user_balance\": 900,\n  \"game_type\": \"slot\",\n  \"slot\": {\n    \"provider_code\": \"PRAGMATIC\",\n    \"game_code\": \"{{gameCode}}\",\n    \"type\": \"BASE\",\n    \"bet_money\": 100,\n    \"win_money\": 250,\n    \"round_id\": 63792613432128,\n    \"txn_id\": \"TXN_DEMO_002\",\n    \"txn_type\": \"debit_credit\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{siteEndpoint}}/gold_api",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "gold_api"
+              ]
+            },
+            "description": "One call carrying both legs of a winning spin. The wallet moves ONCE by the net difference (+150 here), not twice.\n\nTurnover still counts the STAKE only (100), never the payout."
+          },
+          "response": [
+            {
+              "name": "200 — 900 → 1050 (net +150)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/gold_api",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "gold_api"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"user_balance\": 1050\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "2.4 transaction — sportsbook (SB) and other game types",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"method\": \"transaction\",\n  \"agent_code\": \"{{agentCode}}\",\n  \"agent_secret\": \"{{agentSecret}}\",\n  \"agent_balance\": 1025000,\n  \"user_code\": \"{{userCode}}\",\n  \"user_token\": \"c3041c6d9146a164387fa454eff7b432\",\n  \"user_balance\": 1050,\n  \"game_type\": \"SB\",\n  \"info\": \"{}\",\n  \"SB\": {\n    \"provider_code\": \"SPORTSBOOK\",\n    \"game_code\": \"SPORTSBOOK\",\n    \"type\": \"accumulator\",\n    \"bet_money\": 25,\n    \"win_money\": 0,\n    \"round_id\": 561435,\n    \"txn_id\": \"TXN_DEMO_SB_001\",\n    \"txn_type\": \"debit\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{siteEndpoint}}/gold_api",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "gold_api"
+              ]
+            },
+            "description": "The same handler covers all five game types — swap `game_type` and rename the nested key to match:\n\n| game_type | nested key | shows in history as |\n|---|---|---|\n| `slot` | `slot` | SLOT |\n| `live` | `live` | LIVE |\n| `SB` | `SB` | SPORTS |\n| `MN` | `MN` | CRASH |\n| `FH` | `FH` | FISHING |\n\n`FH` is absent from Nexus's written docs but present on the account — handle it or every fish-game bet fails.\n\nSB and MN bets are accepted even though we do not currently LIST those games, so enabling them later needs no backend change."
+          },
+          "response": [
+            {
+              "name": "200 — SB bet accepted",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/gold_api",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "gold_api"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": 1,\n  \"user_balance\": 1025\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "200 — INVALID_REQUEST (game_type with no matching object)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/gold_api",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "gold_api"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"status\": 0,\n  \"msg\": \"INVALID_REQUEST\"\n}\n\n// Sent when game_type names a key that is not in the body — e.g.\n// game_type: \"slot\" with no \"slot\" object. If you see this in production\n// against well-formed requests, suspect a DTO stripping the nested key.",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. FRONTEND — what your app calls",
+      "description": "**FOR THE FRONTEND DEVELOPER. Start here — ignore folders 1 and 2.**\n\nYour app never talks to Nexus. It calls YOUR backend, which calls Nexus:\n\n```\nBrowser  →  safurion.online  →  api.nexusggr.com\n            (your backend)      (Nexus)\n```\n\nFolder 1 is your BACKEND calling Nexus — reference only, never called from a browser (the agent token would be exposed, and Nexus only accepts whitelisted server IPs anyway). Folder 2 is Nexus calling your backend.\n\n## The good news: there is nothing new to build\n\nNexus games were deliberately added to the SAME `casino_games` table the existing Palace and OroPlay games live in. So the endpoints below are the ones you already use — Nexus games simply appear in the results, tagged by provider. No new list endpoint, no new launch call, no special-casing.\n\nIf your game list and launch already work, Nexus works the moment the backend is deployed and the catalog is synced.",
+      "item": [
+        {
+          "name": "3.1 Game list (Nexus games appear here)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{siteEndpoint}}/sports/games?filters[type]=slots&pageable[page]=1&pageable[size]=50",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "sports",
+                "games"
+              ],
+              "query": [
+                {
+                  "key": "filters[type]",
+                  "value": "slots",
+                  "description": "slots | live | roulette | baccarat | blackjack | table | instant | fishing. Use 'live' for the whole live-casino tab."
+                },
+                {
+                  "key": "pageable[page]",
+                  "value": "1"
+                },
+                {
+                  "key": "pageable[size]",
+                  "value": "50"
+                },
+                {
+                  "key": "search",
+                  "value": "",
+                  "description": "Matches game name.",
+                  "disabled": true
+                },
+                {
+                  "key": "filters[providers][]",
+                  "value": "Pragmatic Play",
+                  "description": "Filter by provider NAME (not code).",
+                  "disabled": true
+                },
+                {
+                  "key": "isMobile",
+                  "value": "false",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "**No auth required.** The existing game list — Nexus games are already in it.\n\nAfter a catalog sync this returns ~3300 additional games across these types:\n\n| type | count | source |\n|---|---|---|\n| `slots` | 3070 | 21 Nexus slot providers |\n| `blackjack` | 131 | PP Live |\n| `baccarat` | 44 | PP Live |\n| `roulette` | 27 | PP Live |\n| `live` | 10 | PP Live |\n| `instant` | 9 | Spribe |\n| `fishing` | 9 | FishHunter |\n\nNothing in the response shape changed. Use `uuid` from each game to launch it in 3.2 — Nexus ones look like `NEXUS_PRAGMATIC_vs243mwarrior`, but you should treat it as an opaque string rather than parsing it."
+          },
+          "response": [
+            {
+              "name": "200 — list including a Nexus game",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/sports/games",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "sports",
+                    "games"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"items\": [\n    {\n      \"uuid\": \"NEXUS_PRAGMATIC_vs243mwarrior\",\n      \"name\": \"Monkey Warrior\",\n      \"image\": \"https://assets.bd34fgabh.com/apps/game-assets/vs243mwarrior/vs243mwarrior_800x600_NB.avif\",\n      \"type\": \"slots\",\n      \"provider\": \"Pragmatic Play\",\n      \"vendor_code\": \"PRAGMATIC\",\n      \"game_code\": \"vs243mwarrior\",\n      \"is_mobile\": 1,\n      \"aggregator\": \"NEXUS\"\n    },\n    {\n      \"uuid\": \"2e53e296-fe6a-40a0-bf76-520a8fa33aeb\",\n      \"name\": \"Sweet Bonanza\",\n      \"type\": \"slots\",\n      \"provider\": \"Pragmatic Play\",\n      \"game_symbol\": \"vs20fruitsw\",\n      \"aggregator\": null\n    }\n  ],\n  \"total\": 5478\n}\n\n// Both are in the same list. `aggregator` tells you where a game comes from\n// (\"NEXUS\" or null for the existing providers) — you do NOT need to branch\n// on it, the launch call handles routing. It is there for debugging.",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "3.2 Launch a game (works for ALL providers)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{siteEndpoint}}/sports/games/NEXUS_PRAGMATIC_vs243mwarrior?searchType=real",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "sports",
+                "games",
+                "NEXUS_PRAGMATIC_vs243mwarrior"
+              ],
+              "query": [
+                {
+                  "key": "searchType",
+                  "value": "real",
+                  "description": "REQUIRED. 'real' or 'demo'."
+                },
+                {
+                  "key": "isMobile",
+                  "value": "false",
+                  "disabled": true
+                }
+              ]
+            },
+            "description": "**The endpoint you already use. No change needed.**\n\nPass the `uuid` from the game list; the backend works out which provider it belongs to and calls the right one — Nexus, Palace or OroPlay. Your code does not need to know the difference.\n\nPut the returned `url` in an iframe or redirect to it.\n\nRequires the player's JWT: the backend sends their `username` to Nexus as the player identity, and every subsequent bet callback is resolved by it.\n\nIf this returns `{}` or null, the provider rejected the launch — check the backend logs rather than retrying."
+          },
+          "response": [
+            {
+              "name": "200 — Nexus game launch (live capture)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/sports/games/NEXUS_PRAGMATIC_vs243mwarrior?searchType=real",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "sports",
+                    "games",
+                    "NEXUS_PRAGMATIC_vs243mwarrior"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"url\": \"https://6uypabdp5n.oaxznmnojw.net/gs2c/html5Game.do?jackpotid=0&gname=Monkey%20Warrior&extGame=1&ext=0&cb_target=exist_tab&symbol=vs243mwarrior&jurisdictionID=99&lobbyUrl=js://window.close();&minilobby=false&mgckey=e045160206cdcf1b460a7879f6f4dd69&tabName=\"\n}\n\n// Verified live: the SAME endpoint with an existing Palace uuid still routes\n// to Palace. Routing is by the game's aggregator, decided server-side.",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "3.3 Provider filter list",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{siteEndpoint}}/sports/live-vendors",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "sports",
+                "live-vendors"
+              ]
+            },
+            "description": "Distinct live-casino provider names, for the provider filter chips. Nexus's live provider appears here automatically once synced."
+          },
+          "response": []
+        },
+        {
+          "name": "3.4 Player balance",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{siteEndpoint}}/wallet/balance",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "wallet",
+                "balance"
+              ]
+            },
+            "description": "Unchanged. Nexus bets move this balance in real time via the seamless callbacks, so refresh it after a game session.\n\nThe backend also pushes a `wallet:balance` websocket event to the player's room after every Nexus bet, so a live-updating balance needs no polling."
+          },
+          "response": []
+        },
+        {
+          "name": "3.5 Play history (Nexus rounds included)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{siteEndpoint}}/me/game-history?limit=20&category=SLOT",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "me",
+                "game-history"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                },
+                {
+                  "key": "category",
+                  "value": "SLOT",
+                  "description": "SLOT | LIVE | SPORTS | CRASH | FISHING | LOTTERY | JACKPOT. Omit for all."
+                }
+              ]
+            },
+            "description": "Existing endpoint. Nexus rounds are unioned in alongside Palace, OroPlay, sportsbook and in-house games, grouped by round.\n\nNexus's game types map onto the categories you already use, so no new category chips are needed:\n\n| Nexus game_type | category shown |\n|---|---|\n| `slot` | SLOT |\n| `live` | LIVE |\n| `SB` | SPORTS |\n| `MN` | CRASH |\n| `FH` | FISHING |"
+          },
+          "response": [
+            {
+              "name": "200 — Nexus rounds in the feed (live capture)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/me/game-history?limit=10",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "me",
+                    "game-history"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"statusCode\": 200,\n  \"message\": \"Game history\",\n  \"data\": [\n    {\n      \"refId\": \"9200\",\n      \"refCode\": \"9200\",\n      \"category\": \"SLOT\",\n      \"gameCode\": \"vs243mwarrior\",\n      \"gameName\": \"Monkey Warrior\",\n      \"providerName\": \"PRAGMATIC\",\n      \"betAmount\": 200,\n      \"actualPayout\": 0,\n      \"status\": \"LOST\",\n      \"placedAt\": \"2026-08-11T21:10:02.000Z\",\n      \"settledAt\": \"2026-08-11T21:10:02.000Z\"\n    },\n    {\n      \"category\": \"SLOT\",\n      \"gameName\": \"Monkey Warrior\",\n      \"providerName\": \"PRAGMATIC\",\n      \"betAmount\": 100,\n      \"actualPayout\": 250,\n      \"status\": \"WON\"\n    },\n    {\n      \"category\": \"SPORTS\",\n      \"gameName\": \"SPORTSBOOK\",\n      \"providerName\": \"SPORTSBOOK\",\n      \"betAmount\": 25,\n      \"actualPayout\": 0,\n      \"status\": \"LOST\"\n    }\n  ]\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "3.6 Launch SPORTSBOOK (a lobby, not a tile)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{siteEndpoint}}/nexus/sportsbook/launch?lang=en",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "nexus",
+                "sportsbook",
+                "launch"
+              ],
+              "query": [
+                {
+                  "key": "lang",
+                  "value": "en",
+                  "description": "Optional. Defaults to en."
+                }
+              ]
+            },
+            "description": "The sportsbook is ONE lobby, not a grid of games — it does not appear in /sports/games and has no uuid. Surface it as a dedicated \"Sports\" nav button that calls this, then open the returned url in an iframe or new tab.\n\nBets settle through the same seamless callback as slots (game_type \"SB\"), so nothing else is needed on the bet side.\n\nREQUIRES the Nexus back-office sportsbook setup (see the collection description) — Login URL and Deposit URL must be configured there, or a logged-out / underfunded player hits a dead end inside the iframe."
+          },
+          "response": [
+            {
+              "name": "200 — sportsbook lobby URL",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/nexus/sportsbook/launch",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "nexus",
+                    "sportsbook",
+                    "launch"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"url\": \"https://sb.oaxznmnojw.net/sportsbook/?token=...&lang=en\"\n}\n\n// Shape only — captured from the live account requires the server IP to be\n// whitelisted. The real URL is the Nexus sportsbook front end.",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Admin routes (backoffice)",
+      "description": "WinX88's own endpoints for managing the Nexus catalog. Admin JWT, not Nexus credentials.",
+      "item": [
+        {
+          "name": "4.1 Check connectivity",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{siteEndpoint}}/nexus/admin/providers",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "nexus",
+                "admin",
+                "providers"
+              ]
+            },
+            "description": "Proxies 1.1 through our backend. The fastest way to confirm the server can reach Nexus and that its IP is whitelisted — an `INVALID_IP` here means the SERVER's address is not registered, regardless of whether your laptop works."
+          },
+          "response": []
+        },
+        {
+          "name": "4.2 Sync the catalog",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json",
+                "type": "text"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{siteEndpoint}}/nexus/admin/sync",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "nexus",
+                "admin",
+                "sync"
+              ]
+            },
+            "description": "Walks every provider and upserts their games into `casino_games` with `aggregator='NEXUS'`. Safe to re-run — it upserts rather than deleting, so a partial failure never empties the catalog.\n\nPass `{\"providerCode\":\"PRAGMATIC\"}` to sync one provider only.\n\nTakes a few minutes for the full catalog."
+          },
+          "response": [
+            {
+              "name": "200 — full sync (live capture)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/nexus/admin/sync",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "nexus",
+                    "admin",
+                    "sync"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"success\": true,\n  \"providers\": 25,\n  \"games\": 3300,\n  \"skipped\": []\n}\n\n// Resulting classification:\n//   slots     3070  (21 providers)\n//   blackjack  131 ┐\n//   baccarat    44 ├ PP_LIVE_PRO, split by game name\n//   roulette    27 │\n//   live        10 ┘\n//   instant      9  (SPRIBE / MN)\n//   fishing      9  (FISHHUNTER / FH)",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "4.3 What is synced",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{adminToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{siteEndpoint}}/nexus/admin/games",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "nexus",
+                "admin",
+                "games"
+              ]
+            },
+            "description": "Counts by provider and type — confirms games landed in the right tabs after a sync."
+          },
+          "response": []
+        },
+        {
+          "name": "4.4 Launch a game (direct Nexus route)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{userToken}}",
+                "type": "text"
+              }
+            ],
+            "url": {
+              "raw": "{{siteEndpoint}}/nexus/launch?uuid=NEXUS_PRAGMATIC_vs243mwarrior",
+              "host": [
+                "{{siteEndpoint}}"
+              ],
+              "path": [
+                "nexus",
+                "launch"
+              ],
+              "query": [
+                {
+                  "key": "uuid",
+                  "value": "NEXUS_PRAGMATIC_vs243mwarrior",
+                  "description": "casino_games.uuid — format NEXUS_<PROVIDER>_<GAME>"
+                }
+              ]
+            },
+            "description": "Player-facing launch. The existing `/sports/games/:uuid?searchType=real` route also works and routes Nexus games here automatically, so the frontend needs no change.\n\nThe player's `username` is sent as `user_code`, which is what ties the launch to the wallet callbacks."
+          },
+          "response": [
+            {
+              "name": "200 — launch URL (live capture)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                  "raw": "{{siteEndpoint}}/nexus/launch",
+                  "host": [
+                    "{{siteEndpoint}}"
+                  ],
+                  "path": [
+                    "nexus",
+                    "launch"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json; charset=utf-8"
+                }
+              ],
+              "body": "{\n  \"url\": \"https://6uypabdp5n.oaxznmnojw.net/gs2c/html5Game.do?jackpotid=0&gname=Monkey%20Warrior&extGame=1&ext=0&cb_target=exist_tab&symbol=vs243mwarrior&jurisdictionID=99&lobbyUrl=js://window.close();&minilobby=false&mgckey=e045160206cdcf1b460a7879f6f4dd69&tabName=\"\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

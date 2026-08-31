@@ -10,6 +10,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { ActiveAccountGuard } from '../common/guards/active-account.guard';
 import { WinypayService } from './winypay.service';
 
 @Controller('winypay')
@@ -20,7 +21,7 @@ export class WinypayController {
 
   // USER: start a WinyPay deposit → returns { payUrl } to redirect/iframe.
   //   POST /winypay/deposit  body: { gatewayId, amount, payType: 'bkash'|'nagad', promotionId?, jumpUrl? }
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @Post('deposit')
   async initiateDeposit(@Req() req: any, @Body() body: any) {
     const amount = parseFloat(body.amount);

@@ -19,6 +19,7 @@ import {
 } from '@nestjs/common';
 import { WalletService } from './wallet.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { ActiveAccountGuard } from '../common/guards/active-account.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { PermissionsGuard } from '../common/guards/permissions.guard';
 import { RequirePermissions } from '../common/decorators/require-permissions.decorator';
@@ -68,7 +69,7 @@ export class WalletController {
   // would be accepted, otherwise throws the same error the real deposit would
   // (min amount, phone not verified, gateway inactive, promo ineligible, …).
   // No file upload, nothing persisted — safe to call as often as needed.
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @Post('deposit/validate')
   async validateDeposit(@Req() req: any, @Body() body: any) {
     const amount = parseFloat(body.amount);
@@ -94,7 +95,7 @@ export class WalletController {
   //            agentId (recommended), promotionId (optional),
   //            playerNumber (optional — which of the player's own numbers they
   //            paid from; GET /user/profile lists them for the dropdown)
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @Post('deposit')
   @UseInterceptors(
     FileInterceptor('screenshot', {
@@ -168,7 +169,7 @@ export class WalletController {
 
   // POST /wallet/withdraw
   // body: { gatewayId, amount, receiveNumber }
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @Post('withdraw')
   requestWithdrawal(@Req() req: any, @Body() body: any) {
     // Coerce + validate (your old version assumed JSON gave you numbers; not always true)

@@ -1,0 +1,524 @@
+{
+  "info": {
+    "_postman_id": "b7f3c2a1-9d4e-4f8a-b1c2-marketing0001",
+    "name": "WinX88 — Marketing Channels & Meta CAPI",
+    "description": "End-to-end flow for third-party media buyers: campaign tracking links, vendor reporting API, and Meta Conversions API.\n\nRUN THE FOLDERS IN ORDER. Folder 1 is one-time setup per agency; folders 2-4 simulate what ad traffic, your frontend and your admins do; folder 5 is what the agency sees.\n\n## Before you start\n\nSet these collection variables (Variables tab):\n- `baseUrl` — the API host. PRODUCTION IS `https://safurion.online`, NOT winx-88.com. winx-88.com serves the website and has no API routes.\n- `adminToken` — from Admin Login\n- `userToken` — from a player login/register\n\nThe rest (`vendorId`, `channelCode`, `cid`, `vendorApiKey`) are filled in as you run the steps.\n\n## The three link forms\n\n1. `https://safurion.online/c/<code>` — always works.\n2. `https://winx-88.com/c/<code>` — only works once a Cloudflare Redirect Rule forwards `/c/*` to the API. Better for Facebook ad review since it is your brand domain.\n3. `https://winx88.net/?channel=<code>` — needs the frontend beacon; loses clicks when JS is blocked.\n\n## What is NOT deployed yet\n\nAt time of writing, everything in folders 4-5 involving Meta CAPI is on the dev branch only, and the frontend does not yet forward `channel`/`cid` at registration — so registrations will not attribute until that ships.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://safurion.online", "type": "string" },
+    { "key": "adminToken", "value": "", "type": "string" },
+    { "key": "userToken", "value": "", "type": "string" },
+    { "key": "vendorId", "value": "1", "type": "string" },
+    { "key": "channelCode", "value": "fb_bd_q3", "type": "string" },
+    { "key": "vendorApiKey", "value": "", "type": "string" },
+    { "key": "cid", "value": "", "type": "string" },
+    { "key": "pixelId", "value": "999888777666555", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "1. Setup — run once per agency (admin)",
+      "description": "Steps 1.1 to 1.3 are the ONLY setup you perform. After 1.3 you have everything to hand the agency: the tracking links and their API key.\n\nRequires the `marketing.manage` RBAC permission (or SUPER_ADMIN, which bypasses all checks).",
+      "item": [
+        {
+          "name": "1.1 Create Vendor",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"ABC Ad Agency\",\n  \"contactEmail\": \"ops@abc.test\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/marketing/vendors",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "marketing", "vendors"]
+            },
+            "description": "Creates the agency.\n\n**COPY THE RETURNED `id` INTO THE `vendorId` COLLECTION VARIABLE.** Steps 1.2 and 1.3 both need it, and 1.3 takes it in the URL path where a stale value silently issues a key to the wrong agency."
+          },
+          "response": [
+            {
+              "name": "201 — vendor created",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": { "raw": "{{baseUrl}}/admin/marketing/vendors", "host": ["{{baseUrl}}"], "path": ["admin", "marketing", "vendors"] }
+              },
+              "status": "Created",
+              "code": 201,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": 3,\n    \"name\": \"ABC Ad Agency\",\n    \"contact_email\": \"ops@abc.test\",\n    \"status\": \"ACTIVE\",\n    \"notes\": null,\n    \"created_at\": \"2026-08-08T09:58:05.358Z\"\n  }\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "1.2 Create Channel (one per campaign)",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"code\": \"{{channelCode}}\",\n  \"name\": \"Facebook BD Q3\",\n  \"vendorId\": {{vendorId}},\n  \"platform\": \"FACEBOOK\",\n  \"landingPath\": \"/register\",\n  \"pixelId\": \"{{pixelId}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/marketing/channels",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "marketing", "channels"]
+            },
+            "description": "One channel per CAMPAIGN, not per agency. This is what produces the tracking link.\n\n- `vendorId` goes in the BODY here (contrast with 1.3, where it is in the URL).\n- `code` is what appears in the link. Lowercased automatically; letters, digits, `_`, `-` only.\n- `landingPath` — set to `/register`. If you leave it at some test value, visitors land on the wrong page.\n- `pixelId` — OPTIONAL. The agency's own Meta pixel. When set, the link carries `&pixel=` and server-side conversions report to it. Your own site pixel keeps firing regardless — never replaced.\n- `capiAccessToken` — optional per-agency Meta token, when their pixel lives in their own Business Manager.\n\n**Ignore `trackingUrl` in the response if it shows winx-88.com** — that comes from `APP_BASE_URL` on the server. The working link is `{{baseUrl}}/c/<code>`."
+          },
+          "response": [
+            {
+              "name": "201 — channel created with pixel bound",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": { "raw": "{{baseUrl}}/admin/marketing/channels", "host": ["{{baseUrl}}"], "path": ["admin", "marketing", "channels"] }
+              },
+              "status": "Created",
+              "code": 201,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": 4,\n    \"code\": \"capi_test\",\n    \"name\": \"CAPI Test Campaign\",\n    \"vendor_id\": 1,\n    \"platform\": \"FACEBOOK\",\n    \"landing_path\": \"/register\",\n    \"is_active\": true,\n    \"pixel_id\": \"999888777666555\",\n    \"created_at\": \"2026-08-09T16:52:47.549Z\",\n    \"trackingUrl\": \"https://winx-88.com/c/capi_test\"\n  }\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "400 — duplicate channel code",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": { "raw": "{{baseUrl}}/admin/marketing/channels", "host": ["{{baseUrl}}"], "path": ["admin", "marketing", "channels"] }
+              },
+              "status": "Bad Request",
+              "code": 400,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"message\": \"Channel code \\\"fb_bd_q3\\\" already exists\",\n  \"error\": \"Bad Request\",\n  \"statusCode\": 400\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "1.3 Issue API Key",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"label\": \"abc-primary\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/admin/marketing/vendors/{{vendorId}}/keys",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "marketing", "vendors", "{{vendorId}}", "keys"]
+            },
+            "description": "**The vendor id is in the URL PATH, not the body.** The body only carries an optional label. That is what binds the key to the agency.\n\n**The plaintext `apiKey` is shown ONCE.** Only its SHA-256 hash is stored; it cannot be recovered. Copy it into `vendorApiKey` now.\n\nCheck `vendor_name` in the response matches the agency you intended before sending the key to anyone — with a stale `vendorId` you would hand one agency another's key and never know.\n\nRotation: issue a new key, let them switch, then DELETE the old one. Both work during the overlap."
+          },
+          "response": [
+            {
+              "name": "201 — key issued (plaintext shown ONCE)",
+              "originalRequest": {
+                "method": "POST",
+                "header": [],
+                "url": { "raw": "{{baseUrl}}/admin/marketing/vendors/3/keys", "host": ["{{baseUrl}}"], "path": ["admin", "marketing", "vendors", "3", "keys"] }
+              },
+              "status": "Created",
+              "code": 201,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"success\": true,\n  \"data\": {\n    \"id\": 3,\n    \"key_prefix\": \"mk_m0NzKG_i\",\n    \"label\": \"abc-primary\",\n    \"status\": \"ACTIVE\",\n    \"expires_at\": null,\n    \"created_at\": \"2026-08-08T09:58:20.519Z\",\n    \"vendor_id\": 3,\n    \"vendor_name\": \"ABC Ad Agency\",\n    \"apiKey\": \"mk_m0NzKG_i.UbkUC6PIH0KxgbzkngVzCVgW_uIrPatj_xHUAO6f6Jo\",\n    \"warning\": \"Store this key now — it will never be shown again.\"\n  }\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "1.4 Revoke API Key",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/marketing/vendors/{{vendorId}}/keys/1",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "marketing", "vendors", "{{vendorId}}", "keys", "1"]
+            },
+            "description": "Soft revoke — the row stays for the audit trail, status flips to REVOKED. The key stops working immediately.\n\nReplace the trailing `1` with the key id from 1.3."
+          },
+          "response": [
+            {
+              "name": "200 — revoked",
+              "originalRequest": { "method": "DELETE", "header": [], "url": { "raw": "{{baseUrl}}/admin/marketing/vendors/1/keys/1", "host": ["{{baseUrl}}"], "path": ["admin", "marketing", "vendors", "1", "keys", "1"] } },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"success\": true,\n  \"message\": \"Key mk_TCi6fPE3 revoked\"\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "404 — no such active key for this vendor",
+              "originalRequest": { "method": "DELETE", "header": [], "url": { "raw": "{{baseUrl}}/admin/marketing/vendors/1/keys/999", "host": ["{{baseUrl}}"], "path": ["admin", "marketing", "vendors", "1", "keys", "999"] } },
+              "status": "Not Found",
+              "code": 404,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"message\": \"Active key not found for this vendor\",\n  \"error\": \"Not Found\",\n  \"statusCode\": 404\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "2. Tracking — what ad traffic does (public)",
+      "description": "You do NOT run these in normal operation. 2.1 is hit by real ad clicks; 2.2 is called by your frontend. They are here so you can smoke-test the pipe before handing links to the agency.",
+      "item": [
+        {
+          "name": "2.1 Tracking Link Redirect",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/c/{{channelCode}}?fbclid=IwAR_REAL_CLICK_XYZ&sub=creative_7",
+              "host": ["{{baseUrl}}"],
+              "path": ["c", "{{channelCode}}"],
+              "query": [
+                { "key": "fbclid", "value": "IwAR_REAL_CLICK_XYZ", "description": "Facebook appends this to the ad destination automatically. Captured server-side so a deposit approved days later can still be matched to the ad." },
+                { "key": "sub", "value": "creative_7", "description": "Optional ad-set / creative id passthrough." }
+              ]
+            },
+            "description": "**THIS IS THE LINK YOU GIVE THE AGENCY.** Every ad click hits it.\n\nTurn OFF automatic redirect following (Settings → Automatically follow redirects) to see the 302 Location header.\n\nThe redirect preserves ALL incoming query params and appends ours:\n`?fbclid=…&sub=…&channel=…&cid=…&pixel=…`\n\nPreserving `fbclid` matters — dropping it silently breaks Facebook attribution and any later Conversions API match.\n\nAn unregistered code still redirects (never 404 a paid click) but is flagged `is_unknown` and appears in 4.2."
+          },
+          "response": [
+            {
+              "name": "302 — redirect carrying fbclid, cid and pixel",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/c/capi_test?fbclid=IwAR_REAL_CLICK_XYZ&sub=creative_7", "host": ["{{baseUrl}}"], "path": ["c", "capi_test"] } },
+              "status": "Found",
+              "code": 302,
+              "header": [
+                { "key": "Location", "value": "https://winx-88.com/register?fbclid=IwAR_REAL_CLICK_XYZ&sub=creative_7&channel=capi_test&cid=7ff17d71-8f68-41b3-8be0-582d439acce1&pixel=999888777666555" },
+                { "key": "Content-Type", "value": "text/plain; charset=utf-8" }
+              ],
+              "body": "Found. Redirecting to https://winx-88.com/register?fbclid=IwAR_REAL_CLICK_XYZ&sub=creative_7&channel=capi_test&cid=7ff17d71-8f68-41b3-8be0-582d439acce1&pixel=999888777666555\n\nCOPY THE cid VALUE INTO THE {{cid}} COLLECTION VARIABLE for step 3.1.",
+              "_postman_previewlanguage": "text"
+            },
+            {
+              "name": "302 — UNKNOWN code still redirects (never 404 a paid click)",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/c/typo_code", "host": ["{{baseUrl}}"], "path": ["c", "typo_code"] } },
+              "status": "Found",
+              "code": 302,
+              "header": [
+                { "key": "Location", "value": "https://winx-88.com/register?channel=typo_code&cid=d864acf9-1020-4c56-906a-d3fbda332b3e" }
+              ],
+              "body": "Found. Redirecting to https://winx-88.com/register?channel=typo_code&cid=d864acf9-1020-4c56-906a-d3fbda332b3e\n\nThe click is stored with is_unknown = true and shows in 4.2 Unknown Click Codes.\nRegistering the channel LATER does NOT retro-link these clicks — catch typos early.",
+              "_postman_previewlanguage": "text"
+            }
+          ]
+        },
+        {
+          "name": "2.2 Click Beacon",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json", "type": "text" }],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"channel\": \"{{channelCode}}\",\n  \"landingPath\": \"/\",\n  \"subId\": \"creative_7\",\n  \"fbclid\": \"IwAR_REAL_CLICK_XYZ\",\n  \"fbp\": \"fb.1.1700000000000.1234567890\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/c/track", "host": ["{{baseUrl}}"], "path": ["c", "track"] },
+            "description": "Called BY YOUR FRONTEND, never by you. Covers visitors who land on any page with `?channel=` without passing through `/c/:code` — e.g. traffic pointed straight at winx88.net.\n\nReturns the click id so the signup can still be tied to a click, plus the campaign's bound pixel.\n\nRate limited to 120/min per IP. Call once per session, not per page view."
+          },
+          "response": [
+            {
+              "name": "200 — beacon returns cid and pixel",
+              "originalRequest": { "method": "POST", "header": [], "url": { "raw": "{{baseUrl}}/c/track", "host": ["{{baseUrl}}"], "path": ["c", "track"] } },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"ok\": true,\n  \"cid\": \"2ce8c395-7153-40fb-8016-69a6e220c84b\",\n  \"pixel\": \"999888777666555\"\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "3. Player journey — attribution & conversion",
+      "description": "Simulates what a real player does after clicking the ad. This is where attribution is actually created, and where the Meta conversion events originate.",
+      "item": [
+        {
+          "name": "3.1 Register with channel + cid",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Content-Type", "value": "application/json", "type": "text" },
+              { "key": "Origin", "value": "https://winx88.net", "type": "text", "description": "Which of your domains the signup came from. Captured into users.signup_domain and shown as Channel Name for Direct signups." }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"full_name\": \"Capi Test\",\n  \"username\": \"capitest01\",\n  \"password\": \"Test12345!\",\n  \"phone_number\": \"8801700000981\",\n  \"channel\": \"{{channelCode}}\",\n  \"cid\": \"{{cid}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth", "register"] },
+            "description": "`channel` and `cid` are the NEW optional fields. Everything else is unchanged, and the signup FORM does not change — no new fields for the user.\n\nBACKWARD COMPATIBLE: omit both and registration behaves exactly as before, creating no attribution row.\n\nEffects when `channel` is present:\n- a `user_channel_attribution` row (FIRST TOUCH WINS — never overwritten)\n- `source = REDIRECT` if the `cid` is valid for that channel, else `PARAM`\n- a `CompleteRegistration` event queued to Meta, if the campaign has a pixel bound\n\nA forged or mismatched `cid` is silently discarded — the registration still counts, just without a linked click."
+          },
+          "response": [
+            {
+              "name": "201 — registered and attributed",
+              "originalRequest": { "method": "POST", "header": [], "url": { "raw": "{{baseUrl}}/auth/register", "host": ["{{baseUrl}}"], "path": ["auth", "register"] } },
+              "status": "Created",
+              "code": 201,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"success\": true,\n  \"code\": 201,\n  \"message\": \"Account created successfully. Please verify your phone number.\",\n  \"data\": {\n    \"userId\": \"786\",\n    \"username\": \"capitest01\",\n    \"userCode\": \"WINX8826CAP\",\n    \"phoneVerified\": false,\n    \"accessToken\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\",\n    \"refreshToken\": \"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...\"\n  }\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "3.2 Player creates a deposit",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Authorization", "value": "Bearer {{userToken}}", "type": "text" }],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                { "key": "screenshot", "type": "file", "src": "", "description": "Required. JPG/PNG/WEBP, max 5MB." },
+                { "key": "gatewayId", "value": "1", "type": "text", "description": "Required." },
+                { "key": "amount", "value": "1500", "type": "text", "description": "Required." },
+                { "key": "transactionNumber", "value": "TRXCAPI1", "type": "text", "description": "Required." },
+                { "key": "playerNumber", "value": "8801700000981", "type": "text", "description": "Which of the player's OWN numbers they paid from. Validated server-side against user_phone_numbers — another user's number is rejected. Format-tolerant. Omit to default to their primary." }
+              ]
+            },
+            "url": { "raw": "{{baseUrl}}/wallet/deposit", "host": ["{{baseUrl}}"], "path": ["wallet", "deposit"] },
+            "description": "Creates a PENDING deposit. No conversion is sent yet — Facebook only hears about it when an admin APPROVES it (step 3.3)."
+          },
+          "response": [
+            {
+              "name": "400 — playerNumber belongs to someone else",
+              "originalRequest": { "method": "POST", "header": [], "url": { "raw": "{{baseUrl}}/wallet/deposit", "host": ["{{baseUrl}}"], "path": ["wallet", "deposit"] } },
+              "status": "Bad Request",
+              "code": 400,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"message\": \"playerNumber must be one of your own registered phone numbers\",\n  \"error\": \"Bad Request\",\n  \"statusCode\": 400\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "3.3 Admin approves the deposit",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{adminToken}}", "type": "text" },
+              { "key": "Content-Type", "value": "application/json", "type": "text" }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"action\": \"APPROVE\"\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/wallet/admin/deposits/357/decide",
+              "host": ["{{baseUrl}}"],
+              "path": ["wallet", "admin", "deposits", "357", "decide"]
+            },
+            "description": "**THIS is the moment the Meta conversion is created.** Replace 357 with the deposit id.\n\nInside the SAME transaction that approves the deposit, the backend:\n1. counts prior approved deposits — zero means this is the player's first (`is_ftd`)\n2. resolves the player's campaign and its bound pixel\n3. queues a `Purchase` event\n\nBecause the queue write shares the transaction, a conversion can never exist for a deposit that rolled back, nor be lost for one that committed. Meta is never called inline — that would hold the wallet row lock across an HTTP round trip.\n\nNo event is produced for: a REJECTED deposit, or a player with no campaign attribution (organic).\n\nBoth the manual admin path and the automated WinyPay PSP path go through this same method, so both produce conversions."
+          },
+          "response": [
+            {
+              "name": "200 — approved (queues Purchase, is_ftd=true if first)",
+              "originalRequest": { "method": "POST", "header": [], "url": { "raw": "{{baseUrl}}/wallet/admin/deposits/357/decide", "host": ["{{baseUrl}}"], "path": ["wallet", "admin", "deposits", "357", "decide"] } },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"message\": \"Deposit approved. Wallet credited.\",\n  \"newBalance\": 1500,\n  \"coinsEarned\": 15,\n  \"totalCoins\": 15,\n  \"promotion\": null\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "4. Verify — admin monitoring",
+      "description": "The screens to check during a campaign launch. 4.2 especially: check it DAILY in the first week.",
+      "item": [
+        {
+          "name": "4.1 Meta CAPI outbox health",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/marketing/capi/events?status=PENDING",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "marketing", "capi", "events"],
+              "query": [{ "key": "status", "value": "PENDING", "description": "PENDING | SENT | FAILED | SKIPPED. Omit for all." }]
+            },
+            "description": "**The screen that answers \"why has Facebook stopped receiving our conversions\".**\n\n`enabled: false` means META_CAPI_ENABLED is off — events queue but nothing is sent. That is the shipping default, deliberately: the outbox fills so you can inspect it before anything reaches Meta.\n\nStatus meanings:\n- `PENDING` — queued, will be attempted by the once-a-minute sweeper\n- `SENT` — Meta accepted it\n- `FAILED` — gave up. Either a permanent rejection (bad token, no pixel access — a 4xx from Meta, not worth retrying) or 5 exhausted attempts\n\nTransient failures back off 1m → 5m → 25m → 2h → 10h. `last_error` carries Meta's own message."
+          },
+          "response": [
+            {
+              "name": "200 — outbox with sending disabled",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/admin/marketing/capi/events", "host": ["{{baseUrl}}"], "path": ["admin", "marketing", "capi", "events"] } },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"success\": true,\n  \"enabled\": false,\n  \"summary\": { \"pending\": 3, \"sent\": 0, \"failed\": 0 },\n  \"data\": [\n    {\n      \"event_name\": \"Purchase\",\n      \"event_id\": \"dep_358\",\n      \"status\": \"PENDING\",\n      \"attempts\": 0,\n      \"last_error\": null,\n      \"pixel_id\": \"999888777666555\",\n      \"value\": \"700.00\",\n      \"currency\": \"BDT\",\n      \"is_ftd\": false,\n      \"channel_code\": \"capi_test\",\n      \"username\": \"capitest01\"\n    },\n    {\n      \"event_name\": \"Purchase\",\n      \"event_id\": \"dep_357\",\n      \"status\": \"PENDING\",\n      \"attempts\": 0,\n      \"pixel_id\": \"999888777666555\",\n      \"value\": \"1500.00\",\n      \"is_ftd\": true,\n      \"channel_code\": \"capi_test\",\n      \"username\": \"capitest01\"\n    },\n    {\n      \"event_name\": \"CompleteRegistration\",\n      \"event_id\": \"reg_786\",\n      \"status\": \"PENDING\",\n      \"attempts\": 0,\n      \"is_ftd\": false,\n      \"channel_code\": \"capi_test\",\n      \"username\": \"capitest01\"\n    }\n  ],\n  \"page\": 1,\n  \"limit\": 50\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "200 — FAILED with a bad access token",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/admin/marketing/capi/events?status=FAILED", "host": ["{{baseUrl}}"], "path": ["admin", "marketing", "capi", "events"] } },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"success\": true,\n  \"enabled\": true,\n  \"summary\": { \"pending\": 0, \"sent\": 0, \"failed\": 3 },\n  \"data\": [\n    {\n      \"event_id\": \"dep_357\",\n      \"status\": \"FAILED\",\n      \"attempts\": 1,\n      \"last_error\": \"400: Invalid OAuth access token data.\",\n      \"is_ftd\": true\n    }\n  ]\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "4.2 Unknown click codes (typo watch)",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/admin/marketing/clicks/unknown",
+              "host": ["{{baseUrl}}"],
+              "path": ["admin", "marketing", "clicks", "unknown"]
+            },
+            "description": "**Check this DAILY during a campaign launch.**\n\nLists codes seen in real traffic that match no registered channel — i.e. a typo in a live ad, or a link nobody told you about. Those clicks are paid for and are NOT counted for any vendor.\n\nRegistering the channel afterwards does NOT retro-link them. Catching a typo on day one instead of day seven is the entire value of this endpoint."
+          },
+          "response": [
+            {
+              "name": "200 — a typo caught in the wild",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/admin/marketing/clicks/unknown", "host": ["{{baseUrl}}"], "path": ["admin", "marketing", "clicks", "unknown"] } },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"channel_code\": \"fb_bd_q33_typo\",\n      \"clicks\": 1,\n      \"first_seen\": \"2026-08-01T17:12:53.684Z\",\n      \"last_seen\": \"2026-08-01T17:12:53.684Z\"\n    }\n  ],\n  \"page\": 1,\n  \"limit\": 50\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "4.3 Member list — Channel Type / Channel Name",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{adminToken}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/user/admin/all?page=1&limit=20",
+              "host": ["{{baseUrl}}"],
+              "path": ["user", "admin", "all"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            },
+            "description": "Every member row carries `channel_type` and `channel_name`, showing where that player came from.\n\nPRECEDENCE (by who gets paid): **Affiliate > Refer A Friend > Marketing > Direct**. A player matching two sources shows the one with the payout attached, so this list never contradicts the affiliate commission reports. The underlying rows are all preserved.\n\n| channel_type | channel_name |\n|---|---|\n| Affiliate | the affiliate's username |\n| Refer A Friend | the referrer's username |\n| Marketing | the campaign name |\n| Direct | which of your domains they signed up on |\n\n`Direct` with a null name means they registered before signup_domain existed — not recoverable.\n\nThe same two fields appear on `/user/admin/search` and `/user/admin/members/search`."
+          },
+          "response": [
+            {
+              "name": "200 — all four channel types",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/user/admin/all?page=1&limit=6", "host": ["{{baseUrl}}"], "path": ["user", "admin", "all"] } },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    { \"username\": \"chaff01\",    \"channel_type\": \"Affiliate\",      \"channel_name\": \"karfa12\" },\n    { \"username\": \"chfriend01\", \"channel_type\": \"Refer A Friend\", \"channel_name\": \"chdirect01\" },\n    { \"username\": \"chmkt01\",    \"channel_type\": \"Marketing\",      \"channel_name\": \"Facebook BD Q3\" },\n    { \"username\": \"chdirect02\", \"channel_type\": \"Direct\",         \"channel_name\": \"winx-88.com\" },\n    { \"username\": \"chdirect01\", \"channel_type\": \"Direct\",         \"channel_name\": \"winx88.net\" },\n    { \"username\": \"olduser\",    \"channel_type\": \"Direct\",         \"channel_name\": null }\n  ],\n  \"total\": 768,\n  \"page\": 1,\n  \"limit\": 6\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "5. Vendor API — what the agency calls",
+      "description": "Authenticated by `x-api-key`, NOT a JWT. The agency never gets an admin token, a login, or database access.\n\nScoping is enforced in SQL: the vendor id comes from the key itself, so no parameter can widen it. Responses are aggregates only — never a username, user id, phone, email or IP.",
+      "item": [
+        {
+          "name": "5.1 Vendor — their channels",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-api-key", "value": "{{vendorApiKey}}", "type": "text" }],
+            "url": { "raw": "{{baseUrl}}/partner/channels", "host": ["{{baseUrl}}"], "path": ["partner", "channels"] },
+            "description": "Lists ONLY the calling vendor's campaigns.\n\nKey format is `<prefix>.<secret>` — send it verbatim, exactly as returned by 1.3. Do not prepend a domain, and do not strip the `mk_` prefix; both produce 401."
+          },
+          "response": [
+            {
+              "name": "200 — only this vendor's channels",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/partner/channels", "host": ["{{baseUrl}}"], "path": ["partner", "channels"] } },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"success\": true,\n  \"data\": [\n    {\n      \"code\": \"fb_bd_q3\",\n      \"name\": \"Facebook BD Q3\",\n      \"platform\": \"FACEBOOK\",\n      \"isActive\": true,\n      \"createdAt\": \"2026-08-01T17:12:39.389Z\",\n      \"trackingUrl\": \"https://safurion.online/c/fb_bd_q3\"\n    }\n  ]\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "401 — invalid, revoked or missing key",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/partner/channels", "host": ["{{baseUrl}}"], "path": ["partner", "channels"] } },
+              "status": "Unauthorized",
+              "code": 401,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"message\": \"Invalid API key\",\n  \"error\": \"Unauthorized\",\n  \"statusCode\": 401\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        },
+        {
+          "name": "5.2 Vendor — stats",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "x-api-key", "value": "{{vendorApiKey}}", "type": "text" }],
+            "url": {
+              "raw": "{{baseUrl}}/partner/stats?dateFrom=2026-08-01&dateTo=2026-08-31&granularity=total",
+              "host": ["{{baseUrl}}"],
+              "path": ["partner", "stats"],
+              "query": [
+                { "key": "dateFrom", "value": "2026-08-01", "description": "Inclusive." },
+                { "key": "dateTo", "value": "2026-08-31", "description": "INCLUSIVE — covers all of the 31st." },
+                { "key": "granularity", "value": "total", "description": "total | day. For day, both dates are required and the range caps at 92 days." },
+                { "key": "channel", "value": "", "description": "Optional. Restrict to one campaign code.", "disabled": true }
+              ]
+            },
+            "description": "The agency's report. Rate limited to 60/min per key.\n\n### Counting rules — the ones that cause invoice arguments\n\n**`ftds` counts a player's FIRST-EVER approved deposit, not their first in the window.** So `ftds` is normally LOWER than `depositCount`, and `ftdAmount` lower than `depositTotal`. In the saved response below: 3 deposits, only 2 FTDs. That is correct, not a bug.\n\n**Registrations count on the REGISTRATION date, not the click date.** A click on the 1st that becomes a signup on the 5th appears in both days separately. There is no lookback window.\n\n**Only APPROVED deposits count**, on their approval date.\n\n**First touch wins** — a player who arrives via campaign A then B is credited to A permanently.\n\n**Expect these numbers to run 10-30% BELOW the agency's ad platform.** Facebook counts modelled and view-through conversions; we count only what reached our servers. Agree this before launch.\n\n`trackingSince` is their first recorded click — anything earlier legitimately returns zeros, because there is no historical backfill."
+          },
+          "response": [
+            {
+              "name": "200 — note ftds (2) < depositCount (3)",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/partner/stats", "host": ["{{baseUrl}}"], "path": ["partner", "stats"] } },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"success\": true,\n  \"granularity\": \"total\",\n  \"dateFrom\": \"2026-08-01\",\n  \"dateTo\": \"2026-08-31\",\n  \"trackingSince\": \"2026-08-01T17:12:53.342Z\",\n  \"data\": [\n    {\n      \"channel\": \"fb_bd_q3\",\n      \"channelName\": \"Facebook BD Q3\",\n      \"platform\": \"FACEBOOK\",\n      \"clicks\": 2,\n      \"registrations\": 3,\n      \"ftds\": 2,\n      \"ftdAmount\": 3500,\n      \"depositCount\": 3,\n      \"depositTotal\": 4000\n    }\n  ]\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "200 — daily breakdown",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/partner/stats?granularity=day", "host": ["{{baseUrl}}"], "path": ["partner", "stats"] } },
+              "status": "OK",
+              "code": 200,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"success\": true,\n  \"granularity\": \"day\",\n  \"dateFrom\": \"2026-08-01\",\n  \"dateTo\": \"2026-08-01\",\n  \"trackingSince\": \"2026-08-01T17:12:53.342Z\",\n  \"data\": [\n    {\n      \"channel\": \"fb_bd_q3\",\n      \"channelName\": \"Facebook BD Q3\",\n      \"platform\": \"FACEBOOK\",\n      \"date\": \"2026-08-01\",\n      \"clicks\": 2,\n      \"registrations\": 3,\n      \"ftds\": 2,\n      \"ftdAmount\": 3500,\n      \"depositCount\": 3,\n      \"depositTotal\": 4000\n    }\n  ]\n}",
+              "_postman_previewlanguage": "json"
+            },
+            {
+              "name": "400 — day range over 92 days",
+              "originalRequest": { "method": "GET", "header": [], "url": { "raw": "{{baseUrl}}/partner/stats?granularity=day", "host": ["{{baseUrl}}"], "path": ["partner", "stats"] } },
+              "status": "Bad Request",
+              "code": 400,
+              "header": [{ "key": "Content-Type", "value": "application/json; charset=utf-8" }],
+              "body": "{\n  \"message\": \"Date range too wide for granularity=day (578 days, max 92). Narrow the range or use granularity=total.\",\n  \"error\": \"Bad Request\",\n  \"statusCode\": 400\n}",
+              "_postman_previewlanguage": "json"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

@@ -10,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
+import { ActiveAccountGuard } from 'src/common/guards/active-account.guard';
 import { PalaceCasinoClient } from './palace-casino.client';
 import {
   LaunchGameDto,
@@ -83,7 +84,7 @@ export class PalaceCasinoController {
    * 2. Generate the game URL
    * 3. Return URL to frontend, which loads it in an iframe / webview
    */
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @Post('launch')
   async launch(@Req() req: any, @Body() body: LaunchGameDto) {
     console.log('Launch body received:', body);
@@ -114,7 +115,7 @@ export class PalaceCasinoController {
    * If you use Seamless / Callback mode (the default Palace integration),
    * you don't need this — bet/win callbacks handle the wallet directly.
    */
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @Post('wallet/deposit')
   async depositToPalace(@Req() req: any, @Body() body: TransferDto) {
     const userId = req.user.sub;
@@ -156,7 +157,7 @@ export class PalaceCasinoController {
   }
 
   /** Pull all funds from Palace back to player's main wallet. */
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @Post('wallet/withdraw-all')
   async withdrawAllFromPalace(@Req() req: any) {
     const userId = req.user.sub;

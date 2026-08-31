@@ -19,6 +19,7 @@ import {
   Logger
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { assertUserActive } from '../common/account-status.util';
 import { FinancialLedgerService } from '../ledger/financial-ledger.service';
 import { TurnoverService } from '../turnover/turnover.service';
 import { GamesGateway } from './games.gateway';
@@ -159,6 +160,11 @@ export class GameService {
       if (!Number.isFinite(amount) || amount <= 0) {
         throw new BadRequestException('amount must be a positive number');
       }
+
+      // Suspended / inactive / locked players cannot bet. Checked here rather
+      // than with a route guard because this endpoint takes user_id from the
+      // body instead of the JWT.
+      await assertUserActive(qr, user_id);
 
       const walletRows = await qr.query(
         `SELECT * FROM wallets WHERE user_id = $1 FOR UPDATE`,

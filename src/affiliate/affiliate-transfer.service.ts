@@ -16,6 +16,7 @@ import {
   ForbiddenException,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { assertUserActive } from '../common/account-status.util';
 import { FinancialLedgerService } from '../ledger/financial-ledger.service';
 import { WalletGateway } from '../wallet/wallet.gateway';
 import { TurnoverService } from '../turnover/turnover.service';
@@ -64,6 +65,9 @@ export class AffiliateTransferService {
       [userId],
     );
     if (!afRows.length) throw new ForbiddenException('You are not an affiliate');
+    // The affiliate's own player account must be in good standing — a
+    // suspended player cannot move commission into their wallet.
+    await assertUserActive(this.dataSource, userId);
     const af = afRows[0];
     if (!af.is_active || af.status !== 'ACTIVE') {
       throw new ForbiddenException(`Your affiliate account is ${af.status ?? 'inactive'}`);

@@ -110,7 +110,7 @@ export class OroplayCallbackService {
 
       // 3️⃣ Lock wallet row, fetch balance
       const userRows = await qr.query(
-        `SELECT u.id AS user_id, w.balance
+        `SELECT u.id AS user_id, u.account_status, w.balance
            FROM users u
            JOIN wallets w ON w.user_id = u.id
           WHERE u.username = $1
@@ -131,6 +131,24 @@ export class OroplayCallbackService {
       // 4️⃣ Compute new balance
       const txAmount = parseFloat(String(amount));
       const newBalance = currentBalance + txAmount;
+
+      // 4️⃣.5 Account must still be ACTIVE to STAKE. The launch guard only
+      // blocks new launches; a session already open on OroPlay's side keeps
+      // sending bets after an admin suspends the player, so the stake leg is
+      // refused here too. Wins/refunds (amount >= 0) still settle, so a round
+      // staked before the suspension is not swallowed.
+      const accountStatus = userRows[0].account_status;
+      if (accountStatus !== 'ACTIVE' && txAmount < 0) {
+        await qr.rollbackTransaction();
+        this.logger.warn(
+          `Rejected stake for ${userCode}: account is ${accountStatus} (tx ${transactionCode})`,
+        );
+        return {
+          success: false,
+          message: `Account is ${accountStatus}`,
+          errorCode: OROPLAY_ERROR.INVALID_TRANSACTION,
+        };
+      }
 
       // 5️⃣ Insufficient funds check (only bets, where amount < 0)
       if (newBalance < 0) {

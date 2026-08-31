@@ -764,6 +764,19 @@ async register(dto: any, originHeader?: string) {
 
     if (!valid) throw new UnauthorizedException('Invalid refresh token');
 
+    // Re-check the account status on every refresh. Login already rejects
+    // non-ACTIVE accounts, but a player suspended mid-session would otherwise
+    // keep minting fresh access tokens off a refresh token issued before the
+    // suspension.
+    const statusRows = await this.dataSource.query(
+      `SELECT account_status FROM users WHERE id = $1 LIMIT 1`,
+      [decoded.sub],
+    );
+    if (!statusRows.length) throw new UnauthorizedException('User not found');
+    if (statusRows[0].account_status !== 'ACTIVE') {
+      throw new UnauthorizedException(`Account is ${statusRows[0].account_status}`);
+    }
+
     const newAccessToken = this.jwtService.sign(
       { sub: decoded.sub }, { expiresIn: '15m' },
     );

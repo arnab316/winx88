@@ -294,7 +294,7 @@ export class NexusCallbackService {
       // ── Lock the wallet BEFORE reading it. Without the lock two concurrent
       //    bets both read the old balance and the second write erases the first.
       const userRows = await qr.query(
-        `SELECT u.id AS user_id, w.balance
+        `SELECT u.id AS user_id, u.account_status, w.balance
            FROM users u JOIN wallets w ON w.user_id = u.id
           WHERE u.username = $1
           FOR UPDATE OF w`,
@@ -303,6 +303,23 @@ export class NexusCallbackService {
       if (!userRows.length) {
         await qr.rollbackTransaction();
         this.logger.warn(`[Nexus] transaction: unknown user_code "${userCode}"`);
+        return { status: 0, msg: ERR.INVALID_USER };
+      }
+
+      // A suspended / inactive / locked player must not be able to keep
+      // staking from a game session that was already open when the admin
+      // suspended them — the launch guard only stops NEW launches, and the
+      // provider keeps the session alive on its side.
+      //
+      // Only STAKES are refused (bet > 0). Pure settlements (bet = 0, a win
+      // being paid) still go through, so a round that was legitimately staked
+      // before the suspension is not swallowed.
+      const accountStatus = userRows[0].account_status;
+      if (accountStatus !== 'ACTIVE' && bet > 0) {
+        await qr.rollbackTransaction();
+        this.logger.warn(
+          `[Nexus] REJECTED stake: user=${userCode} status=${accountStatus} txn_id=${txnId} bet=${bet}`,
+        );
         return { status: 0, msg: ERR.INVALID_USER };
       }
 

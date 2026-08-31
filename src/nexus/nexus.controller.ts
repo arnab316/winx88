@@ -11,6 +11,7 @@ import { NexusService } from './nexus.service';
 import { NexusClient } from './nexus.client';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { ActiveAccountGuard } from '../common/guards/active-account.guard';
 
 /**
  * Admin + player routes for Nexus. The seamless money endpoint is separate
@@ -56,7 +57,7 @@ export class NexusController {
    * Player launch. Kept here as well as in the shared getGameUrl so the
    * frontend can call Nexus directly if it prefers an explicit route.
    */
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @Get('launch')
   launch(@Req() req: any, @Query('uuid') uuid: string, @Query('lang') lang?: string) {
     return this.nexus.getLaunchUrl(req.user.sub, uuid, lang ?? 'en');
@@ -67,7 +68,7 @@ export class NexusController {
    * button — the sportsbook is one lobby, not a grid of game tiles, so it does
    * not appear in the game list and has no uuid.
    */
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @Get('sportsbook/launch')
   launchSportsbook(@Req() req: any, @Query('lang') lang?: string) {
     return this.nexus.launchSportsbook(req.user.sub, lang ?? 'en');

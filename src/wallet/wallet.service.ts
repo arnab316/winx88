@@ -31,6 +31,7 @@ import { GameValidationService } from '../game/game-validation.service';
 import { PromotionEngineService } from '../promotion/promotion-engine.service';
 import { ReferralEngineService } from '../referral/referral-engine.service';
 import { phoneMatchForms } from '../common/phone.util';
+import { assertUserActive } from '../common/account-status.util';
 import { MetaCapiService } from '../meta/meta-capi.service';
 
 @Injectable()
@@ -127,12 +128,18 @@ export class WalletService {
   //   so it can be used both by the pre-flight validateDeposit() and
   //   inside the requestDeposit() transaction. Throws a descriptive
   //   exception on the first failed rule; returns nothing on success.
-  //   Rules: phone verified → gateway active → tier toggles → tier
-  //   min/max → promo eligibility (verification, frequency, bounds).
+  //   Rules: account active → phone verified → gateway active → tier
+  //   toggles → tier min/max → promo eligibility (verification, frequency,
+  //   bounds).
   private async assertDepositGate(
     qr: QueryRunner,
     args: { userId: number; gatewayId: number; amount: number; promotionId?: number },
   ): Promise<void> {
+    // Account must be ACTIVE. Withdrawals already checked this; deposits did
+    // not, so a suspended player could still file deposit requests (and an
+    // admin could approve one, crediting a blocked account).
+    await assertUserActive(qr, args.userId);
+
     // Phone verification required to deposit (platform policy). A user must
     // have at least one verified phone number on file.
     const phoneRows = await qr.query(
@@ -814,13 +821,7 @@ export class WalletService {
     await qr.startTransaction();
 
     try {
-      const user = await qr.query(
-        `SELECT id, account_status FROM users WHERE id = $1 LIMIT 1`,
-        [dto.userId],
-      );
-      if (!user.length) throw new NotFoundException('User not found');
-      if (user[0].account_status !== 'ACTIVE')
-        throw new ForbiddenException(`Account is ${user[0].account_status}`);
+      await assertUserActive(qr, dto.userId);
 
       const gateway = await qr.query(
         `SELECT id FROM payment_gateways WHERE id = $1 AND is_active = true LIMIT 1`,

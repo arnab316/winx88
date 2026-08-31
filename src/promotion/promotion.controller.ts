@@ -17,6 +17,7 @@ import {
 } from '@nestjs/common';
 import { PromotionEngineService  } from './promotion-engine.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
+import { ActiveAccountGuard } from '../common/guards/active-account.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
 import {
   CreatePromotionDto,
@@ -66,7 +67,7 @@ export class PromotionController {
  
   // POST /promotions/me/claim-code
   // body: { code: 'WELCOME100' }
-  @UseGuards(JwtAuthGuard)
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @Post('me/claim-code')
   claimCode(@Req() req: any, @Body() dto: ClaimPromocodeDto) {
     return this.engine.claimByCode(req.user.sub, dto.code, {

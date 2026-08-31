@@ -1119,6 +1119,18 @@ export class UserService {
       );
     }
 
+    // Suspending an account has to end its live sessions too: access tokens
+    // last 7 days, so without this the player keeps a working token until it
+    // expires. Revoking the refresh tokens stops them minting a new one — the
+    // per-request guards handle the token they are already holding.
+    if (dto.account_status !== undefined && dto.account_status !== 'ACTIVE') {
+      await this.dataSource.query(
+        `UPDATE refresh_tokens SET is_revoked = true
+          WHERE user_id = $1 AND is_revoked = false`,
+        [userId],
+      );
+    }
+
     // "Affiliate Code" input → place the user under that affiliate's downline.
     if (dto.affiliateCode !== undefined) {
       await this.setUserAffiliateByCode(userId, dto.affiliateCode);

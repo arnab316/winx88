@@ -11,6 +11,7 @@ import {
 import { DataSource } from 'typeorm';
 import { OroplayClient } from './oroplay.client';
 import { JwtAuthGuard } from 'src/common/guards/jwt-auth.guard';
+import { ActiveAccountGuard } from 'src/common/guards/active-account.guard';
 
 /**
  * User-facing OroPlay endpoints.
@@ -96,6 +97,7 @@ async vendorsGrouped() {
   }
 
   // ─── Launch game ─────────────────────────────────────────────
+  @UseGuards(ActiveAccountGuard)
   @Post('launch')
   async launchGame(
     @Req() req: any,
