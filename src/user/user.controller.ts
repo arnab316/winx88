@@ -743,7 +743,11 @@ export class UserController {
 
   // GET /user/admin/:userId/remarks
   @UseGuards(AdminGuard, PermissionsGuard)
-  @RequirePermissions('all_members', 'view_remarks')
+  // TEMP (2026-09-25, owner request): all_members.view_remarks gate lifted while
+  // staff role permissions are being set up — any logged-in admin can view the
+  // remarks on the member-details modal. Re-enable by uncommenting the line
+  // below. (add_remark above is already lifted the same way.)
+  // @RequirePermissions('all_members', 'view_remarks')
   @Get('admin/:userId/remarks')
   async listRemarks(
     @Req() req: any,
