@@ -704,6 +704,10 @@ export class UserController {
       // Affiliate's user_code — places this user under that affiliate's
       // downline. '' removes the attribution. (referrals table only.)
       affiliateCode?:  string;
+      // Admin KYC override — set the member's KYC status directly, no submission
+      // required. The acting admin is recorded on the verification row.
+      kyc_status?:            'PENDING' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED';
+      kyc_rejection_reason?:  string;
     },
   ) {
     // Never log the password — log other field names only
@@ -714,7 +718,7 @@ export class UserController {
       passwordReset: !!dto.password, ip: req.ip,
     });
     try {
-      const data = await this.userService.adminEditUser(userId, dto);
+      const data = await this.userService.adminEditUser(userId, dto, req.user?.sub);
       this.logger.info('Admin: user edited successfully', {
         context: UserController.name, adminId: req.user?.sub,
         targetUserId: userId, fields: fieldsChanged, ip: req.ip,

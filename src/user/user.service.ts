@@ -1063,7 +1063,11 @@ export class UserService {
     account_status?: 'ACTIVE' | 'INACTIVE' | 'SUSPENDED' | 'LOCKED' | 'BLOCKED';
     password?:       string;   // plain text — will be hashed
     affiliateCode?:  string;   // affiliate's user_code → puts user in their downline ('' = remove)
-  }) {
+    // Admin KYC override — set the member's KYC status directly, with no
+    // submission required. Records the acting admin. See adminSetKycStatus.
+    kyc_status?:            'PENDING' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED';
+    kyc_rejection_reason?:  string;
+  }, adminId?: number) {
     const existing = await this.dataSource.query(
       `SELECT id FROM users WHERE id = $1`, [userId],
     );
@@ -1128,9 +1132,10 @@ export class UserService {
       values.push(hashed);
     }
 
-    // Affiliate attribution is a valid edit on its own (no users-table field
-    // needs to change), so it counts toward "something to update".
-    if (!fields.length && dto.affiliateCode === undefined)
+    // Affiliate attribution and KYC override are each valid edits on their own
+    // (neither needs a users-table field to change), so they count toward
+    // "something to update".
+    if (!fields.length && dto.affiliateCode === undefined && dto.kyc_status === undefined)
       throw new BadRequestException('No fields to update');
 
     if (fields.length) {
@@ -1159,8 +1164,72 @@ export class UserService {
       await this.setUserAffiliateByCode(userId, dto.affiliateCode);
     }
 
-    // Return updated user (no password) — includes the current affiliate.
+    // KYC status override → force the member's KYC state, recording the admin.
+    if (dto.kyc_status !== undefined) {
+      await this.adminSetKycStatus(
+        userId, dto.kyc_status, adminId ?? null, dto.kyc_rejection_reason,
+      );
+    }
+
+    // Return updated user (no password) — includes the current affiliate + KYC.
     return this.getUserDetailsByAdmin(userId);
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // ADMIN: KYC STATUS OVERRIDE
+  //   Sets a member's KYC status directly — no submission needed. Upserts the
+  //   user_verifications row (one per user, unique on user_id) and keeps
+  //   users.is_kyc_verified in step. An override for a member who never
+  //   uploaded documents writes a row with NULL document fields (migration
+  //   2090000000000 made those nullable) — an honest "admin-set, no documents"
+  //   record that still shows in the KYC review list, attributed to the admin.
+  // ═════════════════════════════════════════════════════════════
+  async adminSetKycStatus(
+    userId: number,
+    status: 'PENDING' | 'UNDER_REVIEW' | 'APPROVED' | 'REJECTED',
+    adminId: number | null,
+    rejectionReason?: string,
+  ) {
+    const valid = ['PENDING', 'UNDER_REVIEW', 'APPROVED', 'REJECTED'];
+    if (!valid.includes(status)) {
+      throw new BadRequestException(`kyc_status must be one of: ${valid.join(', ')}`);
+    }
+
+    const [user] = await this.dataSource.query(
+      `SELECT id FROM users WHERE id = $1`, [userId],
+    );
+    if (!user) throw new NotFoundException('User not found');
+
+    // A reason only makes sense for a rejection; drop it otherwise so a stale
+    // reason never lingers on an approved record.
+    const reason = status === 'REJECTED' ? (rejectionReason ?? null) : null;
+    // reviewed_at marks when a decision was made — only APPROVED/REJECTED are
+    // decisions; PENDING/UNDER_REVIEW leave it null (matches the review flow).
+    const decided = status === 'APPROVED' || status === 'REJECTED';
+
+    await this.dataSource.query(
+      `INSERT INTO user_verifications
+         (user_id, status, rejection_reason, reviewed_by_admin_id, reviewed_at,
+          submission_count, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, ${decided ? 'NOW()' : 'NULL'}, 1, NOW(), NOW())
+       ON CONFLICT (user_id) DO UPDATE SET
+         status               = EXCLUDED.status,
+         rejection_reason     = EXCLUDED.rejection_reason,
+         reviewed_by_admin_id = EXCLUDED.reviewed_by_admin_id,
+         reviewed_at          = ${decided ? 'NOW()' : 'NULL'},
+         updated_at           = NOW()`,
+      [userId, status, reason, adminId],
+    );
+
+    // Keep the denormalised flag on users in step (the KycBadge reads it, and
+    // login/withdraw gates may check it). Explicit rather than relying on a DB
+    // trigger — mirrors what verification.reviewVerification does.
+    await this.dataSource.query(
+      `UPDATE users SET is_kyc_verified = $1, updated_at = NOW() WHERE id = $2`,
+      [status === 'APPROVED', userId],
+    );
+
+    return { status, is_kyc_verified: status === 'APPROVED' };
   }
 
   // ═════════════════════════════════════════════════════════════
