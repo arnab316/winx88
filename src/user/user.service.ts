@@ -734,13 +734,14 @@ export class UserService {
     const user = await this.dataSource.query(
       `SELECT id, user_code, full_name, username, email, dob,
               profile_image_url, referral_code, vip_level,
-              account_status, is_email_verified, last_login_at, created_at
+              account_status, is_email_verified, is_kyc_verified,
+              last_login_at, created_at
        FROM users WHERE id = $1`,
       [userId],
     );
     if (!user.length) throw new NotFoundException('User not found');
 
-    const [wallet, phones, coins, affiliate, affiliateSelf, remarks] = await Promise.all([
+    const [wallet, phones, coins, affiliate, affiliateSelf, remarks, kyc] = await Promise.all([
       this.dataSource.query(
         `SELECT balance, bonus_balance, locked_balance,
                 total_deposited, total_withdrawn, total_bet, total_win
@@ -777,6 +778,19 @@ export class UserService {
       // Admin remarks (internal notes) on this member, newest first, with the
       // creating / last-editing admin's name+email resolved from admin_users.
       this.listUserRemarks(userId),
+      // KYC / verification status — same source (user_verifications) and column
+      // names the member list uses, so the detail modal and the list agree.
+      // No row = never submitted; the frontend renders that from a null status.
+      this.dataSource.query(
+        `SELECT status              AS kyc_status,
+                document_type       AS kyc_document_type,
+                rejection_reason    AS kyc_rejection_reason,
+                submission_count    AS kyc_submission_count,
+                updated_at          AS kyc_updated_at
+           FROM user_verifications WHERE user_id = $1
+          LIMIT 1`,
+        [userId],
+      ),
     ]);
 
     // An affiliate's OWN affiliate code IS their users.user_code (the value
@@ -804,6 +818,15 @@ export class UserService {
             username: affiliate[0].affiliate_username,
           }
         : null,
+      // KYC: flattened so the modal reads details.kyc_status /
+      // details.is_kyc_verified directly, matching the member-list shape.
+      // is_kyc_verified comes from the users row above; the rest from
+      // user_verifications (all null when the user never submitted).
+      kyc_status:            kyc[0]?.kyc_status ?? null,
+      kyc_document_type:     kyc[0]?.kyc_document_type ?? null,
+      kyc_rejection_reason:  kyc[0]?.kyc_rejection_reason ?? null,
+      kyc_submission_count:  kyc[0]?.kyc_submission_count ?? null,
+      kyc_updated_at:        kyc[0]?.kyc_updated_at ?? null,
       // Admin-only internal notes on this member.
       remarks,
     };
