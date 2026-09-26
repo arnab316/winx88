@@ -658,6 +658,136 @@ export class AffiliateRevShareService {
   }
 
   // ═════════════════════════════════════════════════════════════
+  // ADMIN: AFFILIATE PAYOUTS FEED (standalone, paginated, date-filterable)
+  //   The same ledger the detail page embeds, but as its own endpoint so the
+  //   payouts panel can page and date-filter without re-fetching the whole
+  //   affiliate detail. Unlike the embedded feed, this ALSO includes transfers
+  //   (money the affiliate moved out to a player wallet) and their refunds, so
+  //   the panel shows the full money story: commission earned in, transfers out.
+  //
+  //   GET /affiliate/admin/:userId/payouts?type=&dateFrom=&dateTo=&page=&limit=
+  //
+  //   type: ALL (default) | COMMISSION | ADJUSTMENT | TRANSFER | REFUND
+  // ═════════════════════════════════════════════════════════════
+  async getAffiliatePayouts(
+    userId: number,
+    q: {
+      type?: 'ALL' | 'COMMISSION' | 'ADJUSTMENT' | 'TRANSFER' | 'REFUND';
+      dateFrom?: string;
+      dateTo?: string;
+      page?: number;
+      limit?: number;
+    },
+  ) {
+    const [af] = await this.dataSource.query(
+      `SELECT id FROM affiliate_users WHERE user_id = $1 LIMIT 1`,
+      [userId],
+    );
+    if (!af) throw new NotFoundException('Affiliate not found');
+
+    const page = Math.max(Number(q.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(q.limit) || 20, 1), 200);
+    const offset = (page - 1) * limit;
+
+    // type → the ledger entry_type(s) it maps to.
+    const TYPE_MAP: Record<string, string[]> = {
+      COMMISSION: ['WEEKLY_COMMISSION'],
+      ADJUSTMENT: ['ADMIN_ADJUST'],
+      TRANSFER: ['TRANSFER_REQUEST'],
+      REFUND: ['TRANSFER_REFUND'],
+    };
+    const wanted =
+      q.type && q.type !== 'ALL'
+        ? TYPE_MAP[q.type] ?? []
+        : ['WEEKLY_COMMISSION', 'ADMIN_ADJUST', 'TRANSFER_REQUEST', 'TRANSFER_REFUND'];
+    if (!wanted.length) throw new BadRequestException('invalid type');
+
+    // dateTo is an inclusive calendar day → exclusive upper bound of +1 day,
+    // the same idiom the reports use. NULL on either side = unbounded.
+    const start = q.dateFrom ? q.dateFrom.slice(0, 10) : null;
+    const end = q.dateTo
+      ? new Date(new Date(q.dateTo.slice(0, 10) + 'T00:00:00Z').getTime() + 86_400_000)
+          .toISOString()
+          .slice(0, 10)
+      : null;
+
+    const params: any[] = [af.id, wanted, start, end];
+
+    const rows = await this.dataSource.query(
+      `SELECT acl.id, acl.entry_type, acl.flow, acl.amount, acl.balance_after,
+              acl.description AS remark, acl.reference_type, acl.reference_id,
+              acl.created_at,
+              -- acting admin for ADMIN_ADJUST rows
+              a.name  AS admin_name,  a.email AS admin_email,
+              -- transfer detail for TRANSFER_REQUEST rows (joined by ledger_id)
+              t.status         AS transfer_status,
+              t.decided_at     AS transfer_decided_at,
+              t.rejection_reason AS transfer_rejection_reason,
+              t.to_user_id     AS transfer_to_user_id,
+              da.name  AS transfer_decided_by_name,
+              da.email AS transfer_decided_by_email,
+              COUNT(*) OVER() AS total_count
+         FROM affiliate_commission_ledger acl
+         LEFT JOIN admin_users a
+           ON acl.reference_type = 'ADMIN' AND a.id = acl.reference_id
+         -- The ledger row points AT the transfer (reference_id), set at request
+         -- time. (affiliate_transfers.ledger_id is the reverse link and is only
+         -- filled on decision, so it is null for rejected/pending requests —
+         -- joining on it would drop their status.)
+         LEFT JOIN affiliate_transfers t
+           ON acl.reference_type = 'AFFILIATE_TRANSFER' AND t.id = acl.reference_id
+         LEFT JOIN admin_users da ON da.id = t.decided_by_admin_id
+        WHERE acl.affiliate_user_id = $1
+          AND acl.entry_type = ANY($2)
+          AND ($3::date IS NULL OR acl.created_at >= $3::date)
+          AND ($4::date IS NULL OR acl.created_at <  $4::date)
+        ORDER BY acl.created_at DESC, acl.id DESC
+        LIMIT $5 OFFSET $6`,
+      [...params, limit, offset],
+    );
+
+    const total = rows.length ? Number(rows[0].total_count) : 0;
+    const labelFor = (t: string) =>
+      t === 'WEEKLY_COMMISSION' ? 'COMMISSION'
+      : t === 'ADMIN_ADJUST' ? 'ADJUSTMENT'
+      : t === 'TRANSFER_REQUEST' ? 'TRANSFER'
+      : 'REFUND';
+
+    const data = rows.map((r: any) => ({
+      type: labelFor(r.entry_type),
+      id: Number(r.id),
+      flow: r.flow, // CREDIT | DEBIT
+      amount: parseFloat(r.amount),
+      balanceAfter: parseFloat(r.balance_after),
+      remark: r.remark,
+      adminName: r.admin_name ?? null,
+      adminEmail: r.admin_email ?? null,
+      // Present only on TRANSFER rows; null otherwise.
+      transfer:
+        r.entry_type === 'TRANSFER_REQUEST'
+          ? {
+              status: r.transfer_status ?? null,
+              decidedAt: r.transfer_decided_at ?? null,
+              decidedByName: r.transfer_decided_by_name ?? null,
+              decidedByEmail: r.transfer_decided_by_email ?? null,
+              rejectionReason: r.transfer_rejection_reason ?? null,
+              toUserId: r.transfer_to_user_id === null ? null : Number(r.transfer_to_user_id),
+            }
+          : null,
+      createdAt: r.created_at,
+    }));
+
+    return {
+      success: true,
+      data,
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit) || 0,
+    };
+  }
+
+  // ═════════════════════════════════════════════════════════════
   // AFFILIATE-FACING
   // ═════════════════════════════════════════════════════════════
   private async requireActiveAffiliate(userId: number) {

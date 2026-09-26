@@ -552,6 +552,28 @@ getDownlineUser(
     return this.revshare.getAffiliateDetail(userId);
   }
 
+  // GET /affiliate/admin/:userId/payouts — the payouts panel as its own feed:
+  //   commission + admin adjustments + transfers out + refunds, paginated and
+  //   date-filterable. type: ALL|COMMISSION|ADJUSTMENT|TRANSFER|REFUND.
+  @UseGuards(AdminGuard)
+  @Get('admin/:userId/payouts')
+  affiliatePayouts(
+    @Param('userId', ParseIntPipe) userId: number,
+    @Query('type') type?: 'ALL' | 'COMMISSION' | 'ADJUSTMENT' | 'TRANSFER' | 'REFUND',
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.revshare.getAffiliatePayouts(userId, {
+      type,
+      dateFrom,
+      dateTo,
+      page: page ? Number(page) : undefined,
+      limit: limit ? Number(limit) : undefined,
+    });
+  }
+
   // ─────────────────────────────────────────────────────────────
   // WEEKLY COMMISSION — affiliate-facing (Figma user panel)
   // ─────────────────────────────────────────────────────────────
