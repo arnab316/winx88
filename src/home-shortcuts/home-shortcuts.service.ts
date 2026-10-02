@@ -2,24 +2,20 @@ import { BadRequestException, Injectable, NotFoundException } from '@nestjs/comm
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
 
+import {
+  assertLinkTarget,
+  LINK_TARGET_TYPES,
+  unwrapReturning,
+  type LinkTargetType,
+} from 'src/common/link-target';
 import { MediaS3Service } from 'src/common/services/media-s3.service';
 
-export type ShortcutTargetType = 'CATEGORY' | 'ROUTE' | 'EXTERNAL';
+/** Shortcuts and promo banners share the same target semantics. */
+export type ShortcutTargetType = LinkTargetType;
 export type ShortcutBadge = 'LIVE' | 'NEW' | 'HOT';
 
-export const SHORTCUT_TARGET_TYPES: ShortcutTargetType[] = ['CATEGORY', 'ROUTE', 'EXTERNAL'];
+export const SHORTCUT_TARGET_TYPES = LINK_TARGET_TYPES;
 export const SHORTCUT_BADGES: ShortcutBadge[] = ['LIVE', 'NEW', 'HOT'];
-
-/**
- * TypeORM's `query()` returns `[rows, affectedCount]` for UPDATE/DELETE ...
- * RETURNING, but plain `rows` for INSERT ... RETURNING. Reading `result[0]`
- * without this yields the rows ARRAY rather than the first row, so every field
- * silently comes back `undefined` — easy to miss because nothing throws.
- */
-function unwrapReturning(result: any): any[] {
-  if (!Array.isArray(result)) return [];
-  return Array.isArray(result[0]) ? result[0] : result;
-}
 
 export interface ShortcutInput {
   labelEn: string;
@@ -183,41 +179,9 @@ export class HomeShortcutsService {
 
   /* ──────────────────────────── Helpers ───────────────────────────── */
 
-  /**
-   * EXTERNAL links leave our site, so they must be absolute http(s). Anything
-   * else (javascript:, data:, a bare path) is rejected rather than rendered
-   * into an anchor. ROUTE values must be in-app paths for the same reason —
-   * an absolute URL there would silently escape the router.
-   */
+  /** Shared with promo banners — see src/common/link-target.ts. */
   private assertTarget(type: ShortcutTargetType, value: string) {
-    if (!SHORTCUT_TARGET_TYPES.includes(type)) {
-      throw new BadRequestException(
-        `targetType must be one of ${SHORTCUT_TARGET_TYPES.join(', ')}`,
-      );
-    }
-    const v = String(value ?? '').trim();
-    if (!v) throw new BadRequestException('targetValue is required');
-
-    if (type === 'EXTERNAL') {
-      // Require the scheme up front rather than inferring it from a parse.
-      // `new URL()` is not consistently strict here — in the server runtime a
-      // bare path like "/promotion" parses instead of throwing — so testing
-      // the string first keeps this deterministic whatever URL impl is loaded.
-      if (!/^https?:\/\//i.test(v)) {
-        throw new BadRequestException(
-          'EXTERNAL targetValue must be an absolute URL starting with http:// or https://, e.g. https://t.me/yourchannel',
-        );
-      }
-      try {
-        new URL(v);
-      } catch {
-        throw new BadRequestException('EXTERNAL targetValue is not a valid URL');
-      }
-    }
-
-    if (type === 'ROUTE' && !v.startsWith('/')) {
-      throw new BadRequestException('ROUTE targetValue must start with "/"');
-    }
+    assertLinkTarget(type, value);
   }
 
   private toDto = (r: any) => ({
