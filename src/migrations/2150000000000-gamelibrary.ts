@@ -25,11 +25,11 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  *
  * INDEXES
  * -------
- * `slot_transactions` (1.7M+ rows) and `oroplay_transactions` only carry a
- * `user_id` index, so the per-user "most recent distinct game" aggregation
- * behind Continue Playing would sort every row a heavy player owns. The
- * composite (user_id, created_at DESC) lets it walk the newest rows and stop.
- * `nexus_transactions` already has the equivalent index.
+ * Only the new (empty) table is indexed here, which is instant and takes no
+ * meaningful lock. The composite indexes on the large play-log tables live in
+ * migration 2160 instead, because a plain CREATE INDEX on `slot_transactions`
+ * (3.5M+ rows in production) holds a lock that blocks slot bet writes for the
+ * whole build. 2160 builds them CONCURRENTLY outside a transaction.
  *
  * Idempotent.
  */
@@ -63,21 +63,9 @@ export class GameLibrary2150000000000 implements MigrationInterface {
       CREATE INDEX IF NOT EXISTS idx_user_favourite_user_created
         ON public.user_favourite_games (user_id, created_at DESC);
     `);
-
-    // Continue Playing lookups.
-    await q.query(`
-      CREATE INDEX IF NOT EXISTS idx_slot_tx_user_created
-        ON public.slot_transactions (user_id, created_at DESC);
-    `);
-    await q.query(`
-      CREATE INDEX IF NOT EXISTS idx_oroplay_tx_user_created
-        ON public.oroplay_transactions (user_id, created_at DESC);
-    `);
   }
 
   public async down(q: QueryRunner): Promise<void> {
-    await q.query(`DROP INDEX IF EXISTS public.idx_oroplay_tx_user_created;`);
-    await q.query(`DROP INDEX IF EXISTS public.idx_slot_tx_user_created;`);
     await q.query(`DROP INDEX IF EXISTS public.idx_user_favourite_user_created;`);
     await q.query(`DROP INDEX IF EXISTS public.uq_user_favourite_game;`);
     await q.query(`DROP TABLE IF EXISTS public.user_favourite_games;`);
