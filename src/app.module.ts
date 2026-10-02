@@ -44,6 +44,7 @@ import { ChannelsModule } from './channels/channels.module';
 import { MetaModule } from './meta/meta.module';
 import { NexusModule } from './nexus/nexus.module';
 import { GameLibraryModule } from './game-library/game-library.module';
+import { HomeShortcutsModule } from './home-shortcuts/home-shortcuts.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -104,6 +105,7 @@ import { GameLibraryModule } from './game-library/game-library.module';
   MetaModule,
   NexusModule,
   GameLibraryModule,
+  HomeShortcutsModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
