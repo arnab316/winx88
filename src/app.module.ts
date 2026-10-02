@@ -43,6 +43,7 @@ import { RbacModule } from './rbac/rbac.module';
 import { ChannelsModule } from './channels/channels.module';
 import { MetaModule } from './meta/meta.module';
 import { NexusModule } from './nexus/nexus.module';
+import { GameLibraryModule } from './game-library/game-library.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -102,6 +103,7 @@ import { NexusModule } from './nexus/nexus.module';
   ChannelsModule,
   MetaModule,
   NexusModule,
+  GameLibraryModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
