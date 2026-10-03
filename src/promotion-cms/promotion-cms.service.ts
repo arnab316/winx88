@@ -5,6 +5,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { unwrapReturning } from '../common/link-target';
 import {
   CreatePromotionCmsDto,
   UpdatePromotionCmsDto,
@@ -55,7 +56,9 @@ export class PromotionCmsService {
          title_bn, description_bn, content_bn, banner_bn_url, small_banner_bn_url,
          button_show_with_title, button_show_when_eligible,
          button_show_in_promotions, button_show_in_promo_center,
-         is_active, created_by_admin_id, updated_by_admin_id)
+         is_active, created_by_admin_id, updated_by_admin_id,
+         category, badge_en, badge_bn, cta_label_en, cta_label_bn, cta_url,
+         terms_en, terms_bn)
        VALUES
         ($1, $2, $3, $4::jsonb,
          $5, $6, $7, $8,
@@ -64,7 +67,9 @@ export class PromotionCmsService {
          $14, $15, $16, $17, $18,
          $19, $20, $21, $22, $23,
          $24, $25, $26, $27,
-         $28, $29, $29)
+         $28, $29, $29,
+         $30, $31, $32, $33, $34, $35,
+         $36, $37)
        RETURNING *`,
       [
         dto.promotionId ?? null,
@@ -96,6 +101,14 @@ export class PromotionCmsService {
         dto.buttonShowInPromoCenter ?? true,
         dto.isActive ?? true,
         adminId,
+        dto.category ?? 'OTHER',
+        dto.badgeEn ?? null,
+        dto.badgeBn ?? null,
+        dto.ctaLabelEn ?? null,
+        dto.ctaLabelBn ?? null,
+        dto.ctaUrl ?? null,
+        dto.termsEn ?? null,
+        dto.termsBn ?? null,
       ],
     );
     return r[0];
@@ -140,6 +153,14 @@ export class PromotionCmsService {
       button_show_in_promotions:    dto.buttonShowInPromotions,
       button_show_in_promo_center:  dto.buttonShowInPromoCenter,
       is_active:                    dto.isActive,
+      category:                     dto.category,
+      badge_en:                     dto.badgeEn,
+      badge_bn:                     dto.badgeBn,
+      cta_label_en:                 dto.ctaLabelEn,
+      cta_label_bn:                 dto.ctaLabelBn,
+      cta_url:                      dto.ctaUrl,
+      terms_en:                     dto.termsEn,
+      terms_bn:                     dto.termsBn,
     };
 
     const fields: string[] = [];
@@ -164,7 +185,11 @@ export class PromotionCmsService {
       `UPDATE promotion_cms SET ${fields.join(', ')} WHERE id = $${i} RETURNING *`,
       values,
     );
-    return r[0];
+    // TypeORM returns [rows, affectedCount] for UPDATE ... RETURNING, so a bare
+    // r[0] is the rows ARRAY and every field of the response reads back
+    // `undefined` — with a 200 and no error. The row IS written; only the
+    // response was empty.
+    return unwrapReturning(r)[0];
   }
 
   // ═════════════════════════════════════════════════════════════
@@ -177,7 +202,11 @@ export class PromotionCmsService {
        WHERE id = $2 RETURNING id`,
       [adminId, id],
     );
-    if (!r.length) throw new NotFoundException('Promotion CMS entry not found');
+    // Same [rows, affectedCount] shape: `r.length` is always 2 here, so the
+    // unwrapped rows are what decides whether anything was actually updated.
+    if (!unwrapReturning(r).length) {
+      throw new NotFoundException('Promotion CMS entry not found');
+    }
     return { message: 'Promotion CMS entry deactivated' };
   }
 
@@ -290,10 +319,19 @@ export class PromotionCmsService {
       params.push(JSON.stringify([q.tag]));
     }
 
+    // Filter chip on the promotions screen. Omitted = "All".
+    let categoryFilter = '';
+    if (q.category) {
+      categoryFilter = `AND pc.category = $${i++}`;
+      params.push(q.category);
+    }
+
     const rows = await this.dataSource.query(
       `SELECT pc.id, pc.promotion_id, pc.currency, pc.sequence, pc.tags,
               pc.show_remaining_time, pc.allow_apply, pc.redirect_target,
               pc.non_eligible_display,
+              pc.category, pc.badge_en, pc.badge_bn,
+              pc.cta_label_en, pc.cta_label_bn, pc.cta_url,
               pc.starts_at, pc.ends_at,
               pc.title_en, pc.description_en, pc.content_en,
               pc.banner_en_url, pc.small_banner_en_url,
@@ -314,6 +352,7 @@ export class PromotionCmsService {
          AND (pc.starts_at IS NULL OR pc.starts_at <= NOW())
          AND (pc.ends_at   IS NULL OR pc.ends_at   >  NOW())
          ${tagFilter}
+         ${categoryFilter}
        ORDER BY pc.sequence ASC, pc.created_at DESC`,
       params,
     );
@@ -398,6 +437,87 @@ export class PromotionCmsService {
       throw new NotFoundException('Promotion not found');
     }
 
-    return row;
+    return { ...row, highlights: this.buildHighlights(row) };
+  }
+
+  /**
+   * The key-facts grid on the detail page, derived from the LINKED PROMOTION
+   * rather than stored on the CMS row.
+   *
+   * Deliberate: these numbers are the promotion engine's terms. Copying them
+   * into the CMS would let the shop window advertise 100% up to 1,000 while the
+   * engine actually pays 50% — a discrepancy a player would reasonably call
+   * false advertising. Derived, they cannot drift.
+   *
+   * A card with no linked promotion (pure marketing, e.g. the Telegram follow
+   * card) simply gets an empty grid, and the client hides the section.
+   */
+  private buildHighlights(row: any) {
+    const out: Array<{ key: string; labelEn: string; valueEn: string; icon: string }> = [];
+    if (!row.promotion_id) return out;
+
+    const bonusValue = row.bonus_value === null ? null : Number(row.bonus_value);
+    const maxBonus = row.max_bonus === null ? null : Number(row.max_bonus);
+    const minAmount = row.min_amount === null ? null : Number(row.min_amount);
+    const rollover = row.rollover_multiplier === null ? null : Number(row.rollover_multiplier);
+    const cur = row.currency ?? 'BDT';
+
+    if (bonusValue !== null && bonusValue > 0) {
+      const isPercent = row.bonus_type === 'PERCENT';
+      out.push({
+        key: 'BONUS',
+        labelEn: isPercent ? `${bonusValue}% Bonus` : 'Bonus',
+        valueEn: isPercent
+          ? maxBonus
+            ? `Up to ${cur} ${maxBonus.toLocaleString()}`
+            : 'No upper limit'
+          : `${cur} ${bonusValue.toLocaleString()}`,
+        icon: 'gift',
+      });
+    }
+
+    if (minAmount !== null && minAmount > 0) {
+      out.push({
+        key: 'MIN_DEPOSIT',
+        labelEn: 'Minimum Deposit',
+        valueEn: `${cur} ${minAmount.toLocaleString()}`,
+        icon: 'coins',
+      });
+    }
+
+    // `tags` are the GAME categories the bonus may be wagered on.
+    const tags: string[] = Array.isArray(row.tags) ? row.tags : [];
+    if (tags.length) {
+      const pretty = tags
+        .map((t) => t.charAt(0) + t.slice(1).toLowerCase())
+        .slice(0, 3)
+        .join(', ');
+      out.push({
+        key: 'GAMES',
+        labelEn: 'Game Selection',
+        valueEn: tags.length > 3 ? `${pretty} +${tags.length - 3} more` : pretty,
+        icon: 'gamepad',
+      });
+    }
+
+    // Wagering is the single term players most often miss, so state it plainly
+    // either way rather than only when it exists.
+    out.push(
+      rollover !== null && rollover > 0
+        ? {
+            key: 'WAGERING',
+            labelEn: 'Wagering',
+            valueEn: `${rollover}x turnover`,
+            icon: 'repeat',
+          }
+        : {
+            key: 'WAGERING',
+            labelEn: 'Instant Bonus',
+            valueEn: 'No wagering required',
+            icon: 'zap',
+          },
+    );
+
+    return out;
   }
 }

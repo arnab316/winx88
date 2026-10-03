@@ -12,6 +12,18 @@ export type RedirectTarget = typeof REDIRECT_TARGETS[number];
 export const NON_ELIGIBLE_DISPLAYS = ['GREY', 'HIDE', 'DISABLED'] as const;
 export type NonEligibleDisplay = typeof NON_ELIGIBLE_DISPLAYS[number];
 
+/**
+ * The filter chips on the player promotions screen.
+ *
+ * Distinct from `tags` (GAME categories — where a bonus may be wagered) and
+ * from `promotions.kind` (the engine's trigger), because a card may have no
+ * linked promotion at all.
+ */
+export const PROMO_CATEGORIES = [
+  'WELCOME', 'RELOAD', 'CASHBACK', 'VIP', 'REFER', 'FREEBIE', 'OTHER',
+] as const;
+export type PromoCategory = typeof PROMO_CATEGORIES[number];
+
 // Query-string → boolean coercion
 const toBool = ({ value }: { value: any }) => {
   if (typeof value === 'boolean') return value;
@@ -51,6 +63,19 @@ export class CreatePromotionCmsDto {
   @IsOptional() @Transform(emptyToUndefined) @IsDateString() startsAt?: string;
   @IsOptional() @Transform(emptyToUndefined) @IsDateString() endsAt?: string;
 
+  /* ── Player-facing storefront ── */
+  @IsOptional() @Transform(toUpperEnum) @IsIn(PROMO_CATEGORIES)
+  category?: PromoCategory;
+
+  @IsOptional() @IsString() @Length(0, 40) badgeEn?: string;
+  @IsOptional() @IsString() @Length(0, 60) badgeBn?: string;
+  @IsOptional() @IsString() @Length(0, 40) ctaLabelEn?: string;
+  @IsOptional() @IsString() @Length(0, 60) ctaLabelBn?: string;
+  /** Absolute URL for an off-site CTA (e.g. a Telegram channel). */
+  @IsOptional() @IsString() @Length(0, 500) ctaUrl?: string;
+  @IsOptional() @IsString() termsEn?: string;
+  @IsOptional() @IsString() termsBn?: string;
+
   @IsOptional() @IsString() @Length(0, 200) titleEn?: string;
   @IsOptional() @IsString() descriptionEn?: string;
   @IsOptional() @IsString() contentEn?: string;
@@ -82,6 +107,9 @@ export class ListPromotionCmsQueryDto {
 
   @IsOptional() @IsIn(GAME_CATEGORIES) tag?: GameCategory;
 
+  @IsOptional() @Transform(toUpperEnum) @IsIn(PROMO_CATEGORIES)
+  category?: PromoCategory;
+
   @IsOptional() @Type(() => Number) @IsInt()
   promotionId?: number;
 
@@ -99,6 +127,10 @@ export class PublicPromotionCmsQueryDto {
   @IsOptional() @IsString() currency?: string;
   @IsOptional() @IsIn(GAME_CATEGORIES) tag?: GameCategory;
   @IsOptional() @IsString() @Length(2, 5) locale?: string;
+
+  /** Filter chip on the promotions screen. Omit for "All". */
+  @IsOptional() @Transform(toUpperEnum) @IsIn(PROMO_CATEGORIES)
+  category?: PromoCategory;
 }
 
 // ─── ADMIN: REORDER ─────────────────────────────────────────────
