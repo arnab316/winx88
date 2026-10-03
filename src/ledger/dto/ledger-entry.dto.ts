@@ -16,7 +16,9 @@ export type FinancialEntryType =
   | 'PROMOTION_BONUS'
   | 'MANUAL_DEPOSIT'
   | 'JACKPOT_PRIZE'
-  | 'AFFILIATE_COMMISSION_CREDIT';
+  | 'AFFILIATE_COMMISSION_CREDIT'
+  // Spin wheel prize. The matching DB CHECK is widened in the spin migration.
+  | 'SPIN_WIN';
 
 export type FinancialFlow = 'CREDIT' | 'DEBIT' | 'LOCK' | 'RELEASE';
 export type ActorType = 'SYSTEM' | 'ADMIN' | 'USER';

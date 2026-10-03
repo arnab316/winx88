@@ -47,6 +47,7 @@ import { GameLibraryModule } from './game-library/game-library.module';
 import { HomeShortcutsModule } from './home-shortcuts/home-shortcuts.module';
 import { PromoBannersModule } from './promo-banners/promo-banners.module';
 import { GameContentModule } from './game-content/game-content.module';
+import { SpinModule } from './spin/spin.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -110,6 +111,7 @@ import { GameContentModule } from './game-content/game-content.module';
   HomeShortcutsModule,
   PromoBannersModule,
   GameContentModule,
+  SpinModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],

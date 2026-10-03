@@ -433,7 +433,7 @@ export class TurnoverService {
     qr: QueryRunner,
     data: {
       userId: number;
-      sourceType: 'DEPOSIT' | 'PROMOTION' | 'MANUAL' | 'BONUS';
+      sourceType: 'DEPOSIT' | 'PROMOTION' | 'MANUAL' | 'BONUS' | 'SPIN';
       sourceId?: number | null;
       baseAmount: number;
       multiplier: number;

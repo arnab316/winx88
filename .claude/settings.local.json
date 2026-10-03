@@ -2,7 +2,8 @@
   "permissions": {
     "additionalDirectories": [
       "C:\\Users\\found\\Desktop\\WORK\\winx88Admin",
-       "C:\\Users\\found\\Desktop\\WORK\\bettingUser\\winx88User-main"
+       "C:\\Users\\found\\Desktop\\WORK\\bettingUser\\winx88User-main",
+       "C:\\Users\\found\\Desktop\\WORK\\winx88 - Copy"
     ],
     "allow": [
       "mcp__claude_ai_Postman__createCollectionResponse",
