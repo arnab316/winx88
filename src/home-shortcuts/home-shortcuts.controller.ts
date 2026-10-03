@@ -30,9 +30,11 @@ const iconUpload = FileInterceptor('icon', {
   storage: memoryStorage(),
   limits: { fileSize: 2 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = ['image/png', 'image/webp', 'image/jpeg', 'image/svg+xml'];
+    const allowed = [
+      'image/png', 'image/webp', 'image/jpeg', 'image/svg+xml', 'image/gif',
+    ];
     if (allowed.includes(file.mimetype)) cb(null, true);
-    else cb(new BadRequestException('Only PNG, WEBP, JPG or SVG allowed'), false);
+    else cb(new BadRequestException('Only PNG, WEBP, JPG, GIF or SVG allowed'), false);
   },
 });
 

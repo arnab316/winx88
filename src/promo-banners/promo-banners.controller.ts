@@ -30,9 +30,9 @@ const bannerUpload = FileInterceptor('image', {
   storage: memoryStorage(),
   limits: { fileSize: 5 * 1024 * 1024 },
   fileFilter: (_req, file, cb) => {
-    const allowed = ['image/png', 'image/webp', 'image/jpeg'];
+    const allowed = ['image/png', 'image/webp', 'image/jpeg', 'image/gif'];
     if (allowed.includes(file.mimetype)) cb(null, true);
-    else cb(new BadRequestException('Only PNG, WEBP or JPG allowed'), false);
+    else cb(new BadRequestException('Only PNG, WEBP, JPG or GIF allowed'), false);
   },
 });
 

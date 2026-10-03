@@ -17,11 +17,11 @@ const uploadInterceptor = FileFieldsInterceptor(
     storage: memoryStorage(),
     limits: { fileSize: 8 * 1024 * 1024 }, // 8MB per image
     fileFilter: (_req, file, cb) => {
-      const allowed = ['image/jpeg', 'image/png', 'image/webp'];
+      const allowed = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'];
       if (allowed.includes(file.mimetype)) {
         cb(null, true);
       } else {
-        cb(new BadRequestException('Only JPG, PNG, WEBP allowed'), false);
+        cb(new BadRequestException('Only JPG, PNG, WEBP, GIF allowed'), false);
       }
     },
   },
