@@ -70,6 +70,28 @@ async function bootstrap() {
     .split(',')
     .map((o) => o.trim())
     .filter(Boolean);
+
+  /**
+   * Local dev origins.
+   *
+   * Only `localhost:5173` was allowed, which breaks the moment both front-ends
+   * run at once: Vite gives the second one 5174, every request from it fails
+   * preflight, and the browser reports the useless "Failed to fetch" — with no
+   * server-side error, because the request never arrives. 127.0.0.1 is a
+   * distinct origin from localhost and was blocked for the same reason.
+   *
+   * Added only when NODE_ENV is not production, and only for loopback hosts, so
+   * this cannot widen the surface on a deployed server. An explicit
+   * CORS_ORIGINS still overrides the default list above.
+   */
+  if (process.env.NODE_ENV !== 'production') {
+    for (const host of ['localhost', '127.0.0.1']) {
+      for (const port of [5173, 5174, 5175, 4173]) {
+        const origin = `http://${host}:${port}`;
+        if (!allowedOrigins.includes(origin)) allowedOrigins.push(origin);
+      }
+    }
+  }
   console.log("origins", allowedOrigins);
   app.enableCors({
     // origin: true, // allow all origins temporarily
