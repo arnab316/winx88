@@ -46,6 +46,7 @@ import { NexusModule } from './nexus/nexus.module';
 import { GameLibraryModule } from './game-library/game-library.module';
 import { HomeShortcutsModule } from './home-shortcuts/home-shortcuts.module';
 import { PromoBannersModule } from './promo-banners/promo-banners.module';
+import { GameContentModule } from './game-content/game-content.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -108,6 +109,7 @@ import { PromoBannersModule } from './promo-banners/promo-banners.module';
   GameLibraryModule,
   HomeShortcutsModule,
   PromoBannersModule,
+  GameContentModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],

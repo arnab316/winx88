@@ -37,6 +37,23 @@ export function toInt({ obj, key }: TransformFnParams): number | undefined {
 }
 
 /**
+ * Arrays sent through multipart arrive as a JSON string (there is no array type
+ * in form-data). Absent -> undefined ("leave unchanged"); malformed JSON -> []
+ * rather than throwing, so one bad field can't 500 a whole save.
+ */
+export function toJsonArray({ obj, key }: TransformFnParams): any[] | undefined {
+  const raw = obj?.[key];
+  if (raw === undefined || raw === null || raw === '') return undefined;
+  if (Array.isArray(raw)) return raw;
+  try {
+    const parsed = JSON.parse(String(raw));
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
  * Tri-state for optional enum-ish strings: '' / 'null' mean "clear it" (null),
  * absent means "leave unchanged" (undefined).
  */
