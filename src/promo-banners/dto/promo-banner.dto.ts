@@ -9,16 +9,8 @@ import {
   MinLength,
 } from 'class-validator';
 
+import { toBool, toInt } from 'src/common/dto-transforms';
 import { LINK_TARGET_TYPES, type LinkTargetType } from 'src/common/link-target';
-
-/** Multipart form fields arrive as strings, so coerce before validating. */
-const toBool = ({ value }: { value: any }) =>
-  value === undefined || value === null || value === ''
-    ? undefined
-    : value === true || value === 'true' || value === '1';
-
-const toInt = ({ value }: { value: any }) =>
-  value === undefined || value === null || value === '' ? undefined : Number(value);
 
 export class CreatePromoBannerDto {
   @IsString()

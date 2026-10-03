@@ -9,28 +9,13 @@ import {
   MinLength,
 } from 'class-validator';
 
+import { toBool, toInt, toNullableEnum as toBadge } from 'src/common/dto-transforms';
 import {
   SHORTCUT_BADGES,
   SHORTCUT_TARGET_TYPES,
   type ShortcutBadge,
   type ShortcutTargetType,
 } from '../home-shortcuts.service';
-
-/**
- * These arrive as multipart/form-data (the icon is uploaded alongside), so
- * every scalar lands as a string and has to be coerced before validation.
- */
-const toBool = ({ value }: { value: any }) =>
-  value === undefined || value === null || value === ''
-    ? undefined
-    : value === true || value === 'true' || value === '1';
-
-const toInt = ({ value }: { value: any }) =>
-  value === undefined || value === null || value === '' ? undefined : Number(value);
-
-/** '' and 'null' mean "clear the badge"; absent means "leave it alone". */
-const toBadge = ({ value }: { value: any }) =>
-  value === '' || value === 'null' ? null : (value ?? undefined);
 
 export class CreateShortcutDto {
   @IsString()
