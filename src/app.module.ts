@@ -49,6 +49,7 @@ import { PromoBannersModule } from './promo-banners/promo-banners.module';
 import { GameContentModule } from './game-content/game-content.module';
 import { SpinModule } from './spin/spin.module';
 import { DashboardModule } from './dashboard/dashboard.module';
+import { NotificationModule } from './notification/notification.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -114,6 +115,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
   GameContentModule,
   SpinModule,
   DashboardModule,
+  NotificationModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
