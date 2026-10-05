@@ -38,6 +38,17 @@ export class OroplayClient {
     }
   }
 
+  /** Render an upstream response body for a log line, never throwing. */
+  private describe(data: unknown): string {
+    if (data === undefined || data === null || data === '') return '';
+    if (typeof data === 'string') return ` — ${data}`;
+    try {
+      return ` — ${JSON.stringify(data).slice(0, 500)}`;
+    } catch {
+      return ` — ${String(data)}`;
+    }
+  }
+
   private async request<T = any>(
     method: 'GET' | 'POST',
     path: string,
@@ -75,9 +86,13 @@ export class OroplayClient {
         return this.request<T>(method, path, body, false);
       }
 
+      // Nest's Logger reads the 2nd argument as a stack trace and the formatter
+      // prints it *instead of* the message, so passing the response body here
+      // lost the path — and when the body was undefined it printed an empty
+      // line, which is why token failures showed up as bare "error:" with no
+      // text at all. Fold the body into the message instead.
       this.logger.error(
-        `OroPlay request failed [${path}]: ${err.message}`,
-        err.response?.data,
+        `OroPlay request failed [${path}]: ${err.message}${this.describe(err.response?.data)}`,
       );
       throw err;
     }
