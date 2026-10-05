@@ -1,0 +1,4491 @@
+{
+  "info": {
+    "name": "WinX88 - Mobile App API",
+    "_postman_id": "winx88-mobile-1791228426118",
+    "description": "Player-facing API for the WinX88 mobile app.\n\n## Setup\n1. Open **Variables** and set `baseUrl`, `username`, `password`.\n2. Run **01 · Auth → POST /auth/login**. The token is saved automatically into `{{token}}`; every other request uses it.\n\n## Auth levels\n- `public` - no token needed\n- `player` - requires `Authorization: Bearer <token>`\n- `optional` - works without a token; returns extra per-player fields (e.g. `isFavourite`) when one is sent\n\n## Realtime (Socket.IO, not REST)\nNamespaces, each with `auth: { token: \"Bearer <jwt>\" }` in the handshake:\n- `/notifications` - `notification:new`, `notification:unread`\n- `/wallet` - `wallet:balance`\n- `/games` - `round:opened`, `round:closed`\n\nAdmin-only endpoints are deliberately excluded (298 of 476 routes).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "01 · Auth & Registration",
+      "item": [
+        {
+          "name": "POST /auth/change-password  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/change-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "change-password"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/auth/auth.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currentPassword\": \"{{password}}\",\n  \"newPassword\": \"NewPass123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /auth/check-username",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/check-username",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "check-username"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /auth/forgot-password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/forgot-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "forgot-password"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phoneNumber\": \"8801700000000\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /auth/isuername-taken/:username",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/isuername-taken/:username",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "isuername-taken",
+                ":username"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /auth/login",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "login"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "// Token field name varies by build - accept the usual shapes.",
+                  "const t = j.accessToken || j.access_token || j.token || (j.data && (j.data.accessToken || j.data.token));",
+                  "if (t) { pm.collectionVariables.set('token', t); console.log('token saved'); }",
+                  "const rt = j.refreshToken || j.refresh_token || (j.data && j.data.refreshToken);",
+                  "if (rt) { pm.collectionVariables.set('refreshToken', rt); }",
+                  "pm.test('login ok', () => [200, 201].includes(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /auth/logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /auth/profile/:userId",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/profile/:userId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "profile",
+                ":userId"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /auth/refresh-token",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/refresh-token",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "refresh-token"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"refreshToken\": \"{{refreshToken}}\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /auth/register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "register"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\",\n  \"phoneNumber\": \"8801700000000\",\n  \"currency\": \"BDT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /auth/reset-password",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/reset-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "reset-password"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phoneNumber\": \"8801700000000\",\n  \"otp\": \"123456\",\n  \"newPassword\": \"NewPass123!\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /auth/send-otp",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/send-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "send-otp"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phoneNumber\": \"8801700000000\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /auth/verify-otp-register",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/verify-otp-register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "verify-otp-register"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phoneNumber\": \"8801700000000\",\n  \"otp\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /auth/verify-phone",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/auth/verify-phone",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "verify-phone"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /auth/verify-reset-otp",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/auth/verify-reset-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "auth",
+                "verify-reset-otp"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/auth/auth.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"phoneNumber\": \"8801700000000\",\n  \"otp\": \"123456\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "02 · Profile & Phone Numbers",
+      "item": [
+        {
+          "name": "POST /user/add-phone  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/add-phone",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "add-phone"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/user/user.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /user/all  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "all"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/user/user.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE /user/phone/:phoneId  [player]",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/phone/:phoneId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "phone",
+                ":phoneId"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/user/user.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH /user/phone/:phoneId/primary  [player]",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/phone/:phoneId/primary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "phone",
+                ":phoneId",
+                "primary"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/user/user.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /user/phone/:phoneId/send-otp  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/phone/:phoneId/send-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "phone",
+                ":phoneId",
+                "send-otp"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/user/user.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH /user/phone/:phoneId/verify  [player]",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/phone/:phoneId/verify",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "phone",
+                ":phoneId",
+                "verify"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/user/user.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /user/profile  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "profile"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/user/user.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /user/update-profile  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/update-profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "update-profile"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/user/user.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /user/user-details/:userId  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/user/user-details/:userId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "user",
+                "user-details",
+                ":userId"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/user/user.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "03 · Wallet (deposit / withdraw)",
+      "item": [
+        {
+          "name": "GET /wallet/balance  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/wallet/balance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "wallet",
+                "balance"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/wallet/wallet.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /wallet/deposit  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/wallet/deposit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "wallet",
+                "deposit"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/wallet/wallet.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /wallet/deposit/validate  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/wallet/deposit/validate",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "wallet",
+                "deposit",
+                "validate"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/wallet/wallet.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /wallet/history  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/wallet/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "wallet",
+                "history"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/wallet/wallet.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /wallet/withdraw  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/wallet/withdraw",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "wallet",
+                "withdraw"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/wallet/wallet.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "04 · Notifications & Push",
+      "item": [
+        {
+          "name": "GET /notifications  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications?limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/notification/notification.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "PATCH /notifications/:id/read  [player]",
+          "request": {
+            "method": "PATCH",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/:id/read",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                ":id",
+                "read"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/notification/notification.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /notifications/preferences  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/preferences",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "preferences"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/notification/notification.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "PUT /notifications/preferences  [player]",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/preferences",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "preferences"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/notification/notification.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"items\": [\n    {\n      \"category\": \"PROMOTIONAL\",\n      \"channel\": \"PUSH\",\n      \"enabled\": true\n    },\n    {\n      \"category\": \"PROMOTIONAL\",\n      \"channel\": \"SOCKET\",\n      \"enabled\": true\n    }\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /notifications/push/key",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/push/key",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "push",
+                "key"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/notification/push.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /notifications/push/status  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/push/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "push",
+                "status"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/notification/push.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /notifications/push/subscribe  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/push/subscribe",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "push",
+                "subscribe"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/notification/push.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"endpoint\": \"https://fcm.googleapis.com/fcm/send/XXXX\",\n  \"keys\": {\n    \"p256dh\": \"<from browser PushSubscription>\",\n    \"auth\": \"<from browser PushSubscription>\"\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE /notifications/push/unsubscribe  [player]",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/push/unsubscribe",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "push",
+                "unsubscribe"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/notification/push.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"endpoint\": \"https://fcm.googleapis.com/fcm/send/XXXX\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /notifications/read-all  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/read-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "read-all"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/notification/notification.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /notifications/unread-count  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/notifications/unread-count",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "notifications",
+                "unread-count"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/notification/notification.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "05 · Favourites & Continue Playing",
+      "item": [
+        {
+          "name": "GET /me/continue-playing  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/continue-playing?limit=12",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "continue-playing"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "12"
+                }
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/game-library/game-library.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE /me/favourites  [player]",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/favourites",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "favourites"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/game-library/game-library.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"SLOT\",\n  \"providerRef\": \"1\",\n  \"gameCode\": \"vs20fruitsw\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /me/favourites  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/favourites",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "favourites"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/game-library/game-library.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /me/favourites  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/favourites",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "favourites"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/game-library/game-library.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"kind\": \"SLOT\",\n  \"providerRef\": \"1\",\n  \"gameCode\": \"vs20fruitsw\",\n  \"gameName\": \"Sweet Bonanza\",\n  \"providerName\": \"Pragmatic Play\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "06 · Game Catalog (Hot Games)",
+      "item": [
+        {
+          "name": "GET /game-content/detail/:kind/:providerRef/:gameCode  [optional]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/game-content/detail/:kind/:providerRef/:gameCode",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "game-content",
+                "detail",
+                ":kind",
+                ":providerRef",
+                ":gameCode"
+              ]
+            },
+            "description": "Auth: **optional**\n\nSource: `src/game-content/game-content.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /game-content/detail/:kind/:providerRef/:gameCode/similar",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/game-content/detail/:kind/:providerRef/:gameCode/similar",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "game-content",
+                "detail",
+                ":kind",
+                ":providerRef",
+                ":gameCode",
+                "similar"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game-content/game-content.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /game-content/list  [optional]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/game-content/list?badge=HOT&page=1&limit=24",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "game-content",
+                "list"
+              ],
+              "query": [
+                {
+                  "key": "badge",
+                  "value": "HOT"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "24"
+                }
+              ]
+            },
+            "description": "Auth: **optional**\n\nSource: `src/game-content/game-content.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "07 · Slots (Palace)",
+      "item": [
+        {
+          "name": "POST /slot/callback",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/slot/callback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "slot",
+                "callback"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/palace-casino/callback.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /slot/games",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/slot/games",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "slot",
+                "games"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/palace-casino/palace-casino.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider_id\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "POST /slot/launch  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/slot/launch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "slot",
+                "launch"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/palace-casino/palace-casino.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"provider_id\": 1,\n  \"game_symbol\": \"vs20fruitsw\",\n  \"return_url\": \"https://winx-88.com/casino\",\n  \"lang\": 1,\n  \"win_ratio\": 95\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /slot/providers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/slot/providers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "slot",
+                "providers"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/palace-casino/palace-casino.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /slot/transactions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/slot/transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "slot",
+                "transactions"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/palace-casino/palace-casino.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /slot/wallet/deposit  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/slot/wallet/deposit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "slot",
+                "wallet",
+                "deposit"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/palace-casino/palace-casino.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /slot/wallet/withdraw-all  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/slot/wallet/withdraw-all",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "slot",
+                "wallet",
+                "withdraw-all"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/palace-casino/palace-casino.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "08 · Live Casino (OroPlay)",
+      "item": [
+        {
+          "name": "POST /api/balance",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/balance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "balance"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/oroplay/oroplay-callback.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/batch-transactions",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/batch-transactions",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "batch-transactions"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/oroplay/oroplay-callback.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /api/transaction",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/api/transaction",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "api",
+                "transaction"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/oroplay/oroplay-callback.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /oroplay/game-detail  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/oroplay/game-detail",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oroplay",
+                "game-detail"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/oroplay/oroplay.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /oroplay/games  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/oroplay/games",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oroplay",
+                "games"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/oroplay/oroplay.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vendorCode\": \"casino-ezugi\",\n  \"language\": \"en\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /oroplay/history  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/oroplay/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oroplay",
+                "history"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/oroplay/oroplay.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /oroplay/launch  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/oroplay/launch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oroplay",
+                "launch"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/oroplay/oroplay.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"vendorCode\": \"casino-ezugi\",\n  \"gameCode\": \"<gameCode>\",\n  \"language\": \"en\",\n  \"lobbyUrl\": \"https://winx-88.com\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /oroplay/vendors  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/oroplay/vendors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oroplay",
+                "vendors"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/oroplay/oroplay.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /oroplay/vendors/grouped  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/oroplay/vendors/grouped",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "oroplay",
+                "vendors",
+                "grouped"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/oroplay/oroplay.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "09 · Nexus Games",
+      "item": [
+        {
+          "name": "POST /gold_api",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/gold_api",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "gold_api"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/nexus/nexus-callback.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /nexus/launch  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nexus/launch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nexus",
+                "launch"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/nexus/nexus.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /nexus/sportsbook/launch  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nexus/sportsbook/launch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nexus",
+                "sportsbook",
+                "launch"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/nexus/nexus.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "10 · Sportsbook",
+      "item": [
+        {
+          "name": "GET /sports/auth-games  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sports/auth-games",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sports",
+                "auth-games"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/sports/sports.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /sports/BetWin",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sports/BetWin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sports",
+                "BetWin"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/sports/sports.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /sports/Deposit",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sports/Deposit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sports",
+                "Deposit"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/sports/sports.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /sports/games",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sports/games",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sports",
+                "games"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/sports/sports.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /sports/games/:id  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sports/games/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sports",
+                "games",
+                ":id"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/sports/sports.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /sports/GetBalance",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sports/GetBalance",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sports",
+                "GetBalance"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/sports/sports.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /sports/live-vendors",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sports/live-vendors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sports",
+                "live-vendors"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/sports/sports.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /sports/logs  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sports/logs",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sports",
+                "logs"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/sports/sports.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /sports/my-bets  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sports/my-bets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sports",
+                "my-bets"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/sports/sports.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /sports/sports-link  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/sports/sports-link",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sports",
+                "sports-link"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/sports/sports.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /sports/sportsCallback",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sports/sportsCallback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sports",
+                "sportsCallback"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/sports/sports.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /sports/Withdraw",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/sports/Withdraw",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "sports",
+                "Withdraw"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/sports/sports.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "11 · Lottery & Rounds",
+      "item": [
+        {
+          "name": "GET /games",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/:gameId/active-rounds",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/:gameId/active-rounds",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                ":gameId",
+                "active-rounds"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/:gameId/hot-numbers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/:gameId/hot-numbers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                ":gameId",
+                "hot-numbers"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/:gameId/results",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/:gameId/results",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                ":gameId",
+                "results"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/:gameId/rounds",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/:gameId/rounds",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                ":gameId",
+                "rounds"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                ":id"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /games/bet",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/bet",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "bet"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /games/bet-with-ticket  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/games/bet-with-ticket",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "bet-with-ticket"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/game/schedule.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/by-type/:digitLength",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/by-type/:digitLength",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "by-type",
+                ":digitLength"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /games/create",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/create",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "create"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/hot",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/hot",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "hot"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /games/hot-number",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/hot-number",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "hot-number"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/hot-numbers/by-category",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/hot-numbers/by-category",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "hot-numbers",
+                "by-category"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/lobby.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/jackpot",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/jackpot",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "jackpot"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/lobby",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/lobby",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "lobby"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/lobby.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/my-bets  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/games/my-bets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "my-bets"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /games/result/:round_id",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/result/:round_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "result",
+                ":round_id"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/results/feed",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/results/feed",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "results",
+                "feed"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /games/round",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/round",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "round"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/round/:roundId/result",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/round/:roundId/result",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "round",
+                ":roundId",
+                "result"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /games/settle/:round_id",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/settle/:round_id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "settle",
+                ":round_id"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /games/with-active-rounds",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/games/with-active-rounds",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "games",
+                "with-active-rounds"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/game/game.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "12 · Game History",
+      "item": [
+        {
+          "name": "GET /me/game-history  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/game-history?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "game-history"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/game-history/game-history.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /me/game-history/by-provider  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/game-history/by-provider",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "game-history",
+                "by-provider"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/game-history/game-history.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /me/game-history/combine  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/game-history/combine",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "game-history",
+                "combine"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/game-history/game-history.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /me/game-history/settled  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/game-history/settled",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "game-history",
+                "settled"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/game-history/game-history.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /me/game-history/unsettled  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/me/game-history/unsettled",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "me",
+                "game-history",
+                "unsettled"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/game-history/game-history.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "13 · Jackpots",
+      "item": [
+        {
+          "name": "POST /jackpot/:id/bet  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jackpot/:id/bet",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jackpot",
+                ":id",
+                "bet"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/jackpot/jackpot.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /jackpot/:id/hot-numbers",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/jackpot/:id/hot-numbers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jackpot",
+                ":id",
+                "hot-numbers"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/jackpot/jackpot.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /jackpot/:id/my-bets  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/jackpot/:id/my-bets",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jackpot",
+                ":id",
+                "my-bets"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/jackpot/jackpot.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /jackpot/active",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/jackpot/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jackpot",
+                "active"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/jackpot/jackpot.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /jackpot/history",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/jackpot/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "jackpot",
+                "history"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/jackpot/jackpot.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "14 · Spin Wheel",
+      "item": [
+        {
+          "name": "GET /spin/me  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/spin/me?currency=BDT",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "spin",
+                "me"
+              ],
+              "query": [
+                {
+                  "key": "currency",
+                  "value": "BDT"
+                }
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/spin/spin.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /spin/me/history  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/spin/me/history?page=1&limit=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "spin",
+                "me",
+                "history"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/spin/spin.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /spin/me/spin  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/spin/me/spin",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "spin",
+                "me",
+                "spin"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/spin/spin.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"currency\": \"BDT\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /spin/public",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/spin/public?currency=BDT",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "spin",
+                "public"
+              ],
+              "query": [
+                {
+                  "key": "currency",
+                  "value": "BDT"
+                }
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/spin/spin.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "15 · Promotions (player-facing)",
+      "item": [
+        {
+          "name": "GET /promotion-cms/me  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/promotion-cms/me?currency=BDT",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "promotion-cms",
+                "me"
+              ],
+              "query": [
+                {
+                  "key": "currency",
+                  "value": "BDT"
+                }
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/promotion-cms/promotion-cms.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /promotion-cms/me/:id  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/promotion-cms/me/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "promotion-cms",
+                "me",
+                ":id"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/promotion-cms/promotion-cms.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /promotion-cms/public",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/promotion-cms/public?currency=BDT",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "promotion-cms",
+                "public"
+              ],
+              "query": [
+                {
+                  "key": "currency",
+                  "value": "BDT"
+                }
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/promotion-cms/promotion-cms.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /promotion-cms/public/:id",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/promotion-cms/public/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "promotion-cms",
+                "public",
+                ":id"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/promotion-cms/promotion-cms.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "16 · Promotion Engine",
+      "item": [
+        {
+          "name": "GET /promotion/me/available  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/promotion/me/available",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "promotion",
+                "me",
+                "available"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/promotion/promotion.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /promotion/me/claim-code  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/promotion/me/claim-code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "promotion",
+                "me",
+                "claim-code"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/promotion/promotion.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /promotion/me/claims  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/promotion/me/claims",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "promotion",
+                "me",
+                "claims"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/promotion/promotion.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "17 · Home Promo Banners",
+      "item": [
+        {
+          "name": "GET /promo-banners/active",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/promo-banners/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "promo-banners",
+                "active"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/promo-banners/promo-banners.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "18 · Home Shortcuts",
+      "item": [
+        {
+          "name": "GET /home-shortcuts/active",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/home-shortcuts/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "home-shortcuts",
+                "active"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/home-shortcuts/home-shortcuts.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "19 · Hero Banners",
+      "item": [
+        {
+          "name": "GET /hero-banner/active",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/hero-banner/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "hero-banner",
+                "active"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/hero-banner/hero-banner.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "20 · Announcements",
+      "item": [
+        {
+          "name": "GET /announcements/active",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/announcements/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "announcements",
+                "active"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/announcement/announcement.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "21 · VIP Tiers",
+      "item": [
+        {
+          "name": "GET /tiers/me/banking  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/tiers/me/banking",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tiers",
+                "me",
+                "banking"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/vip/tier.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /tiers/public",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tiers/public",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tiers",
+                "public"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/vip/tier.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /vip/levels  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vip/levels",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vip",
+                "levels"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/vip/vip.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /vip/me  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/vip/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "vip",
+                "me"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/vip/vip.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "22 · Turnover / Wagering",
+      "item": [
+        {
+          "name": "POST /turnover/:id/complete  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/turnover/:id/complete",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "turnover",
+                ":id",
+                "complete"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/turnover/turnover.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /turnover/me  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/turnover/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "turnover",
+                "me"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/turnover/turnover.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /turnover/me/history  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/turnover/me/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "turnover",
+                "me",
+                "history"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/turnover/turnover.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /turnover/me/requirements  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/turnover/me/requirements",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "turnover",
+                "me",
+                "requirements"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/turnover/turnover.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "23 · Coins",
+      "item": [
+        {
+          "name": "GET /coins/me  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/coins/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "coins",
+                "me"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/coins/coins.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /coins/me/history  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/coins/me/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "coins",
+                "me",
+                "history"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/coins/coins.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "24 · Refer a Friend",
+      "item": [
+        {
+          "name": "GET /referral/my-link  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/referral/my-link",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "referral",
+                "my-link"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/referral/referral.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /referral/my-referrals  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/referral/my-referrals",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "referral",
+                "my-referrals"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/referral/referral.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "25 · Affiliate Programme",
+      "item": [
+        {
+          "name": "POST /affiliate/apply  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/apply",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "apply"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/bonuses  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/bonuses",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "bonuses"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/downline  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/downline",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "downline"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/downline/:userId  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/downline/:userId",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "downline",
+                ":userId"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /affiliate/forgot-password",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/forgot-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "forgot-password"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /affiliate/login",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/login",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "login"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /affiliate/logout",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/logout",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "logout"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/commission-ledger  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/commission-ledger",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "commission-ledger"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/dashboard  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/dashboard",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "dashboard"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/link  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/link",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "link"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/overview  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/overview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "overview"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/payouts  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/payouts",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "payouts"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/players  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/players",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "players"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/players/activity  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/players/activity",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "players",
+                "activity"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/players/report  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/players/report",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "players",
+                "report"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/profile  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/profile",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "profile"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/transfers  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/transfers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "transfers"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /affiliate/me/transfers  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/transfers",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "transfers"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/verification  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/verification",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "verification"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/weekly/history  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/weekly/history",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "weekly",
+                "history"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/me/weekly/overview  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/me/weekly/overview",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "me",
+                "weekly",
+                "overview"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /affiliate/register",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/register",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "register"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /affiliate/reset-password",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/reset-password",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "reset-password"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/status  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "status"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /affiliate/summary  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/summary",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "summary"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /affiliate/verify-reset-otp",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/affiliate/verify-reset-otp",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "affiliate",
+                "verify-reset-otp"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/affiliate/affiliate.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /r/:code",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/r/:code",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "r",
+                ":code"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/affiliate/affiliate-public.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "26 · KYC",
+      "item": [
+        {
+          "name": "GET /verification/my-status  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/verification/my-status",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "verification",
+                "my-status"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/verification/verification.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /verification/submit  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/verification/submit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "verification",
+                "submit"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/verification/verification.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "27 · Payment Agents",
+      "item": [
+        {
+          "name": "GET /agents/deposit-agent  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/agents/deposit-agent",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "agents",
+                "deposit-agent"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/agents/agents.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "28 · Tickets",
+      "item": [
+        {
+          "name": "GET /ticket/:betCode",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/ticket/:betCode",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "ticket",
+                ":betCode"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/ticket/ticket.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "29 · Tracking Channels",
+      "item": [
+        {
+          "name": "GET /c/:channel",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/c/:channel",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "c",
+                ":channel"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/channels/channels-public.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /c/track",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/c/track",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "c",
+                "track"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/channels/channels-public.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "30 · Member Group",
+      "item": [
+        {
+          "name": "GET /member-group/me  [player]",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/member-group/me",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "member-group",
+                "me"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/member-group/member-group.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "31 · WinyPay",
+      "item": [
+        {
+          "name": "POST /winypay/deposit  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/winypay/deposit",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "winypay",
+                "deposit"
+              ]
+            },
+            "description": "Auth: **player**\n\nSource: `src/winypay/winypay.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "POST /winypay/deposit/callback",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/winypay/deposit/callback",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "winypay",
+                "deposit",
+                "callback"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/winypay/winypay.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "32 · SMS (LAAFFIC)",
+      "item": [
+        {
+          "name": "POST /laaffic/webhook/delivery",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/laaffic/webhook/delivery",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "laaffic",
+                "webhook",
+                "delivery"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/laaffic/laaffic.webhook.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "33 · SMS (Twilio)",
+      "item": [
+        {
+          "name": "GET /twilio/test-twilio",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/twilio/test-twilio",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "twilio",
+                "test-twilio"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/twilio/twilio.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    },
+    {
+      "name": "34 · Health & Misc",
+      "item": [
+        {
+          "name": "GET /",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": []
+            },
+            "description": "Auth: **public**\n\nSource: `src/app.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/details",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "details"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/app.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /health",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/health",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "health"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/app.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/stats",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "stats"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/app.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "GET /tables",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/tables",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "tables"
+              ]
+            },
+            "description": "Auth: **public**\n\nSource: `src/app.controller.ts`"
+          },
+          "response": []
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "https://beta.safurion.online"
+    },
+    {
+      "key": "token",
+      "value": ""
+    },
+    {
+      "key": "refreshToken",
+      "value": ""
+    },
+    {
+      "key": "username",
+      "value": ""
+    },
+    {
+      "key": "password",
+      "value": ""
+    }
+  ]
+}
