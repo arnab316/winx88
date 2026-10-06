@@ -23,6 +23,28 @@ interface SqlRunner {
   query(sql: string, params?: any[]): Promise<any>;
 }
 
+/** Every channel a preference can be expressed for. */
+export const NOTIFICATION_CHANNELS = [
+  'IN_APP', 'SOCKET', 'PUSH', 'SMS', 'EMAIL',
+] as const;
+
+/**
+ * What a channel does when the player has expressed no preference.
+ *
+ * Marketing shown inside our own product — the bell, and the live socket that
+ * feeds it — is on by default: a player who opens the app is choosing to look
+ * at it. Marketing that LEAVES the product and lands on the player's device or
+ * phone bill (push banner, SMS, email) stays off until they ask for it, which
+ * is the consent position regulators and the app stores expect.
+ *
+ * Transactional, security and gameplay messages default on everywhere; a player
+ * cannot be left unaware that a withdrawal was declined.
+ */
+export function defaultEnabled(category: string, channel: string): boolean {
+  if (category !== 'PROMOTIONAL') return true;
+  return channel === 'IN_APP' || channel === 'SOCKET';
+}
+
 @Injectable()
 export class NotificationService {
   private readonly logger = new Logger(NotificationService.name);
@@ -214,10 +236,7 @@ export class NotificationService {
         LIMIT 1`,
       [userId, category, channel],
     );
-    // No row = default. Promotional defaults to OFF until the player opts in,
-    // which is the position most gambling regulators expect; everything else
-    // defaults on.
-    if (!pref) return category !== 'PROMOTIONAL';
+    if (!pref) return defaultEnabled(category, channel);
     return pref.enabled === true;
   }
 
@@ -332,15 +351,18 @@ export class NotificationService {
         WHERE user_id = $1`,
       [userId],
     );
-    return {
-      // Spelled out so the client can render the settings screen without
-      // hard-coding what the defaults are.
-      defaults: {
-        TRANSACTIONAL: true, SECURITY: true, GAMEPLAY: true, PROMOTIONAL: false,
-      },
-      alwaysOn: ALWAYS_ON_CATEGORIES,
-      overrides: rows,
-    };
+    // Spelled out per channel so the client can render the settings screen
+    // without hard-coding the rules. Defaults differ BY CHANNEL now —
+    // promotional is on in the bell but off for push — so a flat per-category
+    // map would have been a lie.
+    const defaults: Record<string, Record<string, boolean>> = {};
+    for (const category of ['TRANSACTIONAL', 'SECURITY', 'GAMEPLAY', 'PROMOTIONAL']) {
+      defaults[category] = {};
+      for (const channel of NOTIFICATION_CHANNELS) {
+        defaults[category][channel] = defaultEnabled(category, channel);
+      }
+    }
+    return { defaults, alwaysOn: ALWAYS_ON_CATEGORIES, overrides: rows };
   }
 
   async updatePreferences(userId: number, dto: UpdatePreferencesDto) {
@@ -509,8 +531,11 @@ export class NotificationService {
 
   /**
    * How many of these recipients `deliver()` will actually deliver to, using
-   * the same rules it applies. "queued" alone hid the fact that a PROMOTIONAL
-   * send reaches only players who opted in — by default, nobody.
+   * the same rules it applies — "queued" on its own says nothing about reach.
+   *
+   * This counts the IN_APP gate, which is what decides whether a notification
+   * is stored at all. A player counted here still only gets a PUSH banner if
+   * they enabled push, so treat this as "will see it in the app".
    */
   private async estimateReach(userIds: number[], category: NotificationCategory) {
     if (!userIds.length || ALWAYS_ON_CATEGORIES.includes(category)) {
@@ -521,7 +546,9 @@ export class NotificationService {
          COUNT(*) FILTER (WHERE u.account_status <> 'ACTIVE')::int AS inactive,
          COUNT(*) FILTER (
            WHERE u.account_status = 'ACTIVE'
-             AND NOT COALESCE(p.enabled, $2::text <> 'PROMOTIONAL')
+             -- Must mirror defaultEnabled(category, 'IN_APP'), which is true
+             -- for every category now. Only an explicit opt-OUT row excludes.
+             AND NOT COALESCE(p.enabled, true)
          )::int AS not_opted_in
          FROM users u
          LEFT JOIN notification_preferences p

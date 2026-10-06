@@ -110,17 +110,31 @@ Channels: `IN_APP`, `SOCKET`, `PUSH`, `SMS`, `EMAIL`.
 
 ### Opt-in defaults — read this before testing
 
-- `PROMOTIONAL` defaults to **OFF**. Everything else defaults **ON**.
-- Admin broadcasts are **always** `PROMOTIONAL` — the server overrides whatever category is sent.
+Defaults are **per channel**, not per category:
 
-So a test broadcast reaches **nobody** until the player opts in:
+| Category | `IN_APP` / `SOCKET` | `PUSH` / `SMS` / `EMAIL` |
+|---|---|---|
+| `TRANSACTIONAL`, `SECURITY`, `GAMEPLAY` | ON | ON |
+| `PROMOTIONAL` | **ON** | **OFF** |
 
+Marketing shown inside the app is on by default; marketing that leaves the app
+and lands on the device needs an explicit opt-in. `TRANSACTIONAL` and `SECURITY`
+are in `alwaysOn` and a `PUT` trying to disable them returns 400.
+
+Admin broadcasts are **always** `PROMOTIONAL` — the server overrides whatever
+category is sent, so a broadcast cannot masquerade as transactional.
+
+`GET /notifications/preferences` returns `defaults` (nested `category → channel →
+bool`), `alwaysOn`, and `overrides`. **A missing override means "use the
+default", not "off"** — resolve it client-side:
+
+```ts
+const row = overrides.find(o => o.category === c && o.channel === ch);
+const effective = row ? row.enabled : defaults[c][ch];
 ```
-PUT /notifications/preferences
-{ "items": [ { "category": "PROMOTIONAL", "channel": "PUSH", "enabled": true } ] }
-```
 
-Build this toggle into the app's settings screen, or players will never receive marketing.
+Build a "Promotions and offers" toggle (writes `PROMOTIONAL` × `IN_APP`+`SOCKET`)
+and let the push opt-in write `PROMOTIONAL` × `PUSH`.
 
 ---
 
