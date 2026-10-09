@@ -486,6 +486,219 @@ export class GameHistoryService {
   }
 
   // ════════════════════════════════════════════════════════════════════════
+  // DAILY: one row per calendar day, paginated BY DAY (admin Betting Records).
+  //
+  //   Aggregated in SQL over the whole window. Grouping 10 fetched bets in the
+  //   browser instead splits a single day across pages, each page showing a
+  //   different partial total for it.
+  //
+  //   Day boundaries use the same `placed_at::date` logic as the from/to filter
+  //   in getHistory, so drilling into a day with
+  //   getHistory({ from: day, to: day }) returns exactly that row's bets.
+  //
+  //   turnover = the turnover_ledger CONTRIBUTION for that day: what the day's
+  //   bets counted toward the player's wagering requirements. That is a
+  //   different number from staked — bonus-excluded categories contribute less
+  //   than they stake — so the two columns are shown side by side.
+  // ════════════════════════════════════════════════════════════════════════
+  async getDailyHistory(
+    userId: number,
+    q: { from?: string; to?: string; page?: number; limit?: number },
+  ) {
+    const page = Math.max(q.page ?? 1, 1);
+    const limit = Math.min(Math.max(q.limit ?? 10, 1), 100);
+    const offset = (page - 1) * limit;
+
+    const unioned = `(${[
+      this.betsSourceSql(),
+      this.slotSourceSql(),
+      this.oroplaySourceSql(),
+      this.sportsSourceSql(),
+      this.nexusSourceSql(),
+    ].join('\n      UNION ALL\n')}) h`;
+
+    const params: any[] = [userId];
+    const filters: string[] = [];
+    // Default to the last 7 days rather than the whole table: this unions five
+    // sources, and an unbounded scan on a multi-million-row history is a way to
+    // take the admin panel down.
+    const fromTs =
+      q.from ?? new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+    params.push(fromTs);
+    filters.push(`h.placed_at >= $${params.length}::date`);
+    if (q.to) {
+      params.push(q.to);
+      filters.push(`h.placed_at < ($${params.length}::date + INTERVAL '1 day')`);
+    }
+    const where = `WHERE ${filters.join(' AND ')}`;
+
+    const daySql = `
+      SELECT h.placed_at::date AS day,
+             COUNT(*)::int                                                         AS bets,
+             COUNT(*) FILTER (WHERE h.status = 'PLACED')::int                      AS pending,
+             COALESCE(SUM(h.bet_amount), 0)                                        AS staked,
+             COALESCE(SUM(h.bet_amount) FILTER (WHERE h.status <> 'CANCELLED'), 0) AS valid,
+             COALESCE(SUM(h.actual_payout) FILTER (WHERE h.status = 'WON'), 0)     AS won,
+             ARRAY_AGG(DISTINCT h.category ORDER BY h.category)                    AS categories
+        FROM ${unioned}
+        ${where}
+       GROUP BY h.placed_at::date`;
+
+    const [rows, [totals]] = await Promise.all([
+      this.dataSource.query(
+        `${daySql} ORDER BY day DESC LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset],
+      ),
+      this.dataSource.query(
+        `SELECT COUNT(*)::int AS days,
+                COALESCE(SUM(bets), 0)::int AS bets,
+                COALESCE(SUM(staked), 0) AS staked,
+                COALESCE(SUM(valid), 0)  AS valid,
+                COALESCE(SUM(won), 0)    AS won
+           FROM (${daySql}) d`,
+        params,
+      ),
+    ]);
+
+    // node-postgres hands back a Date for ::date, and toISOString() would shift
+    // it by the UTC offset — turning a local 2026-08-01 into 2026-07-31.
+    const dayKey = (d: any) =>
+      d instanceof Date
+        ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+            d.getDate(),
+          ).padStart(2, '0')}`
+        : String(d).slice(0, 10);
+    const pageDays: string[] = rows.map((r: any) => dayKey(r.day));
+
+    // Per game type, for the days on this page only.
+    const catRows = pageDays.length
+      ? await this.dataSource.query(
+          `SELECT h.placed_at::date AS day, h.category,
+                  COUNT(*)::int                                                         AS bets,
+                  COUNT(*) FILTER (WHERE h.status = 'PLACED')::int                      AS pending,
+                  COALESCE(SUM(h.bet_amount), 0)                                        AS staked,
+                  COALESCE(SUM(h.bet_amount) FILTER (WHERE h.status <> 'CANCELLED'), 0) AS valid,
+                  COALESCE(SUM(h.actual_payout) FILTER (WHERE h.status = 'WON'), 0)     AS won
+             FROM ${unioned}
+            WHERE h.placed_at::date = ANY($2::date[])
+            GROUP BY h.placed_at::date, h.category`,
+          [userId, pageDays],
+        )
+      : [];
+
+    // Wagering contribution, same date logic and window. This repo's
+    // turnover_ledger has no bet_category column, so the per-type split is
+    // unavailable and every contribution arrives unassigned — probed rather
+    // than assumed so the column can appear here the day it is added.
+    const [hasCat] = await this.dataSource.query(
+      `SELECT 1 AS ok FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'turnover_ledger'
+          AND column_name = 'bet_category' LIMIT 1`,
+    );
+    const catExpr = hasCat
+      ? `CASE UPPER(tl.bet_category) WHEN 'TABLE' THEN 'LIVE' WHEN 'VIRTUAL' THEN 'SPORTS'
+              ELSE UPPER(tl.bet_category) END`
+      : `NULL::text`;
+    const tParams: any[] = [userId, fromTs];
+    let tTo = '';
+    if (q.to) {
+      tParams.push(q.to);
+      tTo = `AND tl.created_at < ($3::date + INTERVAL '1 day')`;
+    }
+    const turnoverRows = await this.dataSource.query(
+      `SELECT tl.created_at::date AS day, ${catExpr} AS category,
+              COALESCE(SUM(tl.amount), 0) AS turnover
+         FROM turnover_ledger tl
+        WHERE tl.user_id = $1 AND tl.event_type = 'CONTRIBUTION'
+          AND tl.created_at >= $2::date ${tTo}
+        GROUP BY 1, 2`,
+      tParams,
+    );
+    const turnoverOf = new Map<string, number>(); // `${day}|${category ?? ''}`
+    let totalTurnover = 0;
+    for (const t of turnoverRows) {
+      const amt = Number(t.turnover);
+      totalTurnover += amt;
+      const key = `${dayKey(t.day)}|${t.category ?? ''}`;
+      turnoverOf.set(key, (turnoverOf.get(key) ?? 0) + amt);
+    }
+
+    const r2 = (n: number) => Number(n.toFixed(2));
+    const totalDays = Number(totals?.days ?? 0);
+    const totalValid = Number(totals?.valid ?? 0);
+    const totalWon = Number(totals?.won ?? 0);
+
+    return {
+      data: rows.map((r: any) => {
+        const day = dayKey(r.day);
+        const valid = Number(r.valid);
+        const won = Number(r.won);
+        const cats = catRows.filter((c: any) => dayKey(c.day) === day);
+
+        // Turnover with no recorded game type. On a day with a single game type
+        // it can only belong to that type; otherwise it is reported separately
+        // rather than being spread across types on a guess.
+        let unassigned = turnoverOf.get(`${day}|`) ?? 0;
+        const single = cats.length === 1;
+
+        const byCategory = cats
+          .map((c: any) => {
+            const cValid = Number(c.valid);
+            const cWon = Number(c.won);
+            let turnover = turnoverOf.get(`${day}|${c.category}`) ?? 0;
+            if (single) {
+              turnover += unassigned;
+              unassigned = 0;
+            }
+            return {
+              category: c.category,
+              bets: c.bets,
+              betAmount: r2(Number(c.staked)),
+              validAmount: r2(cValid),
+              winAmount: r2(cWon),
+              winLoss: r2(cWon - cValid),
+              turnover: r2(turnover),
+              status: c.pending > 0 ? 'PENDING' : 'SETTLED',
+            };
+          })
+          .sort((a: any, b: any) => b.validAmount - a.validAmount);
+
+        const dayTurnover = [...turnoverOf.entries()]
+          .filter(([k]) => k.startsWith(`${day}|`))
+          .reduce((s, [, v]) => s + v, 0);
+
+        return {
+          date: day,
+          bets: r.bets,
+          pending: r.pending,
+          categories: r.categories ?? [],
+          betAmount: r2(Number(r.staked)),
+          validAmount: r2(valid),
+          winAmount: r2(won),
+          winLoss: r2(won - valid),
+          turnover: r2(dayTurnover),
+          unassignedTurnover: r2(unassigned),
+          status: r.pending > 0 ? 'PENDING' : 'SETTLED',
+          byCategory,
+        };
+      }),
+      page,
+      limit,
+      total: totalDays,
+      totalPages: Math.ceil(totalDays / limit) || 0,
+      window: { from: fromTs, to: q.to ?? null },
+      summary: {
+        totalBets: Number(totals?.bets ?? 0),
+        totalStaked: r2(Number(totals?.staked ?? 0)),
+        totalValid: r2(totalValid),
+        totalWon: r2(totalWon),
+        netPL: r2(totalWon - totalValid),
+        totalTurnover: r2(totalTurnover),
+      },
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
   // GROUPED: provider × day cards (the "JILI · May 17 · ৳5" list).
   //   Each group carries totalGames, turnover (staked), totalWon, netPL.
   //   Drill down with getHistory({ providerId, category, from, to }) for the

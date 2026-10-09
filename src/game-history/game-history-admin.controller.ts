@@ -68,6 +68,36 @@ export class GameHistoryAdminController {
   }
 
   /**
+   * One row per day for a player — totals, valid amount, win/loss and
+   * wagering turnover — paginated by DAY, not by bet.
+   *
+   *   GET /admin/game-history/daily?userId=42&from=2026-08-01&to=2026-08-31&page=1&limit=10
+   *
+   * Drill into a day with GET /admin/game-history?userId=42&from=<day>&to=<day>.
+   */
+  @Get('daily')
+  async getDailyHistory(
+    @Query('userId', ParseIntPipe) userId: number,
+    @Query('from') from?: string,
+    @Query('to') to?: string,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page = 1,
+    @Query('limit', new DefaultValuePipe(10), ParseIntPipe) limit = 10,
+  ) {
+    try {
+      const data = await this.history.getDailyHistory(userId, { from, to, page, limit });
+      return { statusCode: HttpStatus.OK, message: 'Daily game history', ...data };
+    } catch (error: any) {
+      throw new HttpException(
+        {
+          statusCode: error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+          message: error?.message || 'Failed to fetch daily game history',
+        },
+        error?.status || HttpStatus.INTERNAL_SERVER_ERROR,
+      );
+    }
+  }
+
+  /**
    * Combined feed for a player: every product (LOTTERY + JACKPOT + SLOT) and
    * every status (WON / LOST / PLACED / CANCELLED) merged into one timeline,
    * filtered only by date range.
