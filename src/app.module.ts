@@ -50,6 +50,7 @@ import { GameContentModule } from './game-content/game-content.module';
 import { SpinModule } from './spin/spin.module';
 import { DashboardModule } from './dashboard/dashboard.module';
 import { NotificationModule } from './notification/notification.module';
+import { AdminActivityModule } from './admin-activity/admin-activity.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -116,6 +117,9 @@ import { NotificationModule } from './notification/notification.module';
   SpinModule,
   DashboardModule,
   NotificationModule,
+  // Registers a GLOBAL interceptor, so every admin write anywhere in the app
+  // lands in the Track log — including endpoints added after this.
+  AdminActivityModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
