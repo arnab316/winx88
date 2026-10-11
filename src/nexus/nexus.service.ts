@@ -20,6 +20,87 @@ export class NexusService {
     private readonly client: NexusClient,
   ) {}
 
+  /**
+   * Nexus allows ONE `game_list` and ONE `provider_list` per second. A sync
+   * that loops ~27 providers without pacing gets `7770429 Rate Limit Error`
+   * for most of them — and because a failed provider is only pushed onto
+   * `skipped` so one bad provider cannot abort the run, the sync reports
+   * success while quietly importing almost nothing.
+   *
+   * 1100ms rather than exactly 1000ms: their window is wall-clock on their
+   * side, and a request that leaves here exactly on the second can still
+   * arrive inside the previous one.
+   */
+  private static readonly API_MIN_INTERVAL_MS = 1100;
+
+  /** When the last rate-limited method was called, for pacing the next one. */
+  private lastApiCallAt = 0;
+
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  private async pace(): Promise<void> {
+    const wait = NexusService.API_MIN_INTERVAL_MS - (Date.now() - this.lastApiCallAt);
+    if (wait > 0) await this.sleep(wait);
+    this.lastApiCallAt = Date.now();
+  }
+
+  /** `msg` is written for humans, so match loosely and on the code too. */
+  private isRateLimited(error?: string): boolean {
+    const s = String(error ?? '').toLowerCase();
+    return s.includes('rate limit') || s.includes('7770429');
+  }
+
+  /** `game_list` for one provider, paced, with one retry if we still raced. */
+  private async gameListPaced(providerCode: string) {
+    await this.pace();
+    let res = await this.client.gameList(providerCode);
+    if (!res.ok && this.isRateLimited(res.error)) {
+      this.logger.warn(`[Nexus] rate limited on ${providerCode} — backing off 2s`);
+      await this.sleep(2000);
+      this.lastApiCallAt = Date.now();
+      res = await this.client.gameList(providerCode);
+    }
+    return res;
+  }
+
+  /** Games per upsert statement. 10 params each, well inside Postgres' limit. */
+  private static readonly UPSERT_CHUNK = 200;
+
+  /** One multi-row upsert. Each row is the 10 params the column list expects. */
+  private async upsertGames(rows: any[][]): Promise<void> {
+    if (!rows.length) return;
+    const COLS = 10;
+    const values = rows
+      .map((_, r) => {
+        const b = r * COLS;
+        return (
+          `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},` +
+          `false,$${b + 9},1,'HTML5',0,1,0,0,0,$${b + 10},'[]','[]','[]',false,'NEXUS')`
+        );
+      })
+      .join(',');
+
+    await this.dataSource.query(
+      `INSERT INTO casino_games
+         (uuid, name, image, type, provider, vendor_code, game_code, slug,
+          under_maintenance, game_symbol, lang, technology, has_lobby, is_mobile,
+          has_freespins, has_tables, freespin_valid_until_full_day,
+          parameters, tags, images, related_games, is_new, aggregator)
+       VALUES ${values}
+       ON CONFLICT (uuid) DO UPDATE SET
+         name       = EXCLUDED.name,
+         image      = EXCLUDED.image,
+         type       = EXCLUDED.type,
+         provider   = EXCLUDED.provider,
+         game_code  = EXCLUDED.game_code,
+         aggregator = 'NEXUS',
+         updated_at = NOW()`,
+      rows.flat(),
+    );
+  }
+
   /** Stable, collision-proof id for a Nexus game inside the shared catalog. */
   private uuidFor(providerCode: string, gameCode: string): string {
     return `NEXUS_${providerCode}_${gameCode}`.slice(0, 190);
@@ -81,6 +162,7 @@ export class NexusService {
       );
     }
 
+    await this.pace();
     const provRes = await this.client.providerList();
     if (!provRes.ok) {
       throw new BadRequestException(`Nexus provider_list failed: ${provRes.error}`);
@@ -97,51 +179,60 @@ export class NexusService {
         continue;
       }
 
-      const gamesRes = await this.client.gameList(p.code);
+      const gamesRes = await this.gameListPaced(p.code);
       if (!gamesRes.ok) {
         // One bad provider must not abort the whole sync.
         skipped.push(`${p.code} (${gamesRes.error})`);
         continue;
       }
       providerCount++;
+      let imported = 0;
+
+      // Batched, not one statement per game: a provider like PRAGMATIC has 600+
+      // games, and a round trip each makes the sync minutes long and far more
+      // likely to be cut off partway by a proxy timeout.
+      const batch: any[][] = [];
+      // A uuid repeated inside ONE multi-row upsert makes Postgres raise
+      // "ON CONFLICT DO UPDATE command cannot affect row a second time", so a
+      // provider listing the same game_code twice must not reach the statement.
+      const seen = new Set<string>();
 
       for (const g of gamesRes.games) {
         if (!g.game_code) continue;
         // Games carry their own status; skip anything the provider has
         // disabled rather than listing a game that will not launch.
         if (g.status != null && Number(g.status) !== 1) continue;
-        const type = this.deriveType(g, String(p.type ?? ''));
-        await this.dataSource.query(
-          `INSERT INTO casino_games
-             (uuid, name, image, type, provider, vendor_code, game_code, slug,
-              under_maintenance, game_symbol, lang, technology, has_lobby, is_mobile,
-              has_freespins, has_tables, freespin_valid_until_full_day,
-              parameters, tags, images, related_games, is_new, aggregator)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,false,$9,1,'HTML5',0,1,0,0,0,
-                   $10,'[]','[]','[]',false,'NEXUS')
-           ON CONFLICT (uuid) DO UPDATE SET
-             name       = EXCLUDED.name,
-             image      = EXCLUDED.image,
-             type       = EXCLUDED.type,
-             provider   = EXCLUDED.provider,
-             game_code  = EXCLUDED.game_code,
-             aggregator = 'NEXUS',
-             updated_at = NOW()`,
-          [
-            this.uuidFor(p.code, g.game_code),
-            g.game_name ?? g.game_code,
-            g.banner ?? '',
-            type,
-            p.name ?? p.code,
-            p.code,
-            g.game_code,
-            g.game_code,
-            g.game_code,
-            JSON.stringify({ rtp: 95, volatility: null, reels_count: null, lines_count: null }),
-          ],
-        );
-        gameCount++;
+        const uuid = this.uuidFor(p.code, g.game_code);
+        if (seen.has(uuid)) continue;
+        seen.add(uuid);
+        batch.push([
+          uuid,
+          g.game_name ?? g.game_code,
+          g.banner ?? '',
+          this.deriveType(g, String(p.type ?? '')),
+          p.name ?? p.code,
+          p.code,
+          g.game_code,
+          g.game_code,
+          g.game_code,
+          JSON.stringify({ rtp: 95, volatility: null, reels_count: null, lines_count: null }),
+        ]);
       }
+
+      for (let i = 0; i < batch.length; i += NexusService.UPSERT_CHUNK) {
+        const chunk = batch.slice(i, i + NexusService.UPSERT_CHUNK);
+        await this.upsertGames(chunk);
+        gameCount += chunk.length;
+        imported += chunk.length;
+      }
+
+      // Per provider, because pacing makes a full sync take ~30s+ and an admin
+      // proxy may time out the HTTP call long before it finishes. The sync
+      // itself carries on server-side, so this log is the record of what
+      // actually landed.
+      this.logger.log(
+        `[Nexus] synced ${p.code} (${p.type}): ${imported} game(s)`,
+      );
     }
 
     this.logger.log(
@@ -159,7 +250,17 @@ export class NexusService {
    * `users.username`. Sending anything else means bets arrive for a user we
    * cannot find.
    */
-  async getLaunchUrl(userId: number, uuid: string, lang = 'en'): Promise<{ url: string }> {
+  /** Catalog types that come from a `live` or `SB` provider. */
+  private static readonly RTP_IGNORED_TYPES = new Set([
+    'live', 'roulette', 'baccarat', 'blackjack', 'table', 'sportsbook',
+  ]);
+
+  async getLaunchUrl(
+    userId: number,
+    uuid: string,
+    lang = 'en',
+    rtp?: number,
+  ): Promise<{ url: string }> {
     const [game] = await this.dataSource.query(
       `SELECT vendor_code, game_code, type FROM casino_games
         WHERE uuid = $1 AND aggregator = 'NEXUS' LIMIT 1`,
@@ -179,6 +280,10 @@ export class NexusService {
       gameCode: game.game_code,
       lang,
       lobbyUrl: process.env.PUBLIC_SITE_URL ?? process.env.LOBBY_URL ?? 'https://winx-88.com',
+      // Nexus ignores rtp for live and sportsbook. Dropping it here rather
+      // than sending a field that does nothing keeps the request honest and
+      // the logs readable.
+      rtp: NexusService.RTP_IGNORED_TYPES.has(String(game.type)) ? undefined : rtp,
     });
     if (!res.ok) throw new BadRequestException(`Nexus launch failed: ${res.error}`);
     return { url: res.launchUrl };

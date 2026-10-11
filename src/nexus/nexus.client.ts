@@ -144,6 +144,8 @@ export class NexusClient {
     gameCode?: string;
     lang?: string;
     lobbyUrl?: string;
+    /** 0–999. Omitted or 0 means "use the player's configured RTP". */
+    rtp?: number;
   }): Promise<NexusResult<{ launchUrl: string }>> {
     try {
       const extra: Record<string, unknown> = {
@@ -152,7 +154,14 @@ export class NexusClient {
         lang: req.lang ?? 'en',
       };
       if (req.gameCode) extra.game_code = req.gameCode;
+      // Nexus REJECTS an empty lobby_url ("lobby_url is not allowed to be
+      // empty"), so send it only when there is one.
       if (req.lobbyUrl) extra.lobby_url = req.lobbyUrl;
+      // Clamped to the documented range; 0 and below mean "leave it to the
+      // player's configured RTP", which is the field being absent.
+      if (Number.isFinite(req.rtp) && (req.rtp as number) > 0) {
+        extra.rtp = Math.min(Math.floor(req.rtp as number), 999);
+      }
 
       const data = await this.post('game_launch', extra);
       const err = this.failure(data);

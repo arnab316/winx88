@@ -59,8 +59,21 @@ export class NexusController {
    */
   @UseGuards(JwtAuthGuard, ActiveAccountGuard)
   @Get('launch')
-  launch(@Req() req: any, @Query('uuid') uuid: string, @Query('lang') lang?: string) {
-    return this.nexus.getLaunchUrl(req.user.sub, uuid, lang ?? 'en');
+  launch(
+    @Req() req: any,
+    @Query('uuid') uuid: string,
+    @Query('lang') lang?: string,
+    @Query('rtp') rtp?: string,
+  ) {
+    // Optional per-launch RTP override. Left off, Nexus uses the RTP configured
+    // for that player in the agent panel, which is the normal case.
+    const n = Number(rtp);
+    return this.nexus.getLaunchUrl(
+      req.user.sub,
+      uuid,
+      lang ?? 'en',
+      Number.isFinite(n) && n > 0 ? n : undefined,
+    );
   }
 
   /**
