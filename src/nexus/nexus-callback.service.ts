@@ -15,19 +15,33 @@ import { WalletGateway } from '../wallet/wallet.gateway';
  *     treat the call as failed and retry — after we have already taken the
  *     money. Errors are `{ status: 0, msg }`, never thrown.
  *
- *  2. A REPLAYED txn_id must return the ORIGINAL balance with status 1, not an
- *     error. Providers retry on timeout, and the retry has to look identical to
- *     the first call or their ledger and ours diverge. (The OroPlay handler
- *     returns an error here; Palace gets it right. We follow Palace.)
+ *  2. A REPLAYED transaction must return the ORIGINAL balance with status 1,
+ *     not an error. Providers retry on timeout, and the retry has to look
+ *     identical to the first call or their ledger and ours diverge. (The
+ *     OroPlay handler returns an error here; Palace gets it right. We follow
+ *     Palace.)
  *
  * The unique index — not the pre-SELECT — is what actually prevents a double
  * debit: two concurrent retries both pass the SELECT, and only the constraint
  * stops the second write.
  *
- * That key is (txn_id, txn_type), NOT txn_id alone. Nexus reuses the coupon id
- * as txn_id and sends the bet as txn_type 'debit' and the settlement later as
- * 'credit' with the SAME id, so a txn_id-only key silently swallows every
- * sportsbook win as a replay.
+ * The key is (COALESCE(txn_id_v2, txn_id), txn_type):
+ *
+ *  - `txn_id_v2` is unique PER TRANSACTION. A bet can pay out over several
+ *    inner spins (tumbling wins, free rounds, the closing collect), each sent
+ *    separately, and only this field tells them apart. Keying on the round id
+ *    pays the first win of a round and silently swallows the rest.
+ *  - `txn_id` is the fallback. It carries the round id until 2026-10-15, the
+ *    per-transaction value from then, and is all that remains once Nexus
+ *    removes txn_id_v2 on 2026-10-31.
+ *  - `txn_type` keeps the key correct for rows written before txn_id_v2 was
+ *    stored, where sportsbook shares one coupon id between its 'debit' and its
+ *    'credit'.
+ *
+ * Answers must also be fast: Nexus gives the site 5 seconds, and treats a
+ * timeout, a network error or any non-2xx as UNKNOWN — it keeps the
+ * transaction settled on its side and may send it again with the same
+ * txn_id_v2, which is exactly what rule 2 and the unique index are for.
  */
 
 /** Error strings Nexus documents / expects back. */
@@ -252,11 +266,20 @@ export class NexusCallbackService {
     }
 
     const txnId = String(g.txn_id ?? '').trim();
-    // Nexus reuses the COUPON id as txn_id and separates the legs with
-    // txn_type ('debit' = bet, 'credit' = settlement). The dedup key is the
-    // PAIR — on txn_id alone every settlement looks like a replay of its own
-    // bet and the player is never paid. Normalised to match the unique index
-    // uq_nexus_txn_id_kind, which is on lower(COALESCE(txn_type,'')).
+    // `txn_id_v2` is the only field Nexus guarantees unique PER TRANSACTION.
+    //
+    // One bet can pay out over several inner spins (tumbling wins, free rounds,
+    // the closing collect), and every one arrives as its own transaction
+    // sharing the bet's round id. Until 2026-10-15 `txn_id` IS that round id,
+    // so keying on it drops the second and later wins of a round as replays.
+    // From 2026-10-15 `txn_id` carries this same per-transaction value, and
+    // from 2026-10-31 `txn_id_v2` is removed — so preferring v2 and falling
+    // back to txn_id is correct before, during and after that change.
+    const txnIdV2 = String(g.txn_id_v2 ?? '').trim();
+    const dedupId = txnIdV2 || txnId;
+    // txn_type stays in the key for rows written before txn_id_v2 existed,
+    // where sportsbook shares one coupon id between its debit and its credit.
+    // Matches the unique index uq_nexus_txn_dedup.
     const txnKind = String(g.txn_type ?? '').trim().toLowerCase();
     if (!txnId) {
       this.logger.warn(
@@ -279,14 +302,15 @@ export class NexusCallbackService {
       // ── Replay? Answer with the balance we recorded the first time. ──
       const prior = await qr.query(
         `SELECT balance_after FROM nexus_transactions
-          WHERE txn_id = $1 AND lower(COALESCE(txn_type, '')) = $2
+          WHERE COALESCE(txn_id_v2, txn_id) = $1
+            AND lower(COALESCE(txn_type, '')) = $2
           LIMIT 1`,
-        [txnId, txnKind],
+        [dedupId, txnKind],
       );
       if (prior.length) {
         await qr.rollbackTransaction();
         this.logger.log(
-          `[Nexus] duplicate txn_id=${txnId} kind=${txnKind || '-'} — replaying stored balance`,
+          `[Nexus] duplicate txn=${dedupId} kind=${txnKind || '-'} — replaying stored balance`,
         );
         return { status: 1, user_balance: this.money(prior[0].balance_after) };
       }
@@ -344,13 +368,14 @@ export class NexusCallbackService {
       try {
         const inserted = await qr.query(
           `INSERT INTO nexus_transactions
-             (txn_id, round_id, user_id, user_code, game_type, provider_code, game_code,
+             (txn_id, txn_id_v2, round_id, user_id, user_code, game_type, provider_code, game_code,
               type, txn_type, bet_money, win_money, amount,
               balance_before, balance_after, raw)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
            RETURNING id`,
           [
             txnId,
+            txnIdV2 || null,
             g.round_id != null ? String(g.round_id) : null,
             userId,
             userCode,
@@ -376,12 +401,13 @@ export class NexusCallbackService {
           await qr.rollbackTransaction();
           const [row] = await this.dataSource.query(
             `SELECT balance_after FROM nexus_transactions
-              WHERE txn_id = $1 AND lower(COALESCE(txn_type, '')) = $2
+              WHERE COALESCE(txn_id_v2, txn_id) = $1
+                AND lower(COALESCE(txn_type, '')) = $2
               LIMIT 1`,
-            [txnId, txnKind],
+            [dedupId, txnKind],
           );
           this.logger.log(
-            `[Nexus] race on txn_id=${txnId} kind=${txnKind || '-'} — returning winner's balance`,
+            `[Nexus] race on txn=${dedupId} kind=${txnKind || '-'} — returning winner's balance`,
           );
           return { status: 1, user_balance: this.money(row?.balance_after ?? before) };
         }
