@@ -1,6 +1,7 @@
 import { Injectable, Logger, NotFoundException, BadRequestException } from '@nestjs/common';
 import { DataSource } from 'typeorm';
 import { NexusClient } from './nexus.client';
+import { GameCurationService } from './game-curation.service';
 
 /**
  * Nexus catalog sync + game launch.
@@ -18,6 +19,7 @@ export class NexusService {
   constructor(
     private readonly dataSource: DataSource,
     private readonly client: NexusClient,
+    private readonly curation: GameCurationService,
   ) {}
 
   /**
@@ -68,16 +70,16 @@ export class NexusService {
   /** Games per upsert statement. 10 params each, well inside Postgres' limit. */
   private static readonly UPSERT_CHUNK = 200;
 
-  /** One multi-row upsert. Each row is the 10 params the column list expects. */
+  /** One multi-row upsert. Each row is the 11 params the column list expects. */
   private async upsertGames(rows: any[][]): Promise<void> {
     if (!rows.length) return;
-    const COLS = 10;
+    const COLS = 11;
     const values = rows
       .map((_, r) => {
         const b = r * COLS;
         return (
           `($${b + 1},$${b + 2},$${b + 3},$${b + 4},$${b + 5},$${b + 6},$${b + 7},$${b + 8},` +
-          `false,$${b + 9},1,'HTML5',0,1,0,0,0,$${b + 10},'[]','[]','[]',false,'NEXUS')`
+          `false,$${b + 9},1,'HTML5',0,1,0,0,0,$${b + 10},'[]','[]','[]',false,'NEXUS',$${b + 11})`
         );
       })
       .join(',');
@@ -87,7 +89,7 @@ export class NexusService {
          (uuid, name, image, type, provider, vendor_code, game_code, slug,
           under_maintenance, game_symbol, lang, technology, has_lobby, is_mobile,
           has_freespins, has_tables, freespin_valid_until_full_day,
-          parameters, tags, images, related_games, is_new, aggregator)
+          parameters, tags, images, related_games, is_new, aggregator, derived_type)
        VALUES ${values}
        ON CONFLICT (uuid) DO UPDATE SET
          name       = EXCLUDED.name,
@@ -96,6 +98,9 @@ export class NexusService {
          provider   = EXCLUDED.provider,
          game_code  = EXCLUDED.game_code,
          aggregator = 'NEXUS',
+         -- What the sync itself worked out, kept apart from the curated
+         -- type column so removing a rule or override can restore it.
+         derived_type = EXCLUDED.derived_type,
          updated_at = NOW()`,
       rows.flat(),
     );
@@ -168,6 +173,9 @@ export class NexusService {
       throw new BadRequestException(`Nexus provider_list failed: ${provRes.error}`);
     }
 
+    // Loaded once for the whole run, not per game.
+    const curation = await this.curation.load();
+
     const skipped: string[] = [];
     let gameCount = 0;
     let providerCount = 0;
@@ -205,17 +213,33 @@ export class NexusService {
         const uuid = this.uuidFor(p.code, g.game_code);
         if (seen.has(uuid)) continue;
         seen.add(uuid);
+
+        // What the sync derives, before curation.
+        const derivedType = this.deriveType(g, String(p.type ?? ''));
+        const providerName = g.game_name ?? g.game_code;
+        // Curation is resolved HERE, so the upsert writes the final values and
+        // an admin's work survives every re-sync.
+        const target = {
+          uuid,
+          aggregator: 'NEXUS',
+          providerCode: p.code,
+          name: providerName,
+          gameCode: g.game_code,
+          derivedType,
+        };
+
         batch.push([
           uuid,
-          g.game_name ?? g.game_code,
+          this.curation.resolveName(curation, uuid, providerName),
           g.banner ?? '',
-          this.deriveType(g, String(p.type ?? '')),
+          this.curation.resolveType(curation, target),
           p.name ?? p.code,
           p.code,
           g.game_code,
           g.game_code,
           g.game_code,
           JSON.stringify({ rtp: 95, volatility: null, reels_count: null, lines_count: null }),
+          derivedType,
         ]);
       }
 
@@ -323,6 +347,75 @@ export class NexusService {
   }
 
   /** Admin view: what is in the catalog from Nexus, by provider. */
+  /**
+   * Catalog rows for the curation screen, each carrying its curation state:
+   * what the sync derived, what it is now, and whether a human pinned it.
+   */
+  async listForCuration(q: {
+    provider?: string;
+    type?: string;
+    search?: string;
+    page: number;
+    limit: number;
+  }) {
+    const limit = Math.min(Math.max(q.limit, 1), 200);
+    const offset = (Math.max(q.page, 1) - 1) * limit;
+    const where: string[] = [`g.aggregator = 'NEXUS'`];
+    const params: any[] = [];
+    if (q.provider) {
+      params.push(q.provider);
+      where.push(`g.vendor_code = $${params.length}`);
+    }
+    if (q.type) {
+      params.push(q.type);
+      where.push(`g.type = $${params.length}`);
+    }
+    if (q.search?.trim()) {
+      params.push(`%${q.search.trim()}%`);
+      where.push(`(g.name ILIKE $${params.length} OR g.game_code ILIKE $${params.length})`);
+    }
+    const clause = `WHERE ${where.join(' AND ')}`;
+
+    const [rows, [{ total }]] = await Promise.all([
+      this.dataSource.query(
+        `SELECT g.uuid, g.name, g.game_code, g.vendor_code, g.provider, g.image,
+                g.type, COALESCE(g.derived_type, g.type) AS derived_type,
+                o.type AS override_type, o.display_name AS override_name, o.note
+           FROM casino_games g
+           LEFT JOIN casino_game_overrides o ON o.game_uuid = g.uuid
+           ${clause}
+          ORDER BY g.provider, g.name
+          LIMIT $${params.length + 1} OFFSET $${params.length + 2}`,
+        [...params, limit, offset],
+      ),
+      this.dataSource.query(
+        `SELECT COUNT(*)::int AS total FROM casino_games g ${clause}`,
+        params,
+      ),
+    ]);
+
+    // The distinct values the screen's filters offer, so the UI never shows a
+    // category that does not exist in the catalog.
+    const [providers, types] = await Promise.all([
+      this.dataSource.query(
+        `SELECT DISTINCT vendor_code AS code, provider AS name FROM casino_games
+          WHERE aggregator = 'NEXUS' ORDER BY 2`,
+      ),
+      this.dataSource.query(
+        `SELECT DISTINCT type FROM casino_games WHERE aggregator = 'NEXUS' ORDER BY 1`,
+      ),
+    ]);
+
+    return {
+      data: rows,
+      total,
+      page: Math.max(q.page, 1),
+      limit,
+      totalPages: Math.ceil(total / limit) || 0,
+      filters: { providers, types: types.map((t: any) => t.type) },
+    };
+  }
+
   async listSynced() {
     const rows = await this.dataSource.query(
       `SELECT vendor_code AS provider_code, provider, type, COUNT(*)::int AS games

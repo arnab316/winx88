@@ -9,6 +9,7 @@ import {
 } from '@nestjs/common';
 import { NexusService } from './nexus.service';
 import { NexusClient } from './nexus.client';
+import { GameCurationService } from './game-curation.service';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { ActiveAccountGuard } from '../common/guards/active-account.guard';
@@ -22,7 +23,77 @@ export class NexusController {
   constructor(
     private readonly nexus: NexusService,
     private readonly client: NexusClient,
+    private readonly curation: GameCurationService,
   ) {}
+
+  // ── Category curation ─────────────────────────────────────────────────
+  // Rules and per-game overrides live outside the synced row, so a re-sync
+  // cannot undo them. Precedence: override → first matching rule → derived.
+
+  @UseGuards(AdminGuard)
+  @Get('admin/curation/rules')
+  listRules() {
+    return this.curation.listRules();
+  }
+
+  /** Create when `id` is absent, update when present. */
+  @UseGuards(AdminGuard)
+  @Post('admin/curation/rules')
+  saveRule(@Body() body: any) {
+    return this.curation.upsertRule(body);
+  }
+
+  /** What this rule WOULD re-file, before it does it. */
+  @UseGuards(AdminGuard)
+  @Post('admin/curation/rules/preview')
+  previewRule(@Body() body: any) {
+    return this.curation.previewRule(body);
+  }
+
+  @UseGuards(AdminGuard)
+  @Post('admin/curation/rules/delete')
+  deleteRule(@Body() body: { id: number }) {
+    return this.curation.deleteRule(Number(body?.id));
+  }
+
+  /** Pin or clear one game. Sending neither type nor name clears it. */
+  @UseGuards(AdminGuard)
+  @Post('admin/curation/override')
+  setOverride(
+    @Req() req: any,
+    @Body() body: { gameUuid: string; type?: string; displayName?: string; note?: string },
+  ) {
+    return this.curation.setOverride(body?.gameUuid, body, req.admin?.id ?? req.user?.sub);
+  }
+
+  /**
+   * Re-run rules and overrides over the catalog. No provider calls, so it is
+   * the cheap way to apply a rule change to games already imported.
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/curation/reapply')
+  reapply(@Body() body: { aggregator?: string }) {
+    return this.curation.reapply(body?.aggregator ?? 'NEXUS');
+  }
+
+  /** Catalog rows for the curation screen, with their curation state. */
+  @UseGuards(AdminGuard)
+  @Get('admin/curation/games')
+  curationGames(
+    @Query('provider') provider?: string,
+    @Query('type') type?: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.nexus.listForCuration({
+      provider,
+      type,
+      search,
+      page: Number(page) || 1,
+      limit: Number(limit) || 50,
+    });
+  }
 
   /**
    * Connectivity check. Nexus enforces an IP allowlist, so this failing with

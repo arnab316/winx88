@@ -4,6 +4,7 @@ import { NexusService } from './nexus.service';
 import { NexusController } from './nexus.controller';
 import { NexusCallbackController } from './nexus-callback.controller';
 import { NexusCallbackService } from './nexus-callback.service';
+import { GameCurationService } from './game-curation.service';
 import { AuthModule } from '../auth/auth.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { TurnoverModule } from '../turnover/turnover.module';
@@ -22,7 +23,9 @@ import { TurnoverModule } from '../turnover/turnover.module';
     TurnoverModule,
   ],
   controllers: [NexusController, NexusCallbackController],
-  providers: [NexusClient, NexusService, NexusCallbackService],
-  exports: [NexusClient, NexusService],
+  providers: [NexusClient, NexusService, NexusCallbackService, GameCurationService],
+  // Curation is catalog-wide, not Nexus-specific — exported so another
+  // aggregator's sync can resolve against the same rules.
+  exports: [NexusClient, NexusService, GameCurationService],
 })
 export class NexusModule {}
