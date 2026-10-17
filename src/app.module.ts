@@ -52,6 +52,7 @@ import { DashboardModule } from './dashboard/dashboard.module';
 import { NotificationModule } from './notification/notification.module';
 import { AdminActivityModule } from './admin-activity/admin-activity.module';
 import { GameCategoriesModule } from './game-categories/game-categories.module';
+import { AiSupportModule } from './ai-support/ai-support.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -122,6 +123,7 @@ import { GameCategoriesModule } from './game-categories/game-categories.module';
   // lands in the Track log — including endpoints added after this.
   AdminActivityModule,
   GameCategoriesModule,
+  AiSupportModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],

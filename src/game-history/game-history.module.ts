@@ -21,5 +21,8 @@ import { GameHistoryService } from './game-history.service';
   imports: [AuthModule],
   controllers: [GameHistoryController, GameHistoryAdminController],
   providers: [GameHistoryService, JwtAuthGuard, AdminGuard],
+  // Exported so AiSupportModule can reuse the unified feed rather than
+  // querying bets and transactions a second time.
+  exports: [GameHistoryService],
 })
 export class GameHistoryModule {}
