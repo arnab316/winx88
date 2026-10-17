@@ -8,6 +8,7 @@ import { GameCurationService } from './game-curation.service';
 import { AuthModule } from '../auth/auth.module';
 import { WalletModule } from '../wallet/wallet.module';
 import { TurnoverModule } from '../turnover/turnover.module';
+import { GameLibraryModule } from '../game-library/game-library.module';
 
 /**
  * Nexus GGR — seamless wallet aggregator.
@@ -21,6 +22,8 @@ import { TurnoverModule } from '../turnover/turnover.module';
     forwardRef(() => AuthModule),
     forwardRef(() => WalletModule),
     TurnoverModule,
+    // Reuses the shared catalog reader for the player-facing browse routes.
+    GameLibraryModule,
   ],
   controllers: [NexusController, NexusCallbackController],
   providers: [NexusClient, NexusService, NexusCallbackService, GameCurationService],

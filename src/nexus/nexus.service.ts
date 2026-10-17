@@ -106,6 +106,56 @@ export class NexusService {
     );
   }
 
+  /**
+   * Nexus vendors a player can browse, with live game counts.
+   *
+   * Counts come from `casino_games`, NOT from Nexus — a vendor the sync has
+   * not imported yet would otherwise show in the picker and open empty. A
+   * vendor with zero playable games is simply absent.
+   *
+   * `category` is the catalog type most of that vendor's games land in, which
+   * is what decides the tab they appear under, so a vendor curated into a new
+   * category follows automatically.
+   */
+  async listVendors(): Promise<
+    Array<{ code: string; name: string; category: string; games: number }>
+  > {
+    // Grouped by (vendor, type) first so each vendor's dominant category can
+    // be picked with ROW_NUMBER, then totalled across its types with a window.
+    // Window functions run AFTER grouping, which is what makes this legal —
+    // referencing c.provider inside the window directly is not.
+    return this.dataSource.query(
+      `SELECT code, name, category, games
+         FROM (
+           SELECT c.vendor_code                                        AS code,
+                  MAX(c.provider)                                      AS name,
+                  c.type                                               AS category,
+                  SUM(COUNT(*)) OVER (PARTITION BY c.vendor_code)::int AS games,
+                  ROW_NUMBER() OVER (PARTITION BY c.vendor_code
+                                     ORDER BY COUNT(*) DESC)           AS rn
+             FROM public.casino_games c
+            WHERE c.aggregator = 'NEXUS'
+              AND c.under_maintenance = false
+              AND c.vendor_code IS NOT NULL
+            GROUP BY c.vendor_code, c.type
+         ) t
+        WHERE rn = 1
+        ORDER BY games DESC, name`,
+    );
+  }
+
+  /**
+   * The same vendors keyed by category, mirroring /oroplay/vendors/grouped so
+   * the player panel's existing vendor picker can render either source without
+   * a second code path.
+   */
+  async listVendorsGrouped(): Promise<Record<string, any[]>> {
+    const rows = await this.listVendors();
+    const out: Record<string, any[]> = {};
+    for (const v of rows) (out[v.category] ??= []).push(v);
+    return out;
+  }
+
   /** Stable, collision-proof id for a Nexus game inside the shared catalog. */
   private uuidFor(providerCode: string, gameCode: string): string {
     return `NEXUS_${providerCode}_${gameCode}`.slice(0, 190);

@@ -13,6 +13,8 @@ import { GameCurationService } from './game-curation.service';
 import { AdminGuard } from '../common/guards/admin.guard';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { ActiveAccountGuard } from '../common/guards/active-account.guard';
+import { OptionalJwtAuthGuard } from '../common/guards/optional-jwt-auth.guard';
+import { GameLibraryService } from '../game-library/game-library.service';
 
 /**
  * Admin + player routes for Nexus. The seamless money endpoint is separate
@@ -24,7 +26,72 @@ export class NexusController {
     private readonly nexus: NexusService,
     private readonly client: NexusClient,
     private readonly curation: GameCurationService,
+    private readonly library: GameLibraryService,
   ) {}
+
+  // ── Player-facing browse ──────────────────────────────────────────────
+  // Public on purpose: a visitor must be able to look at the lobby before
+  // they have an account. OptionalJwtAuthGuard attaches the player when a
+  // token is present and never 401s, which is what makes `isFavourite` real
+  // for a signed-in player and simply false for everyone else.
+
+  /**
+   * Every Nexus vendor that has playable games, with live counts.
+   *
+   *   GET /nexus/vendors
+   */
+  @UseGuards(OptionalJwtAuthGuard)
+  @Get('vendors')
+  vendors() {
+    return this.nexus.listVendors();
+  }
+
+  /**
+   * The same list keyed by category, matching the shape of
+   * /oroplay/vendors/grouped so the existing vendor picker can render it.
+   *
+   *   GET /nexus/vendors/grouped
+   */
+  @UseGuards(OptionalJwtAuthGuard)
+  @Get('vendors/grouped')
+  vendorsGrouped() {
+    return this.nexus.listVendorsGrouped();
+  }
+
+  /**
+   * Nexus games, filtered by vendor and/or category.
+   *
+   *   GET /nexus/games?provider=PRAGMATIC&page=1&limit=24
+   *   GET /nexus/games?type=roulette
+   *   GET /nexus/games?provider=PGSOFT&search=fortune
+   *
+   * Delegates to the shared catalog reader rather than repeating the query,
+   * so the identity triple (kind / providerRef / gameCode) is derived in one
+   * place — favourites and continue-playing key on it, and a second
+   * implementation would eventually disagree with the first.
+   */
+  @UseGuards(OptionalJwtAuthGuard)
+  @Get('games')
+  games(
+    @Req() req: any,
+    @Query('provider') provider?: string,
+    @Query('providerCode') providerCode?: string,
+    @Query('type') type?: string,
+    @Query('search') search?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.library.browseCatalog(req.user?.sub ?? null, {
+      aggregator: 'NEXUS',
+      // Accept either spelling: the vendor list calls it `code`, the upstream
+      // API calls it `provider_code`.
+      provider: provider || providerCode,
+      type,
+      search,
+      page: Number(page) || 1,
+      limit: Number(limit) || 24,
+    });
+  }
 
   // ── Category curation ─────────────────────────────────────────────────
   // Rules and per-game overrides live outside the synced row, so a re-sync

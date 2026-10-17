@@ -3077,7 +3077,551 @@
       ]
     },
     {
-      "name": "06 · Upstream NexusGGR (direct)",
+      "name": "06 · Player browse (public)",
+      "description": "Browsing the catalog from the player app. **Public** — a visitor must be able to look at the lobby before they have an account, so these never 401.\n\nSend `Authorization` (the header is there, disabled) and `isFavourite` becomes real for that player; omit it and every game is simply `false`.\n\n`kind` / `providerRef` / `gameCode` are derived **server-side** from `aggregator`. Do not rebuild that triple in the client — favourites and continue-playing key on it, and a locally-guessed one will not match.",
+      "item": [
+        {
+          "name": "GET nexus vendors",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{playerToken}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nexus/vendors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nexus",
+                "vendors"
+              ]
+            },
+            "description": "Every Nexus vendor that has playable games, with live counts.\n\nCounts come from `casino_games`, **not** from Nexus — a vendor the sync has not imported would otherwise show in the picker and open empty. That is why this returns **27**, not 28: `SPORTSBOOK` has no game list."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured, trimmed to 5 of 27)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{playerToken}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/nexus/vendors",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "nexus",
+                    "vendors"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "[\n  {\n    \"code\": \"PRAGMATIC\",\n    \"name\": \"Pragmatic Play\",\n    \"category\": \"slots\",\n    \"games\": 614\n  },\n  {\n    \"code\": \"AMUSNET\",\n    \"name\": \"AMUSNET\",\n    \"category\": \"slots\",\n    \"games\": 347\n  },\n  {\n    \"code\": \"PLAYNGO\",\n    \"name\": \"Playngo\",\n    \"category\": \"slots\",\n    \"games\": 317\n  },\n  {\n    \"code\": \"REELKINGDOM\",\n    \"name\": \"Reel Kingdom\",\n    \"category\": \"slots\",\n    \"games\": 216\n  },\n  {\n    \"code\": \"PP_LIVE_PRO\",\n    \"name\": \"Pragmatic Play Live - Pro\",\n    \"category\": \"blackjack\",\n    \"games\": 212\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "GET nexus vendors grouped",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{playerToken}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nexus/vendors/grouped",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nexus",
+                "vendors",
+                "grouped"
+              ]
+            },
+            "description": "The same vendors keyed by category, matching the shape of `/oroplay/vendors/grouped` so the existing vendor picker renders either source with no second code path.\n\n**Known quirk:** grouping uses each vendor's *dominant* category, so `PP_LIVE_PRO` lands under `blackjack` (131 of its 212 games) rather than a single live bucket."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured, 2 per group)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{playerToken}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/nexus/vendors/grouped",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "nexus",
+                    "vendors",
+                    "grouped"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"slots\": [\n    {\n      \"code\": \"PRAGMATIC\",\n      \"name\": \"Pragmatic Play\",\n      \"category\": \"slots\",\n      \"games\": 614\n    },\n    {\n      \"code\": \"AMUSNET\",\n      \"name\": \"AMUSNET\",\n      \"category\": \"slots\",\n      \"games\": 347\n    }\n  ],\n  \"blackjack\": [\n    {\n      \"code\": \"PP_LIVE_PRO\",\n      \"name\": \"Pragmatic Play Live - Pro\",\n      \"category\": \"blackjack\",\n      \"games\": 212\n    }\n  ],\n  \"fishing\": [\n    {\n      \"code\": \"FISHHUNTER\",\n      \"name\": \"Fish Hunter\",\n      \"category\": \"fishing\",\n      \"games\": 9\n    }\n  ],\n  \"instant\": [\n    {\n      \"code\": \"SPRIBE\",\n      \"name\": \"SPRIBE\",\n      \"category\": \"instant\",\n      \"games\": 9\n    }\n  ]\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET nexus games by provider",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{playerToken}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nexus/games?provider=PRAGMATIC&page=1&limit=24",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nexus",
+                "games"
+              ],
+              "query": [
+                {
+                  "key": "provider",
+                  "value": "PRAGMATIC"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "24"
+                }
+              ]
+            },
+            "description": "Nexus games for one vendor. `providerCode` is accepted as an alias for `provider`.\n\nDelegates to the shared catalog reader rather than repeating the query, so the identity triple is derived in exactly one place."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured, limit=2)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{playerToken}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/nexus/games?provider=PRAGMATIC&page=1&limit=24",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "nexus",
+                    "games"
+                  ],
+                  "query": [
+                    {
+                      "key": "provider",
+                      "value": "PRAGMATIC"
+                    },
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "24"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"data\": [\n    {\n      \"uuid\": \"NEXUS_PRAGMATIC_vs20wildparty\",\n      \"name\": \"3 Buzzing Wilds\",\n      \"image\": \"https://assets.wkuytxcg8.com/apps/game-assets/vs20wildparty/vs20wildparty_800x600_NB.avif\",\n      \"provider\": \"Pragmatic Play\",\n      \"type\": \"slots\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"PRAGMATIC\",\n      \"gameCode\": \"vs20wildparty\",\n      \"isFavourite\": false\n    },\n    {\n      \"uuid\": \"NEXUS_PRAGMATIC_vswaysmonkey\",\n      \"name\": \"3 Dancing Monkeys\",\n      \"image\": \"https://assets.wkuytxcg8.com/apps/game-assets/vswaysmonkey/vswaysmonkey_800x600_NB.avif\",\n      \"provider\": \"Pragmatic Play\",\n      \"type\": \"slots\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"PRAGMATIC\",\n      \"gameCode\": \"vswaysmonkey\",\n      \"isFavourite\": false\n    }\n  ],\n  \"total\": 614,\n  \"page\": 1,\n  \"limit\": 2,\n  \"totalPages\": 307\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET nexus games by category",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{playerToken}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nexus/games?type=roulette&limit=24",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nexus",
+                "games"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "roulette"
+                },
+                {
+                  "key": "limit",
+                  "value": "24"
+                }
+              ]
+            },
+            "description": "Filter by catalog category instead of vendor. Categories are admin-curatable, so this follows whatever Game Categories says."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{playerToken}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/nexus/games?type=roulette&limit=24",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "nexus",
+                    "games"
+                  ],
+                  "query": [
+                    {
+                      "key": "type",
+                      "value": "roulette"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "24"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"data\": [\n    {\n      \"uuid\": \"NEXUS_PP_LIVE_PRO_1hl323e1lxuqdrkr\",\n      \"name\": \"AUTO_MEGA_ROULETTE\",\n      \"image\": \"https://images.gscplusmd.com/statics/production/publics/images/games/1/1006/LIVE_CASINO/210.png\",\n      \"provider\": \"Pragmatic Play Live - Pro\",\n      \"type\": \"roulette\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"PP_LIVE_PRO\",\n      \"gameCode\": \"1hl323e1lxuqdrkr\",\n      \"isFavourite\": false\n    },\n    {\n      \"uuid\": \"NEXUS_PP_LIVE_PRO_5bzl2835s5ruvweg\",\n      \"name\": \"AUTO_ROULETTE\",\n      \"image\": \"https://images.gscplusmd.com/statics/production/publics/images/games/1/1006/LIVE_CASINO/225.png\",\n      \"provider\": \"Pragmatic Play Live - Pro\",\n      \"type\": \"roulette\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"PP_LIVE_PRO\",\n      \"gameCode\": \"5bzl2835s5ruvweg\",\n      \"isFavourite\": false\n    }\n  ],\n  \"total\": 27,\n  \"page\": 1,\n  \"limit\": 2,\n  \"totalPages\": 14\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET nexus games search",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{playerToken}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nexus/games?provider=PGSOFT&search=fortune&limit=24",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nexus",
+                "games"
+              ],
+              "query": [
+                {
+                  "key": "provider",
+                  "value": "PGSOFT"
+                },
+                {
+                  "key": "search",
+                  "value": "fortune"
+                },
+                {
+                  "key": "limit",
+                  "value": "24"
+                }
+              ]
+            },
+            "description": "Name search, combinable with `provider` and `type`."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{playerToken}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/nexus/games?provider=PGSOFT&search=fortune&limit=24",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "nexus",
+                    "games"
+                  ],
+                  "query": [
+                    {
+                      "key": "provider",
+                      "value": "PGSOFT"
+                    },
+                    {
+                      "key": "search",
+                      "value": "fortune"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "24"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"data\": [\n    {\n      \"uuid\": \"NEXUS_PGSOFT_double-fortune\",\n      \"name\": \"Double Fortune\",\n      \"image\": \"https://assets.wkuytxcg8.com/img/pgsoft/double-fortune.jpg\",\n      \"provider\": \"PG Soft\",\n      \"type\": \"slots\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"PGSOFT\",\n      \"gameCode\": \"double-fortune\",\n      \"isFavourite\": false\n    },\n    {\n      \"uuid\": \"NEXUS_PGSOFT_farmstead-fort\",\n      \"name\": \"Farmstead Fortune\",\n      \"image\": \"https://assets.wkuytxcg8.com/img/pgsoft/farmstead-fort.jpg\",\n      \"provider\": \"PG Soft\",\n      \"type\": \"slots\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"PGSOFT\",\n      \"gameCode\": \"farmstead-fort\",\n      \"isFavourite\": false\n    }\n  ],\n  \"total\": 14,\n  \"page\": 1,\n  \"limit\": 2,\n  \"totalPages\": 7\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET catalog games (all aggregators)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{playerToken}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/games?type=slots&page=1&limit=24",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "games"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "slots"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "24"
+                }
+              ]
+            },
+            "description": "The same reader without the Nexus filter — Palace and Nexus games in one list. `type=slots` is **4,848** games on dev: 3,264 from Nexus plus 1,584 from Palace.\n\nAdd `aggregator=NEXUS` to narrow, which is all `/nexus/games` does."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured, limit=2)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{playerToken}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/catalog/games?type=slots&page=1&limit=24",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "catalog",
+                    "games"
+                  ],
+                  "query": [
+                    {
+                      "key": "type",
+                      "value": "slots"
+                    },
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "24"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"data\": [\n    {\n      \"uuid\": \"NEXUS_EGT_eg.10actiondiamond\",\n      \"name\": \"10 Action Diamond\",\n      \"image\": \"https://assets.bd34fgabh.com/img/egt/10-action-diamond.png\",\n      \"provider\": \"EGT DIGITAL\",\n      \"type\": \"slots\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"EGT\",\n      \"gameCode\": \"eg.10actiondiamond\",\n      \"isFavourite\": false\n    },\n    {\n      \"uuid\": \"NEXUS_AMUSNET_an.10alebrijeseternal\",\n      \"name\": \"10 Alebrijes Eternal\",\n      \"image\": \"https://amusnet.com/_next/image?url=https%3A%2F%2Fbackend.careers-amusnet.com%2F%2Fsites%2Fdefault%2Ffiles%2Fgames%2F5174.webp&w=3840&q=100\",\n      \"provider\": \"AMUSNET\",\n      \"type\": \"slots\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"AMUSNET\",\n      \"gameCode\": \"an.10alebrijeseternal\",\n      \"isFavourite\": false\n    }\n  ],\n  \"total\": 4848,\n  \"page\": 1,\n  \"limit\": 2,\n  \"totalPages\": 2424\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET catalog providers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{playerToken}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/providers?type=slots",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "providers"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "slots"
+                }
+              ]
+            },
+            "description": "Providers that actually have playable games of that category, for a filter row."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured, trimmed to 5)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{playerToken}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/catalog/providers?type=slots",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "catalog",
+                    "providers"
+                  ],
+                  "query": [
+                    {
+                      "key": "type",
+                      "value": "slots"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "[\n  {\n    \"code\": \"PRAGMATIC\",\n    \"name\": \"Pragmatic Play\",\n    \"games\": 614\n  },\n  {\n    \"code\": \"AMUSNET\",\n    \"name\": \"AMUSNET\",\n    \"games\": 347\n  },\n  {\n    \"code\": \"PLAYNGO\",\n    \"name\": \"Playngo\",\n    \"games\": 317\n  },\n  {\n    \"code\": \"REELKINGDOM\",\n    \"name\": \"Reel Kingdom\",\n    \"games\": 216\n  },\n  {\n    \"code\": \"EGT\",\n    \"name\": \"EGT DIGITAL\",\n    \"games\": 163\n  }\n]"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "07 · Upstream NexusGGR (direct)",
       "description": "Calling `api.nexusggr.com` yourself, for debugging. One endpoint, one POST, `method` selects the operation. **Force IPv4** — Nexus rejects an IPv6 egress even when your IPv4 address is whitelisted.",
       "item": [
         {
