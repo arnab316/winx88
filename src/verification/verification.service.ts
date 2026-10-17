@@ -147,8 +147,8 @@ export class VerificationService {
         `INSERT INTO user_verifications
            (user_id, document_type, document_number, expiry_date,
             front_image_url, back_image_url, selfie_image_url,
-            status, submission_count)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', 1)
+            status, submission_count, last_submitted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING', 1, NOW())
          RETURNING id, document_type, document_number, expiry_date,
                    status, submission_count, created_at`,
         [
@@ -189,6 +189,10 @@ export class VerificationService {
            reviewed_by_admin_id = NULL,
            reviewed_at        = NULL,
            submission_count   = submission_count + 1,
+           -- created_at is deliberately left alone: it is when the RECORD was
+           -- created. This is when documents were last SENT, and it is what
+           -- the admin queue shows and sorts on.
+           last_submitted_at  = NOW(),
            updated_at         = NOW()
        WHERE user_id = $7
        RETURNING id, document_type, document_number, expiry_date,
@@ -298,12 +302,13 @@ export class VerificationService {
               adm.name  AS decided_by_name,
               adm.email AS decided_by_email,
               uv.created_at,
+              uv.last_submitted_at,
               uv.updated_at
        FROM user_verifications uv
        JOIN users u ON u.id = uv.user_id
        LEFT JOIN admin_users adm ON adm.id = uv.reviewed_by_admin_id
        ${where}
-       ORDER BY uv.created_at DESC
+       ORDER BY uv.last_submitted_at DESC
        LIMIT $1 OFFSET $2`,
       params,
     );
@@ -374,11 +379,11 @@ export class VerificationService {
               uv.reviewed_at,
               adm.name  AS decided_by_name,
               adm.email AS decided_by_email,
-              uv.created_at, uv.updated_at
+              uv.created_at, uv.last_submitted_at, uv.updated_at
        FROM user_verifications uv
        LEFT JOIN admin_users adm ON adm.id = uv.reviewed_by_admin_id
        WHERE uv.user_id = $1
-       ORDER BY uv.created_at DESC`,
+       ORDER BY uv.last_submitted_at DESC`,
       [userId],
     );
 
