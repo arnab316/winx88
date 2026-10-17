@@ -249,4 +249,109 @@ export class GameLibraryService {
       total: rows.length,
     };
   }
+
+  /**
+   * Browse the shared game catalog (`casino_games`).
+   *
+   * The player panel previously had no way to list the catalog: game-content
+   * serves only CMS-curated rows, and the category chips read OroPlay vendor
+   * groups. Neither can show the 3,494 games the Nexus sync imports, which is
+   * what this is for.
+   *
+   * `kind` is derived from `aggregator`, not stored, and must match the triple
+   * favourites and continue-playing are keyed by — otherwise a game favourited
+   * from this list would not match itself anywhere else:
+   *   NEXUS  -> (NEXUS, vendor_code,        game_code)
+   *   PALACE -> (SLOT,  provider_id::text,  game_symbol)
+   */
+  async browseCatalog(
+    userId: number | null,
+    q: {
+      type?: string;
+      provider?: string;
+      search?: string;
+      aggregator?: string;
+      page?: number;
+      limit?: number;
+    },
+  ) {
+    const limit = Math.min(Math.max(Number(q.limit) || 24, 1), 100);
+    const page = Math.max(Number(q.page) || 1, 1);
+    const offset = (page - 1) * limit;
+
+    const where: string[] = ['c.under_maintenance = false'];
+    const params: any[] = [];
+    const add = (sql: string, v: any) => {
+      params.push(v);
+      where.push(sql.replace('?', `$${params.length}`));
+    };
+    if (q.type) add('c.type = ?', q.type);
+    if (q.provider) add('c.vendor_code = ?', q.provider);
+    if (q.aggregator) add('c.aggregator = ?', q.aggregator);
+    if (q.search?.trim()) add('c.name ILIKE ?', `%${q.search.trim()}%`);
+    const clause = `WHERE ${where.join(' AND ')}`;
+
+    // Signed out, every game is simply not a favourite — no join, no user id in
+    // the query at all.
+    const favJoin = userId
+      ? `LEFT JOIN public.user_favourite_games f
+             ON f.user_id = $${params.length + 1}
+            AND f.kind = CASE WHEN c.aggregator = 'NEXUS' THEN 'NEXUS' ELSE 'SLOT' END
+            AND f.provider_ref = CASE WHEN c.aggregator = 'NEXUS'
+                                      THEN c.vendor_code ELSE c.provider_id::text END
+            AND f.game_code = CASE WHEN c.aggregator = 'NEXUS'
+                                   THEN c.game_code ELSE c.game_symbol END`
+      : '';
+    const favSelect = userId ? '(f.user_id IS NOT NULL)' : 'false';
+    const favParams = userId ? [userId] : [];
+
+    const [rows, [{ total }]] = await Promise.all([
+      this.dataSource.query(
+        `SELECT c.uuid, c.name, c.image, c.provider, c.type, c.aggregator,
+                CASE WHEN c.aggregator = 'NEXUS' THEN 'NEXUS' ELSE 'SLOT' END AS kind,
+                CASE WHEN c.aggregator = 'NEXUS'
+                     THEN c.vendor_code ELSE c.provider_id::text END          AS "providerRef",
+                CASE WHEN c.aggregator = 'NEXUS'
+                     THEN c.game_code ELSE c.game_symbol END                  AS "gameCode",
+                ${favSelect} AS "isFavourite"
+           FROM public.casino_games c
+           ${favJoin}
+           ${clause}
+          ORDER BY c.name
+          LIMIT $${params.length + favParams.length + 1}
+         OFFSET $${params.length + favParams.length + 2}`,
+        [...params, ...favParams, limit, offset],
+      ),
+      this.dataSource.query(
+        `SELECT COUNT(*)::int AS total FROM public.casino_games c ${clause}`,
+        params,
+      ),
+    ]);
+
+    return {
+      data: rows,
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit) || 0,
+    };
+  }
+
+  /** Providers that actually have playable games, for a filter row. */
+  async browseProviders(type?: string) {
+    const params: any[] = [];
+    let clause = 'WHERE c.under_maintenance = false AND c.vendor_code IS NOT NULL';
+    if (type) {
+      params.push(type);
+      clause += ` AND c.type = $1`;
+    }
+    return this.dataSource.query(
+      `SELECT c.vendor_code AS code, MAX(c.provider) AS name, COUNT(*)::int AS games
+         FROM public.casino_games c ${clause}
+        GROUP BY c.vendor_code
+        ORDER BY 3 DESC`,
+      params,
+    );
+  }
+
 }
