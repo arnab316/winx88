@@ -112,6 +112,68 @@ describe('AI Support (integration)', () => {
     });
   });
 
+  describe('deposit tracking by transaction id', () => {
+    it("finds the customer's own deposit by its TRX id", async () => {
+      const [d] = await ds.query(
+        `SELECT transaction_number FROM deposits
+          WHERE user_id = $1 AND transaction_number IS NOT NULL
+          ORDER BY id DESC LIMIT 1`,
+        [userId],
+      );
+      if (!d) return; // this customer has no manual deposit to look up
+      const res = await auth(
+        `/internal/ai-support/deposits/by-transaction/${encodeURIComponent(d.transaction_number)}`,
+      ).expect(200);
+      expect(res.body.found).toBe(true);
+      expect(res.body.total).toBeGreaterThan(0);
+      expect(res.body.data[0].transactionNumber).toBe(d.transaction_number);
+    });
+
+    it('matches case-insensitively and ignores surrounding spaces', async () => {
+      const [d] = await ds.query(
+        `SELECT transaction_number FROM deposits
+          WHERE user_id = $1 AND transaction_number ~ '[a-zA-Z]'
+          ORDER BY id DESC LIMIT 1`,
+        [userId],
+      );
+      if (!d) return;
+      const messy = `  ${String(d.transaction_number).toLowerCase()}  `;
+      const res = await auth(
+        `/internal/ai-support/deposits/by-transaction/${encodeURIComponent(messy)}`,
+      ).expect(200);
+      expect(res.body.found).toBe(true);
+    });
+
+    it("will not find another customer's TRX id", async () => {
+      const [other] = await ds.query(
+        `SELECT transaction_number FROM deposits
+          WHERE user_id <> $1 AND transaction_number IS NOT NULL
+          ORDER BY id DESC LIMIT 1`,
+        [userId],
+      );
+      if (!other) return;
+      const res = await auth(
+        `/internal/ai-support/deposits/by-transaction/${encodeURIComponent(other.transaction_number)}`,
+      ).expect(200);
+      expect(res.body.found).toBe(false);
+      expect(res.body.total).toBe(0);
+    });
+
+    it('filters the list by transactionNumber too', async () => {
+      const [d] = await ds.query(
+        `SELECT transaction_number FROM deposits
+          WHERE user_id = $1 AND transaction_number IS NOT NULL
+          ORDER BY id DESC LIMIT 1`,
+        [userId],
+      );
+      if (!d) return;
+      const res = await auth(
+        `/internal/ai-support/deposits?transactionNumber=${encodeURIComponent(d.transaction_number)}`,
+      ).expect(200);
+      expect(res.body.total).toBeGreaterThan(0);
+    });
+  });
+
   describe('payload safety', () => {
     it('masks the phone number and leaks no secrets', async () => {
       const res = await auth('/internal/ai-support/user/profile').expect(200);

@@ -14,10 +14,32 @@ export class AiSupportDepositController {
   constructor(private readonly svc: AiSupportPaymentService) {}
 
   @Get()
-  @ApiOperation({ summary: 'Deposit history, filterable by status' })
+  @ApiOperation({
+    summary: 'Deposit history, filterable by status and by the TRX id the customer entered',
+  })
   list(@Req() req: any, @Query() q: DepositQueryDto) {
     return this.svc.listDeposits(
-      req.aiSupport.userId, q.page ?? 1, q.limit ?? 20, q.status,
+      req.aiSupport.userId, q.page ?? 1, q.limit ?? 20, q.status, q.transactionNumber,
+    );
+  }
+
+  /**
+   * Declared BEFORE :depositId. The paths differ in depth so Express would
+   * not confuse them, but keeping specific routes first is the habit that
+   * stops the next one being swallowed.
+   */
+  @Get('by-transaction/:transactionNumber')
+  @ApiOperation({
+    summary:
+      'Track a deposit by the transaction id the customer entered when sending money',
+  })
+  byTransaction(
+    @Req() req: any,
+    @Param('transactionNumber') transactionNumber: string,
+  ) {
+    return this.svc.findDepositsByTransaction(
+      req.aiSupport.userId,
+      transactionNumber,
     );
   }
 
