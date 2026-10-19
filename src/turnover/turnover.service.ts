@@ -161,6 +161,10 @@ export class TurnoverService {
          SET current_amount = $1,
              status = $2,
              completed_at = $3,
+             -- Who finished it. Cleared when a requirement re-opens, so a
+             -- re-opened row never keeps a stale completion source.
+             completion_source = CASE WHEN $2 = 'COMPLETED' THEN 'PLAYER' END,
+             completed_by_admin_id = NULL,
              updated_at = NOW()
          WHERE id = $4`,
         [
@@ -243,7 +247,12 @@ export class TurnoverService {
     await qr.query(
       `UPDATE turnover_requirements
           SET status = 'COMPLETED',
-              completed_at = NOW(), updated_at = NOW()
+              completed_at = NOW(),
+              -- Not the player wagering it off: the balance hit zero and the
+              -- requirement was written off. Support needs to tell these apart.
+              completion_source = 'SYSTEM',
+              completed_by_admin_id = NULL,
+              updated_at = NOW()
         WHERE user_id = $1 AND status = 'ACTIVE'`,
       [userId],
     );
@@ -682,9 +691,14 @@ export class TurnoverService {
 
       await qr.query(
         `UPDATE turnover_requirements
-         SET current_amount = $1, status = $2, completed_at = $3, updated_at = NOW()
+         SET current_amount = $1, status = $2, completed_at = $3,
+             -- Adjusting progress past the target completes it, and that is
+             -- an admin completion just as much as the force-complete button.
+             completion_source = CASE WHEN $2 = 'COMPLETED' THEN 'ADMIN' END,
+             completed_by_admin_id = CASE WHEN $2 = 'COMPLETED' THEN $5::bigint END,
+             updated_at = NOW()
          WHERE id = $4`,
-        [newAmount, newStatus, completedAt, dto.requirementId],
+        [newAmount, newStatus, completedAt, dto.requirementId, adminId],
       );
 
       await this.turnoverLedger.write({
@@ -874,7 +888,19 @@ export class TurnoverService {
          tr.created_at,
          tr.completed_at,
          tr.created_by_admin_id,
-         au.name                                         AS approved_by
+         au.name                                         AS created_by,
+         tr.completion_source,
+         cau.name                                        AS completed_by_admin,
+         -- What the report's "Approved By" column shows. It is about who
+         -- FINISHED the requirement, never who created it: an unfinished row
+         -- showing an admin's name reads as an approval that never happened.
+         CASE
+           WHEN tr.status <> 'COMPLETED'        THEN NULL
+           WHEN tr.completion_source = 'ADMIN'  THEN cau.name
+           WHEN tr.completion_source = 'PLAYER' THEN 'Player'
+           WHEN tr.completion_source = 'SYSTEM' THEN 'System'
+           ELSE NULL
+         END                                             AS approved_by
        FROM turnover_requirements tr
        JOIN users u            ON u.id = tr.user_id
        -- Only PROMOTION rows reference a promotion via source_id. Referral
@@ -883,7 +909,8 @@ export class TurnoverService {
        -- Its name still resolves via COALESCE(tr.label, …) below.
        LEFT JOIN promotions p  ON p.id = tr.source_id
                                AND tr.source_type = 'PROMOTION'
-       LEFT JOIN admin_users au ON au.id = tr.created_by_admin_id
+       LEFT JOIN admin_users au  ON au.id  = tr.created_by_admin_id
+       LEFT JOIN admin_users cau ON cau.id = tr.completed_by_admin_id
        ${whereSql}
        ORDER BY tr.created_at DESC, tr.id DESC
        LIMIT $${i++} OFFSET $${i++}`,
@@ -921,7 +948,10 @@ export class TurnoverService {
         status: r.status,
         createdAt: r.created_at,
         completedAt: r.completed_at,
+        // Null while the requirement is unfinished — the UI shows "Pending".
         approvedBy: r.approved_by,
+        completionSource: r.completion_source ?? null,
+        createdBy: r.created_by ?? null,
       })),
       page,
       limit,
@@ -962,9 +992,12 @@ export class TurnoverService {
       await qr.query(
         `UPDATE turnover_requirements
          SET status = 'COMPLETED',
-             completed_at = NOW(), updated_at = NOW()
+             completed_at = NOW(),
+             completion_source = 'ADMIN',
+             completed_by_admin_id = $2,
+             updated_at = NOW()
          WHERE id = $1`,
-        [requirementId],
+        [requirementId, adminId],
       );
 
       await this.turnoverLedger.write({
