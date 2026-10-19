@@ -269,6 +269,10 @@ export class GameLibraryService {
     q: {
       type?: string;
       provider?: string;
+      /** Several vendors at once — a rail may combine PRAGMATIC + PGSOFT. */
+      providers?: string[];
+      /** Explicit games. When set, the result is ordered to match it. */
+      uuids?: string[];
       search?: string;
       aggregator?: string;
       page?: number;
@@ -287,6 +291,8 @@ export class GameLibraryService {
     };
     if (q.type) add('c.type = ?', q.type);
     if (q.provider) add('c.vendor_code = ?', q.provider);
+    if (q.providers?.length) add('c.vendor_code = ANY(?::text[])', q.providers);
+    if (q.uuids?.length) add('c.uuid = ANY(?::text[])', q.uuids);
     if (q.aggregator) add('c.aggregator = ?', q.aggregator);
     if (q.search?.trim()) add('c.name ILIKE ?', `%${q.search.trim()}%`);
     const clause = `WHERE ${where.join(' AND ')}`;
@@ -317,10 +323,16 @@ export class GameLibraryService {
            FROM public.casino_games c
            ${favJoin}
            ${clause}
-          ORDER BY c.name
+          ${
+            q.uuids?.length
+              ? `ORDER BY array_position($${params.length + favParams.length + 3}::text[], c.uuid)`
+              : 'ORDER BY c.name'
+          }
           LIMIT $${params.length + favParams.length + 1}
          OFFSET $${params.length + favParams.length + 2}`,
-        [...params, ...favParams, limit, offset],
+        q.uuids?.length
+          ? [...params, ...favParams, limit, offset, q.uuids]
+          : [...params, ...favParams, limit, offset],
       ),
       this.dataSource.query(
         `SELECT COUNT(*)::int AS total FROM public.casino_games c ${clause}`,

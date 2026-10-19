@@ -53,6 +53,7 @@ import { NotificationModule } from './notification/notification.module';
 import { AdminActivityModule } from './admin-activity/admin-activity.module';
 import { GameCategoriesModule } from './game-categories/game-categories.module';
 import { AiSupportModule } from './ai-support/ai-support.module';
+import { GameRailsModule } from './game-rails/game-rails.module';
 @Module({
   imports: [
     ServeStaticModule.forRoot({
@@ -124,6 +125,7 @@ import { AiSupportModule } from './ai-support/ai-support.module';
   AdminActivityModule,
   GameCategoriesModule,
   AiSupportModule,
+  GameRailsModule,
   ],
   controllers: [AppController],
   providers: [AppService, OtpCleanupService],
