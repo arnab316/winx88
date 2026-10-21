@@ -1297,7 +1297,523 @@
       ]
     },
     {
-      "name": "07 · Slots (Palace)",
+      "name": "07 · Game Rails & Catalog",
+      "description": "Browsing games in the app. **All public** — a visitor must be able to look\nat the lobby before registering, so none of these 401.\n\nThe `Authorization` header is present but **disabled** on each request.\nEnable it and `isFavourite` becomes real for that player; leave it off and\nevery game is simply `false`.\n\n## The one rule\n\nEvery game carries `kind`, `providerRef` and `gameCode`, already derived by\nthe server. Pass those straight to favourites and to launch. **Do not\nrebuild that triple in the app** — favourites and continue-playing key on\nit, and a locally-guessed one will not match, so a game favourited here\nsilently fails to appear in Favourites.\n\nLaunching stays per-provider: Nexus games (`kind: \"NEXUS\"`) launch through\n`GET /nexus/launch?uuid=…`.",
+      "item": [
+        {
+          "name": "GET game rails (home screen)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/game-rails/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "game-rails",
+                "active"
+              ]
+            },
+            "description": "Every admin-built row **with its games already resolved** — one request for the whole home screen, however many rails exist.\n\nRails whose filter matches nothing are omitted server-side, so you never render an empty heading.\n\nShow a \"View All\" affordance when `showViewAll && totalGames > games.length`, linking to the paged endpoint below.\n\nTitles come in both languages (`titleEn` / `titleBn`); pick by the app locale and fall back to EN."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured, 2 rails x 2 games)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/game-rails/active",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "game-rails",
+                    "active"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "[\n  {\n    \"id\": 5,\n    \"key\": \"terewd\",\n    \"titleEn\": \"Test Game\",\n    \"titleBn\": \"টেস্ট গেইম\",\n    \"subtitleEn\": \"for testing\",\n    \"subtitleBn\": null,\n    \"mode\": \"FILTER\",\n    \"providers\": [\n      \"PRAGMATIC\"\n    ],\n    \"category\": null,\n    \"aggregator\": \"NEXUS\",\n    \"gameUuids\": [],\n    \"rowLimit\": 12,\n    \"showViewAll\": true,\n    \"sortOrder\": 0,\n    \"isActive\": true,\n    \"createdAt\": \"2026-10-19T18:14:31.353Z\",\n    \"games\": [\n      {\n        \"uuid\": \"NEXUS_PRAGMATIC_vs20wildparty\",\n        \"name\": \"3 Buzzing Wilds\",\n        \"image\": \"https://assets.wkuytxcg8.com/apps/game-assets/vs20wildparty/vs20wildparty_800x600_NB.avif\",\n        \"provider\": \"Pragmatic Play\",\n        \"type\": \"slots\",\n        \"aggregator\": \"NEXUS\",\n        \"kind\": \"NEXUS\",\n        \"providerRef\": \"PRAGMATIC\",\n        \"gameCode\": \"vs20wildparty\",\n        \"isFavourite\": false\n      },\n      {\n        \"uuid\": \"NEXUS_PRAGMATIC_vswaysmonkey\",\n        \"name\": \"3 Dancing Monkeys\",\n        \"image\": \"https://assets.wkuytxcg8.com/apps/game-assets/vswaysmonkey/vswaysmonkey_800x600_NB.avif\",\n        \"provider\": \"Pragmatic Play\",\n        \"type\": \"slots\",\n        \"aggregator\": \"NEXUS\",\n        \"kind\": \"NEXUS\",\n        \"providerRef\": \"PRAGMATIC\",\n        \"gameCode\": \"vswaysmonkey\",\n        \"isFavourite\": false\n      }\n    ],\n    \"totalGames\": 614\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "GET one rail, paged (infinite scroll)",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/game-rails/terewd/games?page=1&limit=24",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "game-rails",
+                "terewd",
+                "games"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "24"
+                }
+              ]
+            },
+            "description": "What \"View All\" scrolls through. Page until `page >= totalPages`.\n\n**De-duplicate by `uuid` when appending.** A CURATED rail can be edited while a player is scrolling, which shifts pages and would otherwise repeat a card."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured, limit=2)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/game-rails/terewd/games?page=1&limit=24",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "game-rails",
+                    "terewd",
+                    "games"
+                  ],
+                  "query": [
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "24"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"rail\": {\n    \"key\": \"terewd\",\n    \"titleEn\": \"Test Game\",\n    \"titleBn\": \"টেস্ট গেইম\",\n    \"subtitleEn\": \"for testing\",\n    \"subtitleBn\": null\n  },\n  \"data\": [\n    {\n      \"uuid\": \"NEXUS_PRAGMATIC_vs20wildparty\",\n      \"name\": \"3 Buzzing Wilds\",\n      \"image\": \"https://assets.wkuytxcg8.com/apps/game-assets/vs20wildparty/vs20wildparty_800x600_NB.avif\",\n      \"provider\": \"Pragmatic Play\",\n      \"type\": \"slots\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"PRAGMATIC\",\n      \"gameCode\": \"vs20wildparty\",\n      \"isFavourite\": false\n    },\n    {\n      \"uuid\": \"NEXUS_PRAGMATIC_vswaysmonkey\",\n      \"name\": \"3 Dancing Monkeys\",\n      \"image\": \"https://assets.wkuytxcg8.com/apps/game-assets/vswaysmonkey/vswaysmonkey_800x600_NB.avif\",\n      \"provider\": \"Pragmatic Play\",\n      \"type\": \"slots\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"PRAGMATIC\",\n      \"gameCode\": \"vswaysmonkey\",\n      \"isFavourite\": false\n    }\n  ],\n  \"total\": 614,\n  \"page\": 1,\n  \"limit\": 2,\n  \"totalPages\": 307\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET catalog games",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/games?type=slots&page=1&limit=24",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "games"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "slots"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "24"
+                }
+              ]
+            },
+            "description": "The whole catalogue, filterable by `type`, `provider`, `search` and `aggregator`. Palace and Nexus games appear in one list.\n\nAdd `aggregator=NEXUS` to narrow to Nexus only — that is all `/nexus/games` does."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured, limit=2)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/catalog/games?type=slots&page=1&limit=24",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "catalog",
+                    "games"
+                  ],
+                  "query": [
+                    {
+                      "key": "type",
+                      "value": "slots"
+                    },
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "24"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"data\": [\n    {\n      \"uuid\": \"NEXUS_EGT_eg.10actiondiamond\",\n      \"name\": \"10 Action Diamond\",\n      \"image\": \"https://assets.bd34fgabh.com/img/egt/10-action-diamond.png\",\n      \"provider\": \"EGT DIGITAL\",\n      \"type\": \"slots\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"EGT\",\n      \"gameCode\": \"eg.10actiondiamond\",\n      \"isFavourite\": false\n    },\n    {\n      \"uuid\": \"NEXUS_AMUSNET_an.10alebrijeseternal\",\n      \"name\": \"10 Alebrijes Eternal\",\n      \"image\": \"https://amusnet.com/_next/image?url=https%3A%2F%2Fbackend.careers-amusnet.com%2F%2Fsites%2Fdefault%2Ffiles%2Fgames%2F5174.webp&w=3840&q=100\",\n      \"provider\": \"AMUSNET\",\n      \"type\": \"slots\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"AMUSNET\",\n      \"gameCode\": \"an.10alebrijeseternal\",\n      \"isFavourite\": false\n    }\n  ],\n  \"total\": 4848,\n  \"page\": 1,\n  \"limit\": 2,\n  \"totalPages\": 2424\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET catalog providers",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/catalog/providers?type=slots",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "catalog",
+                "providers"
+              ],
+              "query": [
+                {
+                  "key": "type",
+                  "value": "slots"
+                }
+              ]
+            },
+            "description": "Providers that actually have playable games of that category — for a filter row. A provider with nothing synced never appears, so a filter chip cannot open empty."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured, first 4)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/catalog/providers?type=slots",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "catalog",
+                    "providers"
+                  ],
+                  "query": [
+                    {
+                      "key": "type",
+                      "value": "slots"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "[\n  {\n    \"code\": \"PRAGMATIC\",\n    \"name\": \"Pragmatic Play\",\n    \"games\": 614\n  },\n  {\n    \"code\": \"AMUSNET\",\n    \"name\": \"AMUSNET\",\n    \"games\": 347\n  },\n  {\n    \"code\": \"PLAYNGO\",\n    \"name\": \"Playngo\",\n    \"games\": 317\n  },\n  {\n    \"code\": \"REELKINGDOM\",\n    \"name\": \"Reel Kingdom\",\n    \"games\": 216\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "GET nexus vendors",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nexus/vendors",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nexus",
+                "vendors"
+              ]
+            },
+            "description": "Nexus vendors with live game counts, for a vendor picker.\n\nCounts come from the local catalogue, not from Nexus, so an unsynced vendor is absent rather than present-and-empty. `SPORTSBOOK` never appears here: it has no game list and launches through its own route."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured, first 4)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/nexus/vendors",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "nexus",
+                    "vendors"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "[\n  {\n    \"code\": \"PRAGMATIC\",\n    \"name\": \"Pragmatic Play\",\n    \"category\": \"slots\",\n    \"games\": 614\n  },\n  {\n    \"code\": \"AMUSNET\",\n    \"name\": \"AMUSNET\",\n    \"category\": \"slots\",\n    \"games\": 347\n  },\n  {\n    \"code\": \"PLAYNGO\",\n    \"name\": \"Playngo\",\n    \"category\": \"slots\",\n    \"games\": 317\n  },\n  {\n    \"code\": \"REELKINGDOM\",\n    \"name\": \"Reel Kingdom\",\n    \"category\": \"slots\",\n    \"games\": 216\n  }\n]"
+            }
+          ]
+        },
+        {
+          "name": "GET nexus games by vendor",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/nexus/games?provider=PRAGMATIC&page=1&limit=24",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "nexus",
+                "games"
+              ],
+              "query": [
+                {
+                  "key": "provider",
+                  "value": "PRAGMATIC"
+                },
+                {
+                  "key": "page",
+                  "value": "1"
+                },
+                {
+                  "key": "limit",
+                  "value": "24"
+                }
+              ]
+            },
+            "description": "Nexus games for one vendor. `providerCode` works as an alias for `provider`. Also accepts `type` and `search`."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured, limit=2)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/nexus/games?provider=PRAGMATIC&page=1&limit=24",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "nexus",
+                    "games"
+                  ],
+                  "query": [
+                    {
+                      "key": "provider",
+                      "value": "PRAGMATIC"
+                    },
+                    {
+                      "key": "page",
+                      "value": "1"
+                    },
+                    {
+                      "key": "limit",
+                      "value": "24"
+                    }
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "{\n  \"data\": [\n    {\n      \"uuid\": \"NEXUS_PRAGMATIC_vs20wildparty\",\n      \"name\": \"3 Buzzing Wilds\",\n      \"image\": \"https://assets.wkuytxcg8.com/apps/game-assets/vs20wildparty/vs20wildparty_800x600_NB.avif\",\n      \"provider\": \"Pragmatic Play\",\n      \"type\": \"slots\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"PRAGMATIC\",\n      \"gameCode\": \"vs20wildparty\",\n      \"isFavourite\": false\n    },\n    {\n      \"uuid\": \"NEXUS_PRAGMATIC_vswaysmonkey\",\n      \"name\": \"3 Dancing Monkeys\",\n      \"image\": \"https://assets.wkuytxcg8.com/apps/game-assets/vswaysmonkey/vswaysmonkey_800x600_NB.avif\",\n      \"provider\": \"Pragmatic Play\",\n      \"type\": \"slots\",\n      \"aggregator\": \"NEXUS\",\n      \"kind\": \"NEXUS\",\n      \"providerRef\": \"PRAGMATIC\",\n      \"gameCode\": \"vswaysmonkey\",\n      \"isFavourite\": false\n    }\n  ],\n  \"total\": 614,\n  \"page\": 1,\n  \"limit\": 2,\n  \"totalPages\": 307\n}"
+            }
+          ]
+        },
+        {
+          "name": "GET home categories",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Authorization",
+                "value": "Bearer {{token}}",
+                "disabled": true
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/game-categories/active",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "game-categories",
+                "active"
+              ]
+            },
+            "description": "The category chips on the home screen, admin-managed.\n\n`source` decides where each chip's games come from, and they genuinely differ — handle all five:\n- `ALL` — no filter\n- `SLOT_PROVIDER` — the Palace slot provider picker\n- `OROPLAY_GROUP` — a key of `/oroplay/vendors/grouped`\n- `CATALOG` — a `casino_games.type`, i.e. `/catalog/games?type=<value>`\n- `LINK` — navigate to `value`, no picker\n\n`iconUrl` is usually null: keep a built-in icon per `key` and treat the URL as an override."
+          },
+          "response": [
+            {
+              "name": "200 OK (captured)",
+              "originalRequest": {
+                "method": "GET",
+                "header": [
+                  {
+                    "key": "Authorization",
+                    "value": "Bearer {{token}}",
+                    "disabled": true
+                  }
+                ],
+                "url": {
+                  "raw": "{{baseUrl}}/game-categories/active",
+                  "host": [
+                    "{{baseUrl}}"
+                  ],
+                  "path": [
+                    "game-categories",
+                    "active"
+                  ]
+                }
+              },
+              "status": "OK",
+              "code": 200,
+              "_postman_previewlanguage": "json",
+              "header": [
+                {
+                  "key": "Content-Type",
+                  "value": "application/json"
+                }
+              ],
+              "cookie": [],
+              "body": "[\n  {\n    \"id\": 1,\n    \"key\": \"all\",\n    \"labelEn\": \"All Games\",\n    \"labelBn\": \"সব গেমস\",\n    \"iconUrl\": null,\n    \"source\": \"ALL\",\n    \"value\": \"\",\n    \"requiresAuth\": false,\n    \"sortOrder\": 10,\n    \"isActive\": true,\n    \"createdAt\": \"2026-10-11T15:51:55.342Z\"\n  },\n  {\n    \"id\": 2,\n    \"key\": \"slot\",\n    \"labelEn\": \"Slots\",\n    \"labelBn\": \"স্লটস\",\n    \"iconUrl\": null,\n    \"source\": \"SLOT_PROVIDER\",\n    \"value\": \"slot\",\n    \"requiresAuth\": false,\n    \"sortOrder\": 20,\n    \"isActive\": true,\n    \"createdAt\": \"2026-10-11T15:51:55.342Z\"\n  },\n  {\n    \"id\": 3,\n    \"key\": \"casino\",\n    \"labelEn\": \"Live Casino\",\n    \"labelBn\": \"লাইভ ক্যাসিনো\",\n    \"iconUrl\": null,\n    \"source\": \"OROPLAY_GROUP\",\n    \"value\": \"Live Casino\",\n    \"requiresAuth\": true,\n    \"sortOrder\": 30,\n    \"isActive\": true,\n    \"createdAt\": \"2026-10-11T15:51:55.342Z\"\n  },\n  {\n    \"id\": 4,\n    \"key\": \"sports\",\n    \"labelEn\": \"Sports\",\n    \"labelBn\": \"স্পোর্টস\",\n    \"iconUrl\": null,\n    \"source\": \"LINK\",\n    \"value\": \"/sports\",\n    \"requiresAuth\": true,\n    \"sortOrder\": 40,\n    \"isActive\": true,\n    \"createdAt\": \"2026-10-11T15:51:55.342Z\"\n  },\n  {\n    \"id\": 5,\n    \"key\": \"lottery\",\n    \"labelEn\": \"Lottery\",\n    \"labelBn\": \"লটারি\",\n    \"iconUrl\": null,\n    \"source\": \"LINK\",\n    \"value\": \"/lotto\",\n    \"requiresAuth\": true,\n    \"sortOrder\": 50,\n    \"isActive\": true,\n    \"createdAt\": \"2026-10-11T15:51:55.342Z\"\n  },\n  {\n    \"id\": 6,\n    \"key\": \"fishing\",\n    \"labelEn\": \"Fishing\",\n    \"labelBn\": \"ফিশিং\",\n    \"iconUrl\": null,\n    \"source\": \"OROPLAY_GROUP\",\n    \"value\": \"Fishing\",\n    \"requiresAuth\": true,\n    \"sortOrder\": 60,\n    \"isActive\": true,\n    \"createdAt\": \"2026-10-11T15:51:55.342Z\"\n  },\n  {\n    \"id\": 7,\n    \"key\": \"crash\",\n    \"labelEn\": \"Crash\",\n    \"labelBn\": \"ক্র্যাশ\",\n    \"iconUrl\": null,\n    \"source\": \"OROPLAY_GROUP\",\n    \"value\": \"Crash\",\n    \"requiresAuth\": true,\n    \"sortOrder\": 70,\n    \"isActive\": true,\n    \"createdAt\": \"2026-10-11T15:51:55.342Z\"\n  },\n  {\n    \"id\": 8,\n    \"key\": \"table\",\n    \"labelEn\": \"Table\",\n    \"labelBn\": \"টেবিল\",\n    \"iconUrl\": null,\n    \"source\": \"OROPLAY_GROUP\",\n    \"value\": \"Poker\",\n    \"requiresAuth\": true,\n    \"sortOrder\": 80,\n    \"isActive\": true,\n    \"createdAt\": \"2026-10-11T15:51:55.342Z\"\n  }\n]"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "08 · Slots (Palace)",
       "item": [
         {
           "name": "POST /slot/callback",
@@ -1479,7 +1995,7 @@
       ]
     },
     {
-      "name": "08 · Live Casino (OroPlay)",
+      "name": "09 · Live Casino (OroPlay)",
       "item": [
         {
           "name": "POST /api/balance",
@@ -1712,7 +2228,7 @@
       ]
     },
     {
-      "name": "09 · Nexus Games",
+      "name": "10 · Nexus Games",
       "item": [
         {
           "name": "POST /gold_api",
@@ -1784,7 +2300,7 @@
       ]
     },
     {
-      "name": "10 · Sportsbook",
+      "name": "11 · Sportsbook",
       "item": [
         {
           "name": "GET /sports/auth-games  [player]",
@@ -2043,7 +2559,7 @@
       ]
     },
     {
-      "name": "11 · Lottery & Rounds",
+      "name": "12 · Lottery & Rounds",
       "item": [
         {
           "name": "GET /games",
@@ -2486,7 +3002,7 @@
       ]
     },
     {
-      "name": "12 · Game History",
+      "name": "13 · Game History",
       "item": [
         {
           "name": "GET /me/game-history  [player]",
@@ -2625,7 +3141,7 @@
       ]
     },
     {
-      "name": "13 · Jackpots",
+      "name": "14 · Jackpots",
       "item": [
         {
           "name": "POST /jackpot/:id/bet  [player]",
@@ -2738,7 +3254,7 @@
       ]
     },
     {
-      "name": "14 · Spin Wheel",
+      "name": "15 · Spin Wheel",
       "item": [
         {
           "name": "GET /spin/me  [player]",
@@ -2871,7 +3387,7 @@
       ]
     },
     {
-      "name": "15 · Promotions (player-facing)",
+      "name": "16 · Promotions (player-facing)",
       "item": [
         {
           "name": "GET /promotion-cms/me  [player]",
@@ -2976,7 +3492,7 @@
       ]
     },
     {
-      "name": "16 · Promotion Engine",
+      "name": "17 · Promotion Engine",
       "item": [
         {
           "name": "GET /promotion/me/available  [player]",
@@ -3056,7 +3572,7 @@
       ]
     },
     {
-      "name": "17 · Home Promo Banners",
+      "name": "18 · Home Promo Banners",
       "item": [
         {
           "name": "GET /promo-banners/active",
@@ -3080,7 +3596,7 @@
       ]
     },
     {
-      "name": "18 · Home Shortcuts",
+      "name": "19 · Home Shortcuts",
       "item": [
         {
           "name": "GET /home-shortcuts/active",
@@ -3104,7 +3620,7 @@
       ]
     },
     {
-      "name": "19 · Hero Banners",
+      "name": "20 · Hero Banners",
       "item": [
         {
           "name": "GET /hero-banner/active",
@@ -3128,7 +3644,7 @@
       ]
     },
     {
-      "name": "20 · Announcements",
+      "name": "21 · Announcements",
       "item": [
         {
           "name": "GET /announcements/active",
@@ -3152,7 +3668,7 @@
       ]
     },
     {
-      "name": "21 · VIP Tiers",
+      "name": "22 · VIP Tiers",
       "item": [
         {
           "name": "GET /tiers/me/banking  [player]",
@@ -3249,7 +3765,7 @@
       ]
     },
     {
-      "name": "22 · Turnover / Wagering",
+      "name": "23 · Turnover / Wagering",
       "item": [
         {
           "name": "POST /turnover/:id/complete  [player]",
@@ -3353,7 +3869,7 @@
       ]
     },
     {
-      "name": "23 · Coins",
+      "name": "24 · Coins",
       "item": [
         {
           "name": "GET /coins/me  [player]",
@@ -3407,7 +3923,7 @@
       ]
     },
     {
-      "name": "24 · Refer a Friend",
+      "name": "25 · Refer a Friend",
       "item": [
         {
           "name": "GET /referral/my-link  [player]",
@@ -3460,7 +3976,7 @@
       ]
     },
     {
-      "name": "25 · Affiliate Programme",
+      "name": "26 · Affiliate Programme",
       "item": [
         {
           "name": "POST /affiliate/apply  [player]",
@@ -4097,7 +4613,7 @@
       ]
     },
     {
-      "name": "26 · KYC",
+      "name": "27 · KYC",
       "item": [
         {
           "name": "GET /verification/my-status  [player]",
@@ -4150,7 +4666,7 @@
       ]
     },
     {
-      "name": "27 · Payment Agents",
+      "name": "28 · Payment Agents",
       "item": [
         {
           "name": "GET /agents/deposit-agent  [player]",
@@ -4179,7 +4695,7 @@
       ]
     },
     {
-      "name": "28 · Tickets",
+      "name": "29 · Tickets",
       "item": [
         {
           "name": "GET /ticket/:betCode",
@@ -4203,7 +4719,7 @@
       ]
     },
     {
-      "name": "29 · Tracking Channels",
+      "name": "30 · Tracking Channels",
       "item": [
         {
           "name": "GET /c/:channel",
@@ -4246,7 +4762,7 @@
       ]
     },
     {
-      "name": "30 · Member Group",
+      "name": "31 · Member Group",
       "item": [
         {
           "name": "GET /member-group/me  [player]",
@@ -4275,7 +4791,7 @@
       ]
     },
     {
-      "name": "31 · WinyPay",
+      "name": "32 · WinyPay",
       "item": [
         {
           "name": "POST /winypay/deposit  [player]",
@@ -4324,7 +4840,7 @@
       ]
     },
     {
-      "name": "32 · SMS (LAAFFIC)",
+      "name": "33 · SMS (LAAFFIC)",
       "item": [
         {
           "name": "POST /laaffic/webhook/delivery",
@@ -4349,7 +4865,7 @@
       ]
     },
     {
-      "name": "33 · SMS (Twilio)",
+      "name": "34 · SMS (Twilio)",
       "item": [
         {
           "name": "GET /twilio/test-twilio",
@@ -4373,7 +4889,7 @@
       ]
     },
     {
-      "name": "34 · Health & Misc",
+      "name": "35 · Health & Misc",
       "item": [
         {
           "name": "GET /",

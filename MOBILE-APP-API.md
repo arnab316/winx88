@@ -225,6 +225,60 @@ Filter chips use `&category=WELCOME|RELOAD|CASHBACK|VIP|REFER|FREEBIE`.
 
 ---
 
+## 6a. Game rails, catalogue and categories
+
+Admin-built rows on the home screen, plus catalogue browsing. **All public** —
+browsing works signed out. Send the bearer token to get `isFavourite`; omit it
+and every game is `false`.
+
+```
+GET /game-rails/active                       rows + their games, one request
+GET /game-rails/{key}/games?page=1&limit=24  "View All", infinite scroll
+GET /catalog/games?type=slots&provider=&search=&aggregator=
+GET /catalog/providers?type=slots
+GET /nexus/vendors                           vendor picker, with live counts
+GET /nexus/games?provider=PRAGMATIC
+GET /game-categories/active                  the home category chips
+```
+
+### The one rule
+
+Every game carries **`kind`, `providerRef`, `gameCode` already derived by the
+server**. Pass them straight to favourites and to launch.
+
+**Never rebuild that triple in the app.** Favourites and continue-playing key
+on it exactly; a locally-guessed one does not match, and the failure is silent
+— the game is favourited but never appears in Favourites.
+
+### Rails
+
+`/game-rails/active` returns every row with its games resolved, so the home
+screen is one request no matter how many rails exist. Rails matching no games
+are omitted server-side — never render an empty heading.
+
+Show "View All" when `showViewAll && totalGames > games.length`, then page
+`/{key}/games`. **De-duplicate by `uuid` when appending**: a curated rail can be
+edited mid-scroll, which shifts pages and would repeat a card.
+
+Titles come as `titleEn` / `titleBn`; pick by locale, fall back to EN.
+
+### Category chips
+
+`source` decides where a chip's games come from, and they genuinely differ —
+handle all five, or a chip opens onto nothing:
+
+| `source` | What to do |
+|---|---|
+| `ALL` | No filter |
+| `SLOT_PROVIDER` | Palace slot provider picker |
+| `OROPLAY_GROUP` | `value` is a key of `/oroplay/vendors/grouped` |
+| `CATALOG` | `value` is a `casino_games.type` → `/catalog/games?type=<value>` |
+| `LINK` | Navigate to `value`, no picker |
+
+`iconUrl` is usually null — keep a built-in icon per `key` and treat the URL as
+an override.
+
+
 ## 7. Known issues to design around
 
 - **Live casino (OroPlay) is failing in production** with `errorCode 401` on token creation.
