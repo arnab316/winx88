@@ -163,7 +163,14 @@ export class TurnoverService {
              completed_at = $3,
              -- Who finished it. Cleared when a requirement re-opens, so a
              -- re-opened row never keeps a stale completion source.
-             completion_source = CASE WHEN $2 = 'COMPLETED' THEN 'PLAYER' END,
+             --
+             -- Decided in JS and passed as its own parameter. Deriving it in
+             -- SQL with CASE WHEN $2 = 'COMPLETED' made Postgres deduce two
+             -- different types for $2 — varchar from status = $2, text from
+             -- the comparison — and reject the whole statement with 42P08.
+             -- That aborted the settlement transaction, so the provider saw
+             -- the bet fail and showed the player "add funds to your account".
+             completion_source = $5,
              completed_by_admin_id = NULL,
              updated_at = NOW()
          WHERE id = $4`,
@@ -172,6 +179,7 @@ export class TurnoverService {
           completed ? 'COMPLETED' : 'ACTIVE',
           completed ? new Date() : null,
           req.id,
+          completed ? 'PLAYER' : null,
         ],
       );
 
@@ -689,16 +697,30 @@ export class TurnoverService {
         completedAt = null;
       }
 
+      // Adjusting progress past the target completes it, and that is an admin
+      // completion just as much as the force-complete button. Both halves move
+      // together to satisfy chk_turnover_completed_by, which requires an ADMIN
+      // completion to name the admin and every other state to name nobody.
+      //
+      // Decided here rather than in SQL for the same reason as the settled-bet
+      // path above: reusing $2 inside a CASE triggers 42P08.
+      const adminCompleted = newStatus === 'COMPLETED';
+
       await qr.query(
         `UPDATE turnover_requirements
          SET current_amount = $1, status = $2, completed_at = $3,
-             -- Adjusting progress past the target completes it, and that is
-             -- an admin completion just as much as the force-complete button.
-             completion_source = CASE WHEN $2 = 'COMPLETED' THEN 'ADMIN' END,
-             completed_by_admin_id = CASE WHEN $2 = 'COMPLETED' THEN $5::bigint END,
+             completion_source = $5,
+             completed_by_admin_id = $6::bigint,
              updated_at = NOW()
          WHERE id = $4`,
-        [newAmount, newStatus, completedAt, dto.requirementId, adminId],
+        [
+          newAmount,
+          newStatus,
+          completedAt,
+          dto.requirementId,
+          adminCompleted ? 'ADMIN' : null,
+          adminCompleted ? adminId : null,
+        ],
       );
 
       await this.turnoverLedger.write({
