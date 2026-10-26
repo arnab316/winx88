@@ -47,7 +47,7 @@ export class GameRailsController {
   /** What the rail would show, before committing to it. */
   @UseGuards(AdminGuard)
   @Post('admin/preview')
-  preview(@Body() body: Partial<RailInput>) {
+  preview(@Body() body: Partial<RailInput> & { page?: number; limit?: number }) {
     return this.rails.preview(body);
   }
 

@@ -34,6 +34,7 @@ export interface GameOverride {
   type: string | null;
   display_name: string | null;
   note: string | null;
+  image_url: string | null;
 }
 
 /** Everything needed to decide one game's category, loaded once per sync. */
@@ -75,7 +76,8 @@ export class GameCurationService {
         ORDER BY priority ASC, id ASC`,
     );
     const rows: GameOverride[] = await this.dataSource.query(
-      `SELECT game_uuid, type, display_name, note FROM casino_game_overrides`,
+      `SELECT game_uuid, type, display_name, note, image_url
+         FROM casino_game_overrides`,
     );
     return { rules, overrides: new Map(rows.map((r) => [r.game_uuid, r])) };
   }
@@ -229,7 +231,13 @@ export class GameCurationService {
   /** Set or clear a single game's override. Nulls clear that field. */
   async setOverride(
     gameUuid: string,
-    dto: { type?: string | null; displayName?: string | null; note?: string | null },
+    dto: {
+      type?: string | null;
+      displayName?: string | null;
+      note?: string | null;
+      /** Replacement artwork. Empty string clears it back to the provider's. */
+      imageUrl?: string | null;
+    },
     adminId?: number,
   ) {
     const [game] = await this.dataSource.query(
@@ -241,22 +249,27 @@ export class GameCurationService {
     const type = dto.type?.trim() || null;
     const name = dto.displayName?.trim() || null;
     const note = dto.note?.trim() || null;
+    const image = dto.imageUrl?.trim() || null;
 
     // Nothing left to pin? Drop the row instead of keeping an empty one, so
-    // "cleared" and "never set" look the same to the resolver.
-    if (!type && !name) {
+    // "cleared" and "never set" look the same to the resolver — and so a game
+    // whose artwork override is removed falls back to the provider's image
+    // with nothing to undo.
+    if (!type && !name && !image) {
       await this.dataSource.query(
         `DELETE FROM casino_game_overrides WHERE game_uuid = $1`,
         [gameUuid],
       );
     } else {
       await this.dataSource.query(
-        `INSERT INTO casino_game_overrides (game_uuid, type, display_name, note, updated_by)
-         VALUES ($1,$2,$3,$4,$5)
+        `INSERT INTO casino_game_overrides
+           (game_uuid, type, display_name, note, image_url, updated_by)
+         VALUES ($1,$2,$3,$4,$5,$6)
          ON CONFLICT (game_uuid) DO UPDATE SET
            type = EXCLUDED.type, display_name = EXCLUDED.display_name,
-           note = EXCLUDED.note, updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
-        [gameUuid, type, name, note, adminId ?? null],
+           note = EXCLUDED.note, image_url = EXCLUDED.image_url,
+           updated_by = EXCLUDED.updated_by, updated_at = NOW()`,
+        [gameUuid, type, name, note, image, adminId ?? null],
       );
     }
     return this.reapplyOne(gameUuid);

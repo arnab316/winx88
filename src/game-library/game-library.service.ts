@@ -313,7 +313,13 @@ export class GameLibraryService {
 
     const [rows, [{ total }]] = await Promise.all([
       this.dataSource.query(
-        `SELECT c.uuid, c.name, c.image, c.provider, c.type, c.aggregator,
+        `SELECT c.uuid, c.name,
+                -- An admin's artwork wins over the provider's. Applied here
+                -- rather than written into casino_games, because a re-sync
+                -- upserts image from the provider and would revert it.
+                COALESCE(ov.image_url, c.image) AS image,
+                (ov.image_url IS NOT NULL)      AS "imageOverridden",
+                c.provider, c.type, c.aggregator,
                 CASE WHEN c.aggregator = 'NEXUS' THEN 'NEXUS' ELSE 'SLOT' END AS kind,
                 CASE WHEN c.aggregator = 'NEXUS'
                      THEN c.vendor_code ELSE c.provider_id::text END          AS "providerRef",
@@ -321,6 +327,7 @@ export class GameLibraryService {
                      THEN c.game_code ELSE c.game_symbol END                  AS "gameCode",
                 ${favSelect} AS "isFavourite"
            FROM public.casino_games c
+           LEFT JOIN public.casino_game_overrides ov ON ov.game_uuid = c.uuid
            ${favJoin}
            ${clause}
           ${

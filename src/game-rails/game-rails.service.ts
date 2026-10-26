@@ -244,7 +244,9 @@ export class GameRailsService {
   }
 
   /** What a rail WOULD show, before saving it. */
-  async preview(input: Partial<RailInput>) {
+  async preview(
+    input: Partial<RailInput> & { page?: number; limit?: number },
+  ) {
     const rail = {
       mode: input.mode ?? 'FILTER',
       providers: input.providers ?? [],
@@ -252,11 +254,74 @@ export class GameRailsService {
       aggregator: input.aggregator ?? null,
       gameUuids: input.gameUuids ?? [],
     };
+
+    // The admin is choosing what to publish, so the preview shows EVERY
+    // matching game, paged — not the row's own `rowLimit`. That limit is how
+    // many fit on the home screen, which is a different question from how
+    // many the filter actually caught.
+    const page = Math.max(Number(input.page) || 1, 1);
+    const limit = Math.min(Math.max(Number(input.limit) || 60, 1), 200);
+
     const res = await this.library.browseCatalog(
       null,
-      this.queryFor(rail, 1, Math.min(input.rowLimit ?? 12, 24)),
+      this.queryFor(rail, page, limit),
     );
-    return { total: res.total, sample: res.data };
+
+    return {
+      total: res.total,
+      page: res.page,
+      limit: res.limit,
+      totalPages: res.totalPages,
+      /** How many of these the home screen will actually show. */
+      rowLimit: input.rowLimit ?? 12,
+      sample: res.data,
+      diagnostics: await this.explainEmpty(rail, res.total),
+    };
+  }
+
+  /**
+   * Why a filter matched nothing.
+   *
+   * "0 games match" is useless on its own: the usual cause is a provider and
+   * a category that cannot both be true — Reel Kingdom ships 216 slots and no
+   * live tables, so picking it alongside `live` is always empty. Telling the
+   * admin that, with the number they would get by dropping the category, is
+   * the difference between a dead end and one click.
+   *
+   * Null when there is nothing to explain.
+   */
+  private async explainEmpty(rail: any, total: number) {
+    if (total > 0 || rail.mode === 'CURATED') return null;
+    if (!rail.providers?.length) return null;
+
+    const withoutCategory = await this.library.browseCatalog(null, {
+      providers: rail.providers,
+      aggregator: rail.aggregator || undefined,
+      page: 1,
+      limit: 1,
+    });
+    if (!withoutCategory.total) return null;
+
+    // What those providers DO have, so the admin can pick a category that exists.
+    const available = await this.dataSource.query(
+      `SELECT c.type, COUNT(*)::int AS games
+         FROM public.casino_games c
+        WHERE c.under_maintenance = false
+          AND c.vendor_code = ANY($1::text[])
+        GROUP BY c.type
+        ORDER BY games DESC`,
+      [rail.providers],
+    );
+
+    return {
+      reason: 'CATEGORY_EXCLUDES_PROVIDERS' as const,
+      category: rail.category,
+      withoutCategory: withoutCategory.total,
+      availableCategories: available.map((r: any) => ({
+        category: r.type,
+        games: Number(r.games),
+      })),
+    };
   }
 
   private async byId(id: number) {

@@ -128,7 +128,15 @@ export class NexusController {
   @Post('admin/curation/override')
   setOverride(
     @Req() req: any,
-    @Body() body: { gameUuid: string; type?: string; displayName?: string; note?: string },
+    @Body()
+    body: {
+      gameUuid: string;
+      type?: string;
+      displayName?: string;
+      note?: string;
+      /** Replacement artwork; empty clears it back to the provider's. */
+      imageUrl?: string;
+    },
   ) {
     return this.curation.setOverride(body?.gameUuid, body, req.admin?.id ?? req.user?.sub);
   }
