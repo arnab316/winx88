@@ -74,6 +74,10 @@ export interface AdminDepositDecideDto {
   // REJECT only — marks deposits.auto_rejected so the pending-timeout watcher's
   // rejections stay distinguishable from a human one (and stay reopenable).
   auto?: boolean;
+  // APPROVE only — the "Test deposit" checkbox. The money still credits; the
+  // deposit is just left out of every real-money measure. See
+  // WalletService.setDepositTest.
+  isTest?: boolean;
 }
 
 export interface AdminWithdrawalDecideDto {
@@ -111,6 +115,7 @@ export interface DepositListQuery {
   phone?:      string;    // player phone; +880 / 880 / leading-0 forms all match
   trxId?:      string;    // transaction_number (partial match)
   dpId?:       string;    // display deposit id, e.g. "DP00123" (digits → deposits.id)
+  isTest?:     boolean;   // true = only test deposits, false = only real ones
   page?:       number;
   limit?:      number;
 }

@@ -268,9 +268,10 @@ export class DashboardService {
       this.dataSource.query(
         `WITH r AS (
            SELECT 'DEPOSIT' AS kind, d.amount::numeric AS amount, d.decided_at AS ts
-             -- The source repo also excluded test deposits via an is_test
-             -- column; this schema has none, so every approved deposit counts.
-             FROM deposits d WHERE d.status = 'APPROVED' AND ${win('d.decided_at')}
+             -- Test deposits are credited for real but are not revenue,
+             -- so they are left out of the money chart.
+             FROM deposits d WHERE d.status = 'APPROVED' AND NOT d.is_test
+                               AND ${win('d.decided_at')}
            UNION ALL
            SELECT 'WITHDRAWAL', x.amount::numeric, x.decided_at
              FROM withdrawals x WHERE x.status = 'APPROVED' AND ${win('x.decided_at')}

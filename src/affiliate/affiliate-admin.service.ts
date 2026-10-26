@@ -59,6 +59,7 @@ export class AffiliateAdminService {
                  COUNT(r.referee_user_id) FILTER (WHERE EXISTS (
                    SELECT 1 FROM deposits d
                     WHERE d.user_id = r.referee_user_id AND d.status = 'APPROVED'
+                      AND NOT d.is_test
                       AND d.decided_at >= $1::date)) AS active_players,
                  COALESCE(SUM(w.total_deposited), 0) AS player_deposits
             FROM affiliate_users au

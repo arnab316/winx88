@@ -165,6 +165,7 @@ export class AffiliateRevShareService {
            AND EXISTS (
              SELECT 1 FROM deposits d
               WHERE d.user_id = r.referee_user_id AND d.status = 'APPROVED'
+                AND NOT d.is_test
                 AND d.decided_at >= $2::timestamptz AND d.decided_at < $3::timestamptz)
            AND (
              EXISTS (SELECT 1 FROM bets b
@@ -194,6 +195,7 @@ export class AffiliateRevShareService {
              LEFT JOIN LATERAL (
                SELECT SUM(d.amount) AS total FROM deposits d
                 WHERE d.user_id = r.referee_user_id AND d.status = 'APPROVED'
+                  AND NOT d.is_test
                   AND d.decided_at >= $2::date AND d.decided_at < $3::date
              ) dep ON TRUE
              LEFT JOIN LATERAL (

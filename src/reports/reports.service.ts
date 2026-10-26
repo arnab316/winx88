@@ -69,7 +69,7 @@ export class ReportsService {
       LEFT JOIN LATERAL (
         SELECT COUNT(*)::int AS cnt, SUM(amount) AS total
           FROM deposits d
-         WHERE d.user_id = u.id AND d.status = 'APPROVED'
+         WHERE d.user_id = u.id AND d.status = 'APPROVED' AND NOT d.is_test
            AND ($1::timestamptz IS NULL OR d.decided_at >= $1::timestamptz)
            AND ($2::timestamptz IS NULL OR d.decided_at <  $2::timestamptz)
       ) dep ON TRUE
@@ -288,7 +288,7 @@ export class ReportsService {
       LEFT JOIN LATERAL (
         SELECT COUNT(*)::int AS cnt, SUM(amount) AS total
           FROM deposits d
-         WHERE d.user_id = u.id AND d.status = 'APPROVED'
+         WHERE d.user_id = u.id AND d.status = 'APPROVED' AND NOT d.is_test
            AND ($1::timestamptz IS NULL OR d.decided_at >= $1::timestamptz)
            AND ($2::timestamptz IS NULL OR d.decided_at <  $2::timestamptz)
       ) dep ON TRUE
@@ -472,7 +472,7 @@ export class ReportsService {
       LEFT JOIN wallets w ON w.user_id = u.id
       LEFT JOIN LATERAL (
         SELECT COUNT(*)::int AS cnt, SUM(amount) AS total FROM deposits d
-         WHERE d.user_id = u.id AND d.status = 'APPROVED'
+         WHERE d.user_id = u.id AND d.status = 'APPROVED' AND NOT d.is_test
            AND ($2::timestamptz IS NULL OR d.decided_at >= $2::timestamptz)
            AND ($3::timestamptz IS NULL OR d.decided_at <  $3::timestamptz)
       ) dep ON TRUE

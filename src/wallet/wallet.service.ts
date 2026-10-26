@@ -448,12 +448,20 @@ export class WalletService {
           [newBal, amt, wallet.id],
         );
 
+        // A test deposit credits exactly like a real one — the point is to
+        // exercise the real flow — but it is excluded from every real-money
+        // measure, and the reward side effects below are skipped.
+        const isTest = dto.isTest === true;
+
         await qr.query(
           `UPDATE deposits
            SET status = 'APPROVED', decided_at = NOW(),
-               approved_by_admin_id = $1, updated_at = NOW()
+               approved_by_admin_id = $1, updated_at = NOW(),
+               is_test = $3,
+               test_marked_by_admin = CASE WHEN $3 THEN $1::int ELSE NULL END,
+               test_marked_at       = CASE WHEN $3 THEN NOW() ELSE NULL END
            WHERE id = $2`,
-          [dto.adminId, dto.depositId],
+          [dto.adminId, dto.depositId, isTest],
         );
 
         await this.financialLedger.write({
@@ -480,12 +488,16 @@ export class WalletService {
         // ─── COIN AWARD ────────────────────────────────────────
         // Awards coins per coin_settings rules.
         // VIP level-up check is auto-triggered inside CoinService.
-        const coinResult = await this.coinService.awardForDeposit(
-          qr,
-          dep.user_id,
-          amt,
-          dto.depositId,
-        );
+        // Skipped for a test deposit: coins climb VIP tiers, and a test must
+        // not promote a real player.
+        const coinResult = isTest
+          ? null
+          : await this.coinService.awardForDeposit(
+              qr,
+              dep.user_id,
+              amt,
+              dto.depositId,
+            );
 
         // ─── PROMOTION APPLICATION ─────────────────────────────
         // If a promo was attached, the engine handles atomically:
@@ -534,25 +546,36 @@ export class WalletService {
 
         // Refer-a-friend deposit progress (referrer + referee sides). Isolated
         // via a SAVEPOINT inside the engine — never breaks the deposit.
-        await this.referralEngine.onDeposit(qr, dep.user_id, amt);
+        // Skipped for a test deposit: it would pay a real ৳500 referral bonus.
+        if (!isTest) {
+          await this.referralEngine.onDeposit(qr, dep.user_id, amt);
+        }
 
         // Meta conversion, queued in THIS transaction so it cannot exist for a
         // deposit that rolls back nor be lost for one that commits. Only
         // players attributed to a campaign with a bound pixel produce a row;
         // the call is a no-op for everyone else and never throws.
-        await this.metaCapi.enqueue(qr, {
-          eventName: 'Purchase',
-          eventId: MetaCapiService.eventIdFor('dep', dto.depositId),
-          userId: Number(dep.user_id),
-          depositId: Number(dto.depositId),
-          value: amt,
-          isFtd,
-        });
+        // Skipped for a test deposit. This leaves our own database; a test
+        // Purchase would corrupt the ad platform's attribution and bidding,
+        // which is exactly what the flag exists to prevent.
+        if (!isTest) {
+          await this.metaCapi.enqueue(qr, {
+            eventName: 'Purchase',
+            eventId: MetaCapiService.eventIdFor('dep', dto.depositId),
+            userId: Number(dep.user_id),
+            depositId: Number(dto.depositId),
+            value: amt,
+            isFtd,
+          });
+        }
 
         await qr.commitTransaction();
          await this.walletGateway.pushBalanceUpdate(dep.user_id)
         return {
-          message: 'Deposit approved. Wallet credited.',
+          message: isTest
+            ? 'Test deposit approved. Wallet credited, excluded from reports.'
+            : 'Deposit approved. Wallet credited.',
+          isTest,
           newBalance: newBal,
           coinsEarned: coinResult?.awarded ?? 0,
           totalCoins: coinResult?.newTotal ?? null,
@@ -614,6 +637,61 @@ export class WalletService {
   //   time, and reopened_at is what tells the watcher to leave this one alone
   //   from now on.
   // ═════════════════════════════════════════════════════════════
+  /**
+   * Mark / unmark an APPROVED deposit as a test after the fact.
+   *
+   * Reporting only — the wallet is NOT touched. The money was credited when
+   * the deposit was approved and stays credited; this only changes whether the
+   * deposit counts towards the dashboard, reports, channel stats and affiliate
+   * commission.
+   *
+   * Rewards already granted at approval (VIP coins, refer-a-friend progress,
+   * the Meta conversion) are NOT undone — marking afterwards cannot un-ring
+   * that bell. Tick "Test deposit" at approval time to skip them.
+   *
+   * APPROVED only: a pending deposit has not credited anything yet, and a
+   * rejected one never will, so neither can distort a real-money figure.
+   */
+  async setDepositTest(depositId: number, adminId: number, isTest: boolean) {
+    const res = await this.dataSource.query(
+      `UPDATE deposits
+          SET is_test = $2,
+              test_marked_by_admin = $3,
+              test_marked_at = NOW(),
+              updated_at = NOW()
+        WHERE id = $1 AND status = 'APPROVED'
+        RETURNING id, deposit_code, is_test, test_marked_at`,
+      [depositId, isTest, adminId],
+    );
+
+    // TypeORM hands back [rows, affectedCount] for UPDATE … RETURNING, but
+    // plain rows for INSERT. Reading the wrong one yields undefined fields
+    // behind a 200.
+    const row = Array.isArray(res[0]) ? res[0][0] : res[0];
+
+    if (!row) {
+      const exists = await this.dataSource.query(
+        `SELECT status FROM deposits WHERE id = $1`,
+        [depositId],
+      );
+      if (!exists.length) throw new NotFoundException('Deposit not found');
+      throw new BadRequestException(
+        `Only an approved deposit can be marked as test — this one is ${exists[0].status}`,
+      );
+    }
+
+    this.logger.log(
+      `deposit ${row.deposit_code}: is_test=${isTest} set by admin ${adminId}`,
+    );
+
+    return {
+      message: isTest ? 'Marked as test deposit' : 'Test mark removed',
+      depositId: Number(row.id),
+      isTest: row.is_test,
+      testMarkedAt: row.test_marked_at,
+    };
+  }
+
   async reopenDeposit(depositId: number, adminId: number) {
     const qr = this.dataSource.createQueryRunner();
     await qr.connect();
@@ -1545,6 +1623,13 @@ async getPendingDeposits(q: DepositListQuery = {}) {
       params.push(`%${q.trxId.trim()}%`);
     }
 
+    // Real / test split. Undefined shows both, which is the default, so the
+    // list is unchanged for anyone not using the filter.
+    if (q.isTest !== undefined) {
+      where.push(`d.is_test = $${i++}`);
+      params.push(q.isTest);
+    }
+
     // DP ID — "DP00123" (or bare digits) → deposits.id
     if (q.dpId?.trim()) {
       const idDigits = q.dpId.replace(/\D/g, '');
@@ -1569,6 +1654,10 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          d.rejection_reason,
          d.auto_rejected,   -- true = rejected by the pending-timeout watcher
          d.reopened_at,
+         -- Test deposit: credited, but excluded from every real-money measure.
+         d.is_test,
+         d.test_marked_at,
+         tadm.name AS test_marked_by_name,
          d.promotion_id,
          d.provider,
          d.pay_type,
@@ -1613,6 +1702,7 @@ async getPendingDeposits(q: DepositListQuery = {}) {
        LEFT JOIN agents a      ON a.id  = d.agent_id
        LEFT JOIN promotions p  ON p.id  = d.promotion_id
        LEFT JOIN admin_users adm ON adm.id = d.approved_by_admin_id
+       LEFT JOIN admin_users tadm ON tadm.id = d.test_marked_by_admin
        LEFT JOIN LATERAL (
          SELECT up.phone_number
            FROM user_phone_numbers up
@@ -1674,6 +1764,7 @@ async getPendingDeposits(q: DepositListQuery = {}) {
         phone:       q.phone       ?? null,
         trxId:       q.trxId       ?? null,
         dpId:        q.dpId        ?? null,
+        isTest:      q.isTest      ?? null,
       },
     };
   }
@@ -1698,7 +1789,8 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          g.name AS gateway_name,
          a.agent_number, a.agent_code, a.wallet_type,
          p.title AS promotion_title, p.code AS promotion_code,
-         adm.name AS decided_by_name
+         adm.name  AS decided_by_name,
+         tadm.name AS test_marked_by_name
        FROM deposits d
        JOIN users u            ON u.id  = d.user_id
        LEFT JOIN vip_level_config vlc ON vlc.level = u.vip_level
@@ -1706,6 +1798,7 @@ async getPendingDeposits(q: DepositListQuery = {}) {
        LEFT JOIN agents a      ON a.id  = d.agent_id
        LEFT JOIN promotions p  ON p.id  = d.promotion_id
        LEFT JOIN admin_users adm ON adm.id = d.approved_by_admin_id
+       LEFT JOIN admin_users tadm ON tadm.id = d.test_marked_by_admin
        LEFT JOIN LATERAL (
          SELECT up.phone_number
            FROM user_phone_numbers up

@@ -3,6 +3,7 @@ import {
   Controller,
   Get,
   Post,
+  Patch,
   Body,
   Param,
   Query,
@@ -257,6 +258,7 @@ export class WalletController {
     @Query('phone')       phone?:       string,
     @Query('trxId')       trxId?:       string,
     @Query('dpId')        dpId?:        string,
+    @Query('isTest')      isTest?:      string,
     @Query('page',  new DefaultValuePipe(1),  ParseIntPipe) page:  number = 1,
     @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number = 20,
   ) {
@@ -289,6 +291,10 @@ export class WalletController {
       phone:       phone?.trim()       || undefined,
       trxId:       trxId?.trim()       || undefined,
       dpId:        dpId?.trim()        || undefined,
+      // Tri-state: "true" / "false" filter, anything else shows both. Parsed
+      // here rather than letting the global ValidationPipe coerce it — with
+      // enableImplicitConversion the string "false" becomes boolean true.
+      isTest:      isTest === 'true' ? true : isTest === 'false' ? false : undefined,
       page,
       limit,
     });
@@ -326,7 +332,31 @@ export class WalletController {
       adminId:         req.user.sub,
       action:          body.action,
       rejectionReason: body.rejectionReason,
+      // APPROVE only — the "Test deposit" checkbox. Compared explicitly
+      // because a form post sends the string "true", not a boolean.
+      isTest:          body.isTest === true || body.isTest === 'true',
     });
+  }
+
+  // PATCH /wallet/admin/deposits/:id/test   body: { isTest: boolean }
+  // Mark / unmark an APPROVED deposit as a test after the fact. Reporting
+  // only — the wallet is untouched. See WalletService.setDepositTest.
+  // RBAC: deposit.approve — the same people who could have ticked the box at
+  // approval time.
+  @UseGuards(AdminGuard, PermissionsGuard)
+  @RequirePermissions('deposit', 'approve')
+  @Patch('admin/deposits/:id/test')
+  setDepositTest(
+    @Req() req: any,
+    @Param('id', ParseIntPipe) depositId: number,
+    @Body() body: any,
+  ) {
+    if (body?.isTest !== true && body?.isTest !== false
+        && body?.isTest !== 'true' && body?.isTest !== 'false') {
+      throw new BadRequestException('isTest must be true or false');
+    }
+    const isTest = body.isTest === true || body.isTest === 'true';
+    return this.walletService.setDepositTest(depositId, req.user.sub, isTest);
   }
 
   // POST /wallet/admin/deposits/:id/reopen

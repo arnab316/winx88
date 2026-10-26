@@ -332,7 +332,7 @@ export class ChannelsService {
           JOIN LATERAL (
             SELECT d.decided_at AS ftd_at, d.amount AS ftd_amount
               FROM deposits d
-             WHERE d.user_id = a.user_id AND d.status = 'APPROVED'
+             WHERE d.user_id = a.user_id AND d.status = 'APPROVED' AND NOT d.is_test
              ORDER BY d.decided_at ASC
              LIMIT 1
           ) f ON TRUE
@@ -342,6 +342,7 @@ export class ChannelsService {
         SELECT COUNT(*)::int AS c, COALESCE(SUM(d.amount), 0) AS amt
           FROM user_channel_attribution a
           JOIN deposits d ON d.user_id = a.user_id AND d.status = 'APPROVED'
+                              AND NOT d.is_test
          WHERE a.channel_id = ch.id AND ${bounded('d.decided_at')}
       ) dep ON TRUE
       WHERE ($1::bigint IS NULL OR ch.vendor_id = $1::bigint)

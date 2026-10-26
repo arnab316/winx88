@@ -821,6 +821,7 @@ async getMyDownline(userId: number, page = 1, limit = 20) {
              WHERE r.referrer_user_id = u.id
                AND EXISTS (SELECT 1 FROM deposits d
                             WHERE d.user_id = r.referee_user_id AND d.status = 'APPROVED'
+                              AND NOT d.is_test
                               AND d.decided_at >= (CURRENT_DATE - ((EXTRACT(DOW FROM CURRENT_DATE)::int + 2) % 7))))
                                                                                      AS active_players_week,
            (SELECT COALESCE(SUM(w2.total_deposited),0) FROM referrals r2

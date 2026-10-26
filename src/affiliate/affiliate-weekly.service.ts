@@ -109,6 +109,8 @@ export class AffiliateWeeklyService {
             FROM deposits d
            WHERE d.user_id = r.referee_user_id
              AND d.status = 'APPROVED'
+             -- A test deposit must never pay affiliate commission.
+             AND NOT d.is_test
              AND d.decided_at >= $2::date AND d.decided_at < $3::date
         ) dep ON TRUE
         LEFT JOIN LATERAL (
@@ -658,7 +660,7 @@ export class AffiliateWeeklyService {
         JOIN users u ON u.id = r.referee_user_id
         LEFT JOIN LATERAL (
           SELECT SUM(d.amount) AS total FROM deposits d
-           WHERE d.user_id = u.id AND d.status = 'APPROVED'
+           WHERE d.user_id = u.id AND d.status = 'APPROVED' AND NOT d.is_test
              AND d.decided_at >= $2::date AND d.decided_at < ($3::date + INTERVAL '1 day')
         ) dep ON TRUE
         LEFT JOIN LATERAL (
@@ -804,7 +806,7 @@ export class AffiliateWeeklyService {
                COALESCE(w.total_deposited, 0)::numeric AS deposits_total,
                EXISTS (
                  SELECT 1 FROM deposits d
-                  WHERE d.user_id = u.id AND d.status = 'APPROVED'
+                  WHERE d.user_id = u.id AND d.status = 'APPROVED' AND NOT d.is_test
                     AND d.decided_at >= $2::date AND d.decided_at < $3::date
                ) AS active_this_cycle,
                ( COALESCE((SELECT SUM(b.bet_amount) FROM bets b WHERE b.user_id = u.id), 0)

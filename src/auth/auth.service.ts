@@ -318,7 +318,8 @@ async register(dto: any, originHeader?: string) {
       // total; onDeposit() keeps adding new approvals on top.
       const [dep] = await qr.query(
         `SELECT COALESCE(SUM(amount), 0) AS total
-           FROM deposits WHERE user_id = $1 AND status = 'APPROVED'`,
+           FROM deposits
+           WHERE user_id = $1 AND status = 'APPROVED' AND NOT is_test`,
         [referrerId],
       );
       const referrerDepositTotal = Number(dep.total);
