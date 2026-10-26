@@ -11,6 +11,7 @@ import {
   CHANNEL_JOINS_SQL,
   CHANNEL_COLUMNS_SQL,
 } from '../common/channel-attribution';
+import { dayStartSql, dayEndExclusiveSql } from '../common/business-time';
 import { LaafficService } from '../laaffic/laaffic.service';
 
 @Injectable()
@@ -444,13 +445,14 @@ export class UserService {
     }
 
     // Registration-date range (created_at), both bounds optional. `to` is
-    // inclusive of the whole day, so '2026-06-19' covers up to 23:59:59.
+    // inclusive of the whole day, so '2026-06-19' covers up to 23:59:59 —
+    // in the BUSINESS timezone, matching the dashboard. See business-time.ts.
     if (opts?.from) {
-      conditions.push(`u.created_at >= $${i++}`);
+      conditions.push(`u.created_at >= ${dayStartSql(`$${i++}`)}`);
       params.push(opts.from);
     }
     if (opts?.to) {
-      conditions.push(`u.created_at < ($${i++}::date + INTERVAL '1 day')`);
+      conditions.push(`u.created_at < ${dayEndExclusiveSql(`$${i++}`)}`);
       params.push(opts.to);
     }
 
@@ -614,13 +616,18 @@ export class UserService {
       );
     }
 
-    // DATE range on registration date (created_at); `to` is whole-day inclusive
+    // DATE range on registration date (created_at); `to` is whole-day inclusive.
+    //
+    // Anchored to the BUSINESS timezone, not the database session's. Bare
+    // dates resolved against whatever zone the connection had, so this
+    // filter and the dashboard's Asia/Dhaka day started at different
+    // instants and reported different totals for the same "today".
     if (filters.from) {
-      conditions.push(`u.created_at >= $${i++}`);
+      conditions.push(`u.created_at >= ${dayStartSql(`$${i++}`)}`);
       params.push(filters.from);
     }
     if (filters.to) {
-      conditions.push(`u.created_at < ($${i++}::date + INTERVAL '1 day')`);
+      conditions.push(`u.created_at < ${dayEndExclusiveSql(`$${i++}`)}`);
       params.push(filters.to);
     }
 

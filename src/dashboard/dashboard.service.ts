@@ -5,9 +5,20 @@ import {
   CHANNEL_COLUMNS_SQL,
 } from '../common/channel-attribution';
 
-export type DashboardRange = 'today' | '7d' | '30d';
+export type DashboardRange = 'today' | 'yesterday' | '7d' | '30d';
 
-const RANGE_DAYS: Record<DashboardRange, number> = { today: 1, '7d': 7, '30d': 30 };
+/**
+ * `days` is how long the window is, `back` how many whole days before today it
+ * ends. back = 0 is a RUNNING window ending at now(); back > 0 is a CLOSED
+ * window — "yesterday" is the full 00:00→24:00 of the previous Dhaka day and
+ * never moves, so a figure read at 9am and again at 9pm is the same figure.
+ */
+const RANGES: Record<DashboardRange, { days: number; back: number }> = {
+  today:     { days: 1,  back: 0 },
+  yesterday: { days: 1,  back: 1 },
+  '7d':      { days: 7,  back: 0 },
+  '30d':     { days: 30, back: 0 },
+};
 
 // Business day boundaries. "Today" means today in Dhaka, not in UTC — a UTC
 // day would split the evening peak across two dashboard days.
@@ -45,15 +56,12 @@ export class DashboardService {
   constructor(private readonly dataSource: DataSource) {}
 
   async getDashboard(opts: { range?: string; bigWinMultiplier?: number; bigWinMin?: number }) {
-    const range = (opts.range ?? 'today').toLowerCase() as DashboardRange;
-    if (!RANGE_DAYS[range]) {
-      throw new BadRequestException(`range must be one of: ${Object.keys(RANGE_DAYS).join(', ')}`);
-    }
+    const range = this.parseRange(opts.range);
     const unit = range === 'today' ? 'hour' : 'day';
-    const period = await this.period(RANGE_DAYS[range]);
+    const period = await this.period(range);
 
     const [buckets, wagers, cash, pending, pendingDeposits, bigWins, spin] = await Promise.all([
-      this.buckets(period.start, unit),
+      this.buckets(period, unit),
       this.wagerAggregates(period, unit),
       this.cashAggregates(period, unit),
       this.pendingQueues(),
@@ -141,28 +149,55 @@ export class DashboardService {
     return { value: this.r2(value), prev: this.r2(prev), changePct, ...extra };
   }
 
-  private async period(days: number): Promise<Period> {
+  private parseRange(raw?: string): DashboardRange {
+    const range = (raw ?? 'today').toLowerCase() as DashboardRange;
+    if (!RANGES[range]) {
+      throw new BadRequestException(
+        `range must be one of: ${Object.keys(RANGES).join(', ')}`,
+      );
+    }
+    return range;
+  }
+
+  /**
+   * The window [start, end) and the SAME elapsed stretch one window earlier.
+   *
+   * A running range (back = 0) ends at now(), so "today" compares against
+   * "yesterday up to this time" — the like-for-like comparison. A closed range
+   * (back > 0) ends on a day boundary and is compared against the whole of the
+   * window before it.
+   */
+  private async period(range: DashboardRange): Promise<Period> {
+    const { days, back } = RANGES[range];
     const [row] = await this.dataSource.query(
-      `SELECT s                                   AS start,
-              now()                               AS "end",
-              s     - ($2::int * INTERVAL '1 day') AS prev_start,
-              now() - ($2::int * INTERVAL '1 day') AS prev_end
-         FROM (SELECT (date_trunc('day', now() AT TIME ZONE $1::text)
-                       - (($2::int - 1) * INTERVAL '1 day')) AT TIME ZONE $1::text AS s) x`,
-      [TZ, days],
+      `SELECT s                                AS start,
+              e                                AS "end",
+              s - ($2::int * INTERVAL '1 day') AS prev_start,
+              e - ($2::int * INTERVAL '1 day') AS prev_end
+         FROM (
+           SELECT (d0 - (($3::int + $2::int - 1) * INTERVAL '1 day')) AT TIME ZONE $1::text AS s,
+                  CASE WHEN $3::int = 0 THEN now()
+                       ELSE (d0 - (($3::int - 1) * INTERVAL '1 day')) AT TIME ZONE $1::text
+                  END AS e
+             FROM (SELECT date_trunc('day', now() AT TIME ZONE $1::text) AS d0) z
+         ) x`,
+      [TZ, days, back],
     );
     return { start: row.start, end: row.end, prevStart: row.prev_start, prevEnd: row.prev_end };
   }
 
   /** Every chart bucket in the current period, so empty hours/days still plot as 0. */
-  private async buckets(start: Date, unit: string): Promise<string[]> {
+  private async buckets(p: Period, unit: string): Promise<string[]> {
     const rows = await this.dataSource.query(
+      // `end` is exclusive, so it is pulled back a tick before truncating —
+      // otherwise a closed range (yesterday) would grow one empty bucket past
+      // its own last row, i.e. show today's midnight hour.
       `SELECT to_char(g, 'YYYY-MM-DD"T"HH24:MI') AS b
          FROM generate_series(
-                date_trunc($3::text, $1::timestamptz AT TIME ZONE $2::text),
-                date_trunc($3::text, now() AT TIME ZONE $2::text),
-                ('1 ' || $3)::interval) g`,
-      [start, TZ, unit],
+                date_trunc($4::text, $1::timestamptz AT TIME ZONE $3::text),
+                date_trunc($4::text, ($2::timestamptz - INTERVAL '1 microsecond') AT TIME ZONE $3::text),
+                ('1 ' || $4)::interval) g`,
+      [p.start, p.end, TZ, unit],
     );
     return rows.map((r: any) => r.b);
   }
@@ -650,13 +685,8 @@ export class DashboardService {
     page?: number;
     limit?: number;
   }) {
-    const range = (opts.range ?? 'today').toLowerCase() as DashboardRange;
-    if (!RANGE_DAYS[range]) {
-      throw new BadRequestException(
-        `range must be one of: ${Object.keys(RANGE_DAYS).join(', ')}`,
-      );
-    }
-    const period = await this.period(RANGE_DAYS[range]);
+    const range = this.parseRange(opts.range);
+    const period = await this.period(range);
 
     const SOURCES = Object.keys(SOURCE_LABELS) as DepositSource[];
     const source = opts.source
@@ -824,13 +854,8 @@ export class DashboardService {
     page?: number;
     limit?: number;
   }) {
-    const range = (opts.range ?? 'today').toLowerCase() as DashboardRange;
-    if (!RANGE_DAYS[range]) {
-      throw new BadRequestException(
-        `range must be one of: ${Object.keys(RANGE_DAYS).join(', ')}`,
-      );
-    }
-    const period = await this.period(RANGE_DAYS[range]);
+    const range = this.parseRange(opts.range);
+    const period = await this.period(range);
 
     const page = opts.page && opts.page > 0 ? Math.floor(opts.page) : 1;
     const limit =
