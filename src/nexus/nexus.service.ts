@@ -428,7 +428,12 @@ export class NexusService {
 
     const [rows, [{ total }]] = await Promise.all([
       this.dataSource.query(
-        `SELECT g.uuid, g.name, g.game_code, g.vendor_code, g.provider, g.image,
+        `SELECT g.uuid, g.name, g.game_code, g.vendor_code, g.provider,
+                -- The EFFECTIVE picture, matching what players and the rail
+                -- preview see. Selecting g.image here left this screen showing
+                -- the provider's artwork after an admin had replaced it.
+                COALESCE(o.image_url, g.image) AS image,
+                (o.image_url IS NOT NULL)      AS "imageOverridden",
                 g.type, COALESCE(g.derived_type, g.type) AS derived_type,
                 o.type AS override_type, o.display_name AS override_name, o.note
            FROM casino_games g
