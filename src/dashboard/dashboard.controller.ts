@@ -31,6 +31,27 @@ export class DashboardController {
   }
 
   /**
+   * Where the period's NEW REGISTRATIONS came from, grouped channel type ->
+   * source, for the merged-cell breakdown behind that card.
+   *
+   *   GET /admin/dashboard/registrations?range=today&channelType=Affiliate
+   */
+  @Get('registrations')
+  registrations(
+    @Query('range') range?: string,
+    @Query('channelType') channelType?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.dashboard.getRegistrationBreakdown({
+      range,
+      channelType: channelType?.trim() || undefined,
+      page: Number(page) || 1,
+      limit: Number(limit) || 50,
+    });
+  }
+
+  /**
    * The drill-down behind the DEPOSITS card.
    *
    *   GET /admin/dashboard/deposits?range=today&source=MANUAL&page=1&limit=25

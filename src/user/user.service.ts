@@ -7,6 +7,10 @@ import { DataSource } from 'typeorm';
 import * as bcrypt from 'bcrypt';
 import * as crypto from 'crypto';
 import { assertPhoneAvailable } from '../common/phone.util';
+import {
+  CHANNEL_JOINS_SQL,
+  CHANNEL_COLUMNS_SQL,
+} from '../common/channel-attribution';
 import { LaafficService } from '../laaffic/laaffic.service';
 
 @Injectable()
@@ -332,45 +336,10 @@ export class UserService {
   // ═════════════════════════════════════════════════════════════
 
   /** Lateral joins resolving each attribution source. Requires alias `u`. */
-  private static readonly CHANNEL_JOINS = `
-    LEFT JOIN LATERAL (
-      SELECT au.username
-        FROM referrals r
-        JOIN users au ON au.id = r.referrer_user_id
-       WHERE r.referee_user_id = u.id
-       LIMIT 1
-    ) aff ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT ru.username
-        FROM friend_referrals fr
-        JOIN users ru ON ru.id = fr.referrer_user_id
-       WHERE fr.referee_user_id = u.id
-       LIMIT 1
-    ) frd ON TRUE
-    LEFT JOIN LATERAL (
-      SELECT uca.channel_code, mc.name AS channel_label
-        FROM user_channel_attribution uca
-        LEFT JOIN marketing_channels mc ON mc.id = uca.channel_id
-       WHERE uca.user_id = u.id
-       LIMIT 1
-    ) mkt ON TRUE
-  `;
+  private static readonly CHANNEL_JOINS = CHANNEL_JOINS_SQL;
 
   /** The two derived columns. Must be used together with CHANNEL_JOINS. */
-  private static readonly CHANNEL_COLUMNS = `
-    CASE
-      WHEN aff.username IS NOT NULL THEN 'Affiliate'
-      WHEN frd.username IS NOT NULL THEN 'Refer A Friend'
-      WHEN mkt.channel_code IS NOT NULL THEN 'Marketing'
-      ELSE 'Direct'
-    END AS channel_type,
-    CASE
-      WHEN aff.username IS NOT NULL THEN aff.username
-      WHEN frd.username IS NOT NULL THEN frd.username
-      WHEN mkt.channel_code IS NOT NULL THEN COALESCE(mkt.channel_label, mkt.channel_code)
-      ELSE u.signup_domain
-    END AS channel_name
-  `;
+  private static readonly CHANNEL_COLUMNS = CHANNEL_COLUMNS_SQL;
 
   // ═════════════════════════════════════════════════════════════
   // ADMIN: LIST ALL USERS

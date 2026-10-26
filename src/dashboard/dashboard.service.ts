@@ -1,5 +1,9 @@
 import { BadRequestException, Injectable } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import {
+  CHANNEL_JOINS_SQL,
+  CHANNEL_COLUMNS_SQL,
+} from '../common/channel-attribution';
 
 export type DashboardRange = 'today' | '7d' | '30d';
 
@@ -793,6 +797,135 @@ export class DashboardService {
           isTest: r.is_test === true,
           requestedAt: r.requested_at,
           decidedAt: r.decided_at,
+        })),
+      },
+    };
+  }
+
+  // ── registrations drill-down ─────────────────────────────────────
+
+  /**
+   * Where this period's new players came from.
+   *
+   * Grouped channel type -> channel name -> players, so the admin screen can
+   * render it with the type cell merged across its sources (Affiliate spanning
+   * trisha, tithi, ...) rather than repeating the word on every row.
+   *
+   * Attribution is NOT reimplemented here: it imports the same SQL the member
+   * list labels players with, so "Affiliate / trisha" means the same thing on
+   * both screens. A second copy would drift the first time precedence changed.
+   *
+   * Uses the same Asia/Dhaka period as the NEW REGISTRATIONS card, so the
+   * breakdown always sums to the number that was clicked.
+   */
+  async getRegistrationBreakdown(opts: {
+    range?: string;
+    channelType?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const range = (opts.range ?? 'today').toLowerCase() as DashboardRange;
+    if (!RANGE_DAYS[range]) {
+      throw new BadRequestException(
+        `range must be one of: ${Object.keys(RANGE_DAYS).join(', ')}`,
+      );
+    }
+    const period = await this.period(RANGE_DAYS[range]);
+
+    const page = opts.page && opts.page > 0 ? Math.floor(opts.page) : 1;
+    const limit =
+      opts.limit && opts.limit > 0 ? Math.min(Math.floor(opts.limit), 200) : 50;
+    const offset = (page - 1) * limit;
+    const channelType = opts.channelType?.trim() || null;
+
+    const base = `
+      FROM users u
+      ${CHANNEL_JOINS_SQL}
+      WHERE u.created_at >= $1::timestamptz AND u.created_at < $2::timestamptz
+    `;
+
+    const [grouped, rows, countRow] = await Promise.all([
+      // GROUPING SETS gives the per-type subtotal and the per-name detail in
+      // one pass, so the merged cell's rowspan and its total come from the
+      // same query and cannot disagree.
+      this.dataSource.query(
+        `SELECT GROUPING(channel_name) AS g_name, channel_type, channel_name,
+                COUNT(*)::int AS players
+           FROM (SELECT ${CHANNEL_COLUMNS_SQL} ${base}) c
+          GROUP BY GROUPING SETS ((channel_type), (channel_type, channel_name))
+          ORDER BY channel_type, players DESC`,
+        [period.start, period.end],
+      ),
+      this.dataSource.query(
+        `SELECT * FROM (
+           SELECT u.id, u.username, u.full_name, u.user_code, u.created_at,
+                  u.vip_level, u.account_status,
+                  ${CHANNEL_COLUMNS_SQL}
+           ${base}
+         ) c
+          WHERE ($3::text IS NULL OR c.channel_type = $3::text)
+          ORDER BY c.created_at DESC
+          LIMIT $4 OFFSET $5`,
+        [period.start, period.end, channelType, limit, offset],
+      ),
+      this.dataSource.query(
+        `SELECT COUNT(*)::int AS n FROM (
+           SELECT ${CHANNEL_COLUMNS_SQL} ${base}
+         ) c WHERE ($3::text IS NULL OR c.channel_type = $3::text)`,
+        [period.start, period.end, channelType],
+      ),
+    ]);
+
+    // GROUPING() is 1 for the column rolled up in that set, so g_name = 1 is
+    // the per-type subtotal row and g_name = 0 the per-source detail.
+    const total = grouped
+      .filter((r: any) => Number(r.g_name) === 1)
+      .reduce((n: number, r: any) => n + Number(r.players), 0);
+
+    const byChannel = grouped
+      .filter((r: any) => Number(r.g_name) === 1)
+      .map((t: any) => ({
+        channelType: t.channel_type,
+        players: Number(t.players),
+        sharePct: total > 0 ? this.r2((Number(t.players) / total) * 100) : 0,
+        // The rows the merged type cell spans. `rowSpan` is handed over rather
+        // than left for the UI to compute, so an empty source list cannot
+        // collapse the cell.
+        sources: grouped
+          .filter(
+            (d: any) => Number(d.g_name) === 0 && d.channel_type === t.channel_type,
+          )
+          .map((d: any) => ({
+            channelName: d.channel_name ?? null,
+            players: Number(d.players),
+          })),
+      }))
+      .map((t: any) => ({ ...t, rowSpan: Math.max(1, t.sources.length) }))
+      .sort((a: any, b: any) => b.players - a.players);
+
+    return {
+      range,
+      timezone: TZ,
+      period,
+      generatedAt: new Date(),
+      // Equals the NEW REGISTRATIONS card exactly.
+      summary: { players: total, channels: byChannel.length },
+      byChannel,
+      filter: { channelType },
+      rows: {
+        page,
+        limit,
+        total: Number(countRow[0]?.n ?? 0),
+        items: rows.map((r: any) => ({
+          id: Number(r.id),
+          username: r.username,
+          fullName: r.full_name,
+          userCode: r.user_code,
+          vipLevel: r.vip_level === null ? null : Number(r.vip_level),
+          status: r.account_status,
+          channelType: r.channel_type,
+          channelName: r.channel_name ?? null,
+          registeredAt: r.created_at,
         })),
       },
     };
