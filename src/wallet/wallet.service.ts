@@ -525,15 +525,25 @@ export class WalletService {
         // measure, and the reward side effects below are skipped.
         const isTest = dto.isTest === true;
 
+        // Every value is its own parameter. Reusing $1 for both
+        // approved_by_admin_id (bigint) and a CASE arm cast to int made
+        // Postgres deduce two types for it and reject the whole statement
+        // with 42P08 "integer versus bigint", which failed every approval.
         await qr.query(
           `UPDATE deposits
            SET status = 'APPROVED', decided_at = NOW(),
                approved_by_admin_id = $1, updated_at = NOW(),
                is_test = $3,
-               test_marked_by_admin = CASE WHEN $3 THEN $1::int ELSE NULL END,
-               test_marked_at       = CASE WHEN $3 THEN NOW() ELSE NULL END
+               test_marked_by_admin = $4,
+               test_marked_at       = $5
            WHERE id = $2`,
-          [dto.adminId, dto.depositId, isTest],
+          [
+            dto.adminId,
+            dto.depositId,
+            isTest,
+            isTest ? dto.adminId : null,
+            isTest ? new Date() : null,
+          ],
         );
 
         await this.financialLedger.write({
