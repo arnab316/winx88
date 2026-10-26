@@ -1,6 +1,7 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
 import { InjectDataSource } from '@nestjs/typeorm';
 import { DataSource } from 'typeorm';
+import { MediaS3Service } from '../common/services/media-s3.service';
 
 /**
  * Admin curation of catalog categories and display names.
@@ -57,7 +58,10 @@ export interface CurationTarget {
 export class GameCurationService {
   private readonly logger = new Logger(GameCurationService.name);
 
-  constructor(@InjectDataSource() private readonly dataSource: DataSource) {}
+  constructor(
+    @InjectDataSource() private readonly dataSource: DataSource,
+    private readonly media: MediaS3Service,
+  ) {}
 
   // ── loading ─────────────────────────────────────────────────────────────
 
@@ -229,6 +233,31 @@ export class GameCurationService {
   }
 
   /** Set or clear a single game's override. Nulls clear that field. */
+  /**
+   * Upload replacement artwork to S3 and pin it to the game.
+   *
+   * The file goes to the shared media bucket under `game-art/`, the same way
+   * banners and shortcut icons do, and only the resulting URL is stored — so
+   * this is the same override a pasted URL produces, just hosted by us.
+   *
+   * The previous file is deliberately NOT deleted: keys are random UUIDs, so
+   * nothing is overwritten, and a stale object costs pennies where deleting
+   * one still referenced by a cached page costs a broken image.
+   */
+  async uploadOverrideImage(
+    gameUuid: string,
+    file: Express.Multer.File,
+    adminId?: number,
+  ) {
+    if (!file?.buffer) throw new BadRequestException('No image uploaded');
+
+    const url = await this.media.uploadImage(file, 'game-art');
+    await this.setOverride(gameUuid, { imageUrl: url }, adminId);
+
+    this.logger.log(`game ${gameUuid}: artwork replaced by admin ${adminId ?? '?'}`);
+    return { success: true, gameUuid, imageUrl: url };
+  }
+
   async setOverride(
     gameUuid: string,
     dto: {

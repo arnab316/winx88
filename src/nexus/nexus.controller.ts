@@ -1,12 +1,17 @@
 import {
+  BadRequestException,
   Body,
   Controller,
   Get,
   Post,
   Query,
   Req,
+  UploadedFile,
   UseGuards,
+  UseInterceptors,
 } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { memoryStorage } from 'multer';
 import { NexusService } from './nexus.service';
 import { NexusClient } from './nexus.client';
 import { GameCurationService } from './game-curation.service';
@@ -20,6 +25,20 @@ import { GameLibraryService } from '../game-library/game-library.service';
  * Admin + player routes for Nexus. The seamless money endpoint is separate
  * (NexusCallbackController, POST /gold_api) and deliberately unguarded.
  */
+/**
+ * Game tiles render small, so there is no reason to accept a large file —
+ * and the catalog has thousands of games, which would add up.
+ */
+const artworkUpload = FileInterceptor('image', {
+  storage: memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const allowed = ['image/png', 'image/webp', 'image/jpeg', 'image/gif'];
+    if (allowed.includes(file.mimetype)) cb(null, true);
+    else cb(new BadRequestException('Only PNG, WEBP, JPG or GIF allowed'), false);
+  },
+});
+
 @Controller('nexus')
 export class NexusController {
   constructor(
@@ -139,6 +158,32 @@ export class NexusController {
     },
   ) {
     return this.curation.setOverride(body?.gameUuid, body, req.admin?.id ?? req.user?.sub);
+  }
+
+  /**
+   * Upload replacement artwork for one game.
+   *
+   *   POST /nexus/admin/curation/override/image   (multipart: image, gameUuid)
+   *
+   * Hosts the file on our own bucket rather than asking an admin to find a
+   * URL. The stored value is the same override a pasted URL produces, so
+   * clearing it still reverts to the provider's picture.
+   */
+  @UseGuards(AdminGuard)
+  @Post('admin/curation/override/image')
+  @UseInterceptors(artworkUpload)
+  uploadOverrideImage(
+    @Req() req: any,
+    @Body('gameUuid') gameUuid: string,
+    @UploadedFile() image?: Express.Multer.File,
+  ) {
+    if (!gameUuid?.trim()) throw new BadRequestException('gameUuid is required');
+    if (!image) throw new BadRequestException('No image uploaded');
+    return this.curation.uploadOverrideImage(
+      gameUuid.trim(),
+      image,
+      req.admin?.id ?? req.user?.sub,
+    );
   }
 
   /**
