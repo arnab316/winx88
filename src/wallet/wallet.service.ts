@@ -153,6 +153,29 @@ export class WalletService {
       );
     }
 
+    // One open deposit request at a time.
+    //
+    // Runs in the GATE, so it also fires on the pre-flight validation that
+    // happens before the agent number is revealed - a player is told they
+    // already have one open BEFORE they send money, not after.
+    //
+    // PENDING only: a rejected deposit is finished and an approved one has
+    // already credited, so neither blocks the next request.
+    const open = await qr.query(
+      `SELECT deposit_code, amount
+         FROM deposits
+        WHERE user_id = $1 AND status = 'PENDING'
+        ORDER BY requested_at ASC
+        LIMIT 1`,
+      [args.userId],
+    );
+    if (open.length) {
+      throw new BadRequestException(
+        `You already have a deposit awaiting approval (${open[0].deposit_code}, ` +
+          `${open[0].amount}). Please wait for it to be reviewed before sending another.`,
+      );
+    }
+
     // Gateway must exist and be active.
     const gateway = await qr.query(
       `SELECT id FROM payment_gateways WHERE id = $1 AND is_active = true LIMIT 1`,
@@ -189,6 +212,50 @@ export class WalletService {
         args.userId,
         args.promotionId,
         args.amount,
+      );
+    }
+  }
+
+  /**
+   * Refuse a transaction number this player has already submitted.
+   *
+   * The same payment reaching us twice is the expensive failure: both rows
+   * credit on approval, so one bKash payment becomes two wallet credits and
+   * two bonuses. Production already carries 15 transaction numbers that were
+   * approved more than once.
+   *
+   * REJECTED rows are deliberately NOT counted - a deposit turned down for a
+   * bad screenshot has to stay re-submittable with the same real reference.
+   *
+   * Reuse by a DIFFERENT player is allowed through on purpose and surfaced to
+   * the approving admin instead (`trx_other_users` on the admin list): two
+   * players can collide honestly on a short reference, and refusing the second
+   * would block a real deposit on a guess.
+   */
+  private async assertTrxNotReused(
+    qr: QueryRunner,
+    userId: number,
+    transactionNumber?: string | null,
+  ): Promise<void> {
+    const trx = (transactionNumber ?? '').trim();
+    if (!trx) return; // provider deposits carry no reference of their own
+
+    const dupe = await qr.query(
+      `SELECT deposit_code, status
+         FROM deposits
+        WHERE user_id = $1
+          AND status IN ('PENDING', 'APPROVED')
+          AND upper(trim(transaction_number)) = upper($2)
+        ORDER BY requested_at DESC
+        LIMIT 1`,
+      [userId, trx],
+    );
+    if (dupe.length) {
+      const d = dupe[0];
+      throw new BadRequestException(
+        d.status === 'PENDING'
+          ? `You have already submitted transaction ${trx} (${d.deposit_code}) and it is awaiting approval.`
+          : `Transaction ${trx} has already been credited to your account (${d.deposit_code}).`,
       );
     }
   }
@@ -281,6 +348,11 @@ export class WalletService {
         amount:      dto.amount,
         promotionId: dto.promotionId,
       });
+
+      // Same payment submitted twice. Checked inside the transaction and after
+      // the gate, whose PENDING lookup already serialises a double-tap on the
+      // same rows.
+      await this.assertTrxNotReused(qr, dto.userId, dto.transactionNumber);
 
       // Which of the player's own numbers they sent the money from. The client
       // picks it from a dropdown, but the choice is re-checked here against
@@ -1658,6 +1730,10 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          d.is_test,
          d.test_marked_at,
          tadm.name AS test_marked_by_name,
+         -- How many OTHER accounts submitted this same transaction number.
+         -- Flagged rather than blocked, because a short reference can collide
+         -- honestly - so the approving admin is shown it and decides.
+         dup.other_users AS trx_other_users,
          d.promotion_id,
          d.provider,
          d.pay_type,
@@ -1703,6 +1779,14 @@ async getPendingDeposits(q: DepositListQuery = {}) {
        LEFT JOIN promotions p  ON p.id  = d.promotion_id
        LEFT JOIN admin_users adm ON adm.id = d.approved_by_admin_id
        LEFT JOIN admin_users tadm ON tadm.id = d.test_marked_by_admin
+       LEFT JOIN LATERAL (
+         SELECT COUNT(DISTINCT o.user_id)::int AS other_users
+           FROM deposits o
+          WHERE o.transaction_number IS NOT NULL
+            AND o.transaction_number <> ''
+            AND upper(trim(o.transaction_number)) = upper(trim(d.transaction_number))
+            AND o.user_id <> d.user_id
+       ) dup ON d.transaction_number IS NOT NULL AND d.transaction_number <> ''
        LEFT JOIN LATERAL (
          SELECT up.phone_number
            FROM user_phone_numbers up
@@ -1790,7 +1874,8 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          a.agent_number, a.agent_code, a.wallet_type,
          p.title AS promotion_title, p.code AS promotion_code,
          adm.name  AS decided_by_name,
-         tadm.name AS test_marked_by_name
+         tadm.name AS test_marked_by_name,
+         dup.other_users AS trx_other_users
        FROM deposits d
        JOIN users u            ON u.id  = d.user_id
        LEFT JOIN vip_level_config vlc ON vlc.level = u.vip_level
@@ -1799,6 +1884,14 @@ async getPendingDeposits(q: DepositListQuery = {}) {
        LEFT JOIN promotions p  ON p.id  = d.promotion_id
        LEFT JOIN admin_users adm ON adm.id = d.approved_by_admin_id
        LEFT JOIN admin_users tadm ON tadm.id = d.test_marked_by_admin
+       LEFT JOIN LATERAL (
+         SELECT COUNT(DISTINCT o.user_id)::int AS other_users
+           FROM deposits o
+          WHERE o.transaction_number IS NOT NULL
+            AND o.transaction_number <> ''
+            AND upper(trim(o.transaction_number)) = upper(trim(d.transaction_number))
+            AND o.user_id <> d.user_id
+       ) dup ON d.transaction_number IS NOT NULL AND d.transaction_number <> ''
        LEFT JOIN LATERAL (
          SELECT up.phone_number
            FROM user_phone_numbers up
