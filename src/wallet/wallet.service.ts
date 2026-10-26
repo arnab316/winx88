@@ -1740,10 +1740,6 @@ async getPendingDeposits(q: DepositListQuery = {}) {
          d.is_test,
          d.test_marked_at,
          tadm.name AS test_marked_by_name,
-         -- How many OTHER accounts submitted this same transaction number.
-         -- Flagged rather than blocked, because a short reference can collide
-         -- honestly - so the approving admin is shown it and decides.
-         dup.other_users AS trx_other_users,
          d.promotion_id,
          d.provider,
          d.pay_type,
@@ -1790,14 +1786,6 @@ async getPendingDeposits(q: DepositListQuery = {}) {
        LEFT JOIN admin_users adm ON adm.id = d.approved_by_admin_id
        LEFT JOIN admin_users tadm ON tadm.id = d.test_marked_by_admin
        LEFT JOIN LATERAL (
-         SELECT COUNT(DISTINCT o.user_id)::int AS other_users
-           FROM deposits o
-          WHERE o.transaction_number IS NOT NULL
-            AND o.transaction_number <> ''
-            AND upper(trim(o.transaction_number)) = upper(trim(d.transaction_number))
-            AND o.user_id <> d.user_id
-       ) dup ON d.transaction_number IS NOT NULL AND d.transaction_number <> ''
-       LEFT JOIN LATERAL (
          SELECT up.phone_number
            FROM user_phone_numbers up
           WHERE up.user_id = u.id
@@ -1840,6 +1828,16 @@ async getPendingDeposits(q: DepositListQuery = {}) {
       params,
     );
 
+    // How many OTHER accounts used each transaction number on this page.
+    // Flagged rather than blocked, because a short reference can collide
+    // honestly - so the approving admin is shown it and decides.
+    //
+    // Done as a second query over the page's own rows, NOT as a LATERAL in
+    // the query above: a lateral is evaluated for every row the WHERE matches
+    // before LIMIT applies, which on production meant 2,207 lookups per page
+    // and took the endpoint from 145ms to 12.5s.
+    await this.attachTrxCollisions(rows);
+
     return {
       data:  rows,
       total: countRows[0].total,
@@ -1863,6 +1861,55 @@ async getPendingDeposits(q: DepositListQuery = {}) {
     };
   }
  
+  /**
+   * Annotate a page of deposits with `trx_other_users` — how many OTHER
+   * accounts submitted the same transaction number.
+   *
+   * One extra query for the whole page, keyed on the normalised reference so
+   * it can use idx_deposits_trx_normalised. Mutates the rows in place, which
+   * is what the list contract already hands back to the controller.
+   */
+  private async attachTrxCollisions(rows: any[]): Promise<void> {
+    if (!rows.length) return;
+
+    const keyOf = (v: unknown) => String(v ?? '').trim().toUpperCase();
+    const keys = [...new Set(rows.map((r) => keyOf(r.transaction_number)).filter(Boolean))];
+
+    // Every row on this page is a provider deposit with no reference.
+    if (!keys.length) {
+      for (const r of rows) r.trx_other_users = 0;
+      return;
+    }
+
+    const owners = await this.dataSource.query(
+      `SELECT upper(trim(transaction_number)) AS k,
+              array_agg(DISTINCT user_id)      AS user_ids
+         FROM deposits
+        WHERE transaction_number IS NOT NULL
+          AND transaction_number <> ''
+          AND upper(trim(transaction_number)) = ANY($1::text[])
+        GROUP BY 1`,
+      [keys],
+    );
+
+    const byKey = new Map<string, Set<string>>(
+      owners.map((o: any) => [o.k, new Set((o.user_ids ?? []).map(String))]),
+    );
+
+    for (const r of rows) {
+      const k = keyOf(r.transaction_number);
+      if (!k) {
+        r.trx_other_users = 0;
+        continue;
+      }
+      const users = byKey.get(k);
+      // Everyone who used this reference, minus this row's own player.
+      r.trx_other_users = users
+        ? [...users].filter((id) => id !== String(r.user_id)).length
+        : 0;
+    }
+  }
+
   // ─── ADD getDepositById() ────────────────────────────────────
   async getDepositById(depositId: number) {
     const rows = await this.dataSource.query(
