@@ -29,4 +29,28 @@ export class DashboardController {
       bigWinMin: num(bigWinMin),
     });
   }
+
+  /**
+   * The drill-down behind the DEPOSITS card.
+   *
+   *   GET /admin/dashboard/deposits?range=today&source=MANUAL&page=1&limit=25
+   *
+   * Same range values as the card itself, so the totals reconcile with the
+   * figure the admin clicked. `source` narrows the LIST only; the summary and
+   * the breakdown tables always cover the whole range.
+   */
+  @Get('deposits')
+  deposits(
+    @Query('range') range?: string,
+    @Query('source') source?: string,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
+  ) {
+    return this.dashboard.getDepositBreakdown({
+      range,
+      source: source?.trim() || undefined,
+      page: Number(page) || 1,
+      limit: Number(limit) || 25,
+    });
+  }
 }

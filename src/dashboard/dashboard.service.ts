@@ -11,6 +11,15 @@ const TZ = 'Asia/Dhaka';
 
 type Period = { start: Date; end: Date; prevStart: Date; prevEnd: Date };
 
+/** How a deposit reached the wallet, as the breakdown modal labels it. */
+const SOURCE_LABELS = {
+  PLAYER: 'Player request',
+  MANUAL: 'Manual (admin)',
+  PROVIDER: 'Online (PSP)',
+  CRYPTO: 'Crypto',
+} as const;
+type DepositSource = keyof typeof SOURCE_LABELS;
+
 /**
  * Super-admin dashboard: one call returns every card on the page.
  *
@@ -571,6 +580,221 @@ export class DashboardService {
         amount: this.r2(parseFloat(t.amount)),
         createdAt: t.created_at,
       })),
+    };
+  }
+
+  /**
+   * Where a deposit came from. Precedence matters: an admin-entered deposit is
+   * MANUAL whatever gateway it was filed under, because the money never
+   * travelled through that gateway's own flow.
+   *
+   *   MANUAL   an admin typed it in (POST /wallet/admin/manual-deposit)
+   *   PROVIDER automated PSP, e.g. WinyPay - deposits.provider is set
+   *   CRYPTO   an on-chain gateway
+   *   PLAYER   the player submitted it with a TRX number and screenshot
+   *
+   * MANUAL is read off the financial ledger rather than guessed from the row
+   * shape: adminManualDeposit writes entry_type = 'MANUAL_DEPOSIT' while an
+   * ordinary approval writes 'DEPOSIT_APPROVED'. That is the only
+   * authoritative mark - the deposit row itself looks the same either way.
+   */
+  private depositRowsSql(): string {
+    return `
+      SELECT d.id, d.deposit_code, d.amount::numeric AS amount, d.is_test,
+             d.requested_at, d.decided_at, d.promotion_id,
+             d.provider, d.pay_type, d.transaction_number,
+             d.user_id,
+             g.id AS gateway_id, g.name AS gateway_name, g.type AS gateway_type,
+             CASE WHEN ml.found IS NOT NULL   THEN 'MANUAL'
+                  WHEN d.provider IS NOT NULL THEN 'PROVIDER'
+                  WHEN g.type = 'CRYPTO'      THEN 'CRYPTO'
+                  ELSE 'PLAYER' END           AS source,
+             COALESCE(cl.bonus, 0)::numeric   AS bonus
+        FROM deposits d
+        LEFT JOIN payment_gateways g ON g.id = d.gateway_id
+        LEFT JOIN LATERAL (
+          SELECT 1 AS found
+            FROM financial_ledger fl
+           WHERE fl.reference_type = 'DEPOSIT'
+             AND fl.reference_id   = d.id
+             AND fl.entry_type     = 'MANUAL_DEPOSIT'
+           LIMIT 1
+        ) ml ON TRUE
+        LEFT JOIN LATERAL (
+          SELECT SUM(c.bonus_amount)::numeric AS bonus
+            FROM user_promotion_claims c
+           WHERE c.deposit_id = d.id AND c.status <> 'CANCELLED'
+        ) cl ON TRUE
+       WHERE d.status = 'APPROVED'
+         AND d.decided_at >= $1::timestamptz AND d.decided_at < $2::timestamptz
+    `;
+  }
+
+  /**
+   * What the DEPOSITS card is made of, for the same range - the drill-down
+   * behind clicking it.
+   *
+   * `summary.real` is the card's own figure (approved, test excluded), so the
+   * breakdown always reconciles with the number the admin clicked. Test
+   * deposits and promotion bonus are reported ALONGSIDE it and are not part of
+   * it: bonus never lives in deposits.amount, and this is where that is made
+   * visible rather than left to be trusted.
+   */
+  async getDepositBreakdown(opts: {
+    range?: string;
+    source?: string;
+    page?: number;
+    limit?: number;
+  }) {
+    const range = (opts.range ?? 'today').toLowerCase() as DashboardRange;
+    if (!RANGE_DAYS[range]) {
+      throw new BadRequestException(
+        `range must be one of: ${Object.keys(RANGE_DAYS).join(', ')}`,
+      );
+    }
+    const period = await this.period(RANGE_DAYS[range]);
+
+    const SOURCES = Object.keys(SOURCE_LABELS) as DepositSource[];
+    const source = opts.source
+      ? (opts.source.toUpperCase() as DepositSource)
+      : undefined;
+    if (source && !SOURCES.includes(source)) {
+      throw new BadRequestException(`source must be one of: ${SOURCES.join(', ')}`);
+    }
+
+    const page = opts.page && opts.page > 0 ? Math.floor(opts.page) : 1;
+    const limit =
+      opts.limit && opts.limit > 0 ? Math.min(Math.floor(opts.limit), 200) : 25;
+    const offset = (page - 1) * limit;
+
+    const base = this.depositRowsSql();
+    // $3 is the optional source filter; NULL means "every source".
+    const rowFilter = `WHERE ($3::text IS NULL OR b.source = $3::text)`;
+
+    const [agg, rows, countRow] = await Promise.all([
+      // Totals, per-source and per-gateway in one pass. The source filter is
+      // deliberately NOT applied here - the breakdown keeps showing the whole
+      // range while only the list below narrows to one source.
+      this.dataSource.query(
+        `WITH b AS (${base})
+         SELECT GROUPING(source) AS g_src, GROUPING(gateway_id) AS g_gw,
+                source, gateway_id,
+                MAX(gateway_name) AS gateway_name,
+                MAX(gateway_type) AS gateway_type,
+                COUNT(*) FILTER (WHERE NOT is_test)::int                AS real_cnt,
+                COALESCE(SUM(amount) FILTER (WHERE NOT is_test), 0)     AS real_amt,
+                COUNT(*) FILTER (WHERE is_test)::int                    AS test_cnt,
+                COALESCE(SUM(amount) FILTER (WHERE is_test), 0)         AS test_amt,
+                COUNT(*) FILTER (WHERE NOT is_test AND bonus > 0)::int  AS bonus_cnt,
+                COALESCE(SUM(bonus) FILTER (WHERE NOT is_test), 0)      AS bonus_amt,
+                COUNT(DISTINCT user_id) FILTER (WHERE NOT is_test)::int AS players
+           FROM b
+          GROUP BY GROUPING SETS ((), (source), (gateway_id))`,
+        [period.start, period.end],
+      ),
+      this.dataSource.query(
+        `WITH b AS (${base})
+         SELECT b.*, u.username, u.user_code, p.title AS promotion_title
+           FROM b
+           JOIN users u ON u.id = b.user_id
+           LEFT JOIN promotions p ON p.id = b.promotion_id
+           ${rowFilter}
+          ORDER BY b.decided_at DESC, b.id DESC
+          LIMIT $4 OFFSET $5`,
+        [period.start, period.end, source ?? null, limit, offset],
+      ),
+      this.dataSource.query(
+        `WITH b AS (${base})
+         SELECT COUNT(*)::int AS n FROM b ${rowFilter}`,
+        [period.start, period.end, source ?? null],
+      ),
+    ]);
+
+    const money = (v: any) => this.r2(parseFloat(v ?? 0));
+    // GROUPING() is 1 for a column rolled up in that set, so the row with both
+    // set is the grand total.
+    const totalRow = agg.find(
+      (r: any) => Number(r.g_src) === 1 && Number(r.g_gw) === 1,
+    );
+
+    const pick = (r: any) => ({
+      count: Number(r?.real_cnt ?? 0),
+      amount: money(r?.real_amt),
+      testCount: Number(r?.test_cnt ?? 0),
+      testAmount: money(r?.test_amt),
+      bonusAmount: money(r?.bonus_amt),
+    });
+
+    const bySourceRows = agg.filter((r: any) => Number(r.g_src) === 0);
+    const bySource = SOURCES.map((key) => {
+      const r = bySourceRows.find((x: any) => x.source === key);
+      return { source: key, label: SOURCE_LABELS[key], ...pick(r) };
+    }).filter((x) => x.count > 0 || x.testCount > 0);
+
+    const byGateway = agg
+      .filter((r: any) => Number(r.g_gw) === 0)
+      .map((r: any) => ({
+        gatewayId: r.gateway_id === null ? null : Number(r.gateway_id),
+        gateway: r.gateway_name ?? 'Unknown',
+        type: r.gateway_type ?? null,
+        ...pick(r),
+      }))
+      .sort((a: any, b: any) => b.amount - a.amount);
+
+    const total = pick(totalRow);
+
+    return {
+      range,
+      timezone: TZ,
+      period,
+      generatedAt: new Date(),
+      summary: {
+        // The DEPOSITS card, exactly: approved, real money, test excluded.
+        real: {
+          count: total.count,
+          amount: total.amount,
+          players: Number(totalRow?.players ?? 0),
+        },
+        // Credited to wallets, but deliberately kept out of `real`.
+        test: { count: total.testCount, amount: total.testAmount },
+        // Promotion bonus credited on top of those deposits. Never part of
+        // deposits.amount - shown here so the card's figure is provably cash.
+        bonus: {
+          count: Number(totalRow?.bonus_cnt ?? 0),
+          amount: total.bonusAmount,
+        },
+        // What the players ended up with: cash + bonus. A reporting figure.
+        credited: this.r2(total.amount + total.bonusAmount),
+      },
+      bySource,
+      byGateway,
+      filter: { source: source ?? null },
+      rows: {
+        page,
+        limit,
+        total: Number(countRow[0]?.n ?? 0),
+        items: rows.map((r: any) => ({
+          id: Number(r.id),
+          depositCode: r.deposit_code,
+          // The panel links the username to the member dialog, so it needs the id.
+          userId: Number(r.user_id),
+          username: r.username,
+          userCode: r.user_code,
+          source: r.source,
+          sourceLabel: SOURCE_LABELS[r.source as DepositSource] ?? r.source,
+          gateway: r.gateway_name ?? null,
+          gatewayType: r.gateway_type ?? null,
+          provider: r.provider ?? null,
+          payType: r.pay_type ?? null,
+          trxNumber: r.transaction_number ?? null,
+          amount: money(r.amount),
+          bonus: money(r.bonus),
+          promotion: r.promotion_title ?? null,
+          isTest: r.is_test === true,
+          requestedAt: r.requested_at,
+          decidedAt: r.decided_at,
+        })),
+      },
     };
   }
 }
