@@ -57,7 +57,9 @@ export class DashboardService {
 
   async getDashboard(opts: { range?: string; bigWinMultiplier?: number; bigWinMin?: number }) {
     const range = this.parseRange(opts.range);
-    const unit = range === 'today' ? 'hour' : 'day';
+    // Any single-day window charts hourly, not just today — yesterday is
+    // one day too, and a 'day' unit would plot it as a single dot.
+    const unit = RANGES[range].days === 1 ? 'hour' : 'day';
     const period = await this.period(range);
 
     const [buckets, wagers, cash, pending, pendingDeposits, bigWins, spin] = await Promise.all([
