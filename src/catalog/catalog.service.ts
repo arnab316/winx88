@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { DataSource } from 'typeorm';
+import { toVertical, oroplayVertical } from '../common/game-vertical';
 
 /**
  * Read-only catalog feed for the admin UI.
@@ -8,6 +9,10 @@ import { DataSource } from 'typeorm';
  *     on a promotion (BONUS AMOUNT PROVIDERS). These are the values stored in
  *     promotions.eligible_game_categories — keep this list in sync with
  *     GAME_CATEGORIES in src/promotion/dto/promotion.dto.ts.
+ *
+ *   - getProviders(): every provider behind those verticals, across all four
+ *     integrations, each tagged with the verticals it offers so the form can
+ *     list a vertical's providers when it is expanded.
  *
  *   - getGames(): every game the admin can reference (e.g. for the Exclude Game
  *     List), unified from three physical sources:
@@ -168,26 +173,142 @@ export class CatalogService {
   }
 
   /**
-   * Every provider the exclude list can group by, whether or not anyone has
-   * played them yet.
+   * Every provider an admin can target, from every integration, with the
+   * verticals each one actually offers.
    *
-   * Driven off the synced catalogue rather than transaction history, so a
-   * newly added provider is pickable immediately — the admin should not have
-   * to wait for a player to try a game before being able to exclude it.
+   * `casino_games` is the SHARED catalogue — all three integrations sync into
+   * it and are told apart by the same markers the player-facing browse uses:
+   *
+   *   aggregator = 'NEXUS'   Nexus, keyed by vendor_code (slots, live, fishing,
+   *                          instant and the SB sportsbook)
+   *   type = 'slots'         Palace slots, keyed by the numeric provider_id
+   *   anything else          OroPlay live/table vendors, keyed by vendor_code
+   *
+   * Driven off the catalogue rather than transaction history, so a newly
+   * synced vendor is pickable immediately — an admin should not have to wait
+   * for a player to try a game before being able to target its provider.
+   *
+   * Two sources sit outside that table and are added by hand, because both
+   * can take a bet that must be targetable:
+   *
+   *   OWN:HOUSE      our own draw games (the `games` table)
+   *   SPORTS:HOUSE   the standalone sportsbook, whose slips are not catalogue
+   *                  games at all
+   *
+   * `category`, when given, narrows the list to providers offering that
+   * vertical — which is what the promotion form asks for when a vertical is
+   * expanded.
    */
-  async getProviders() {
-    const rows = await this.dataSource.query(
-      `SELECT c.vendor_code AS code, MAX(c.provider) AS name,
-              COUNT(*)::int  AS games,
-              'NEXUS'        AS source
-         FROM casino_games c
-        WHERE c.aggregator = 'NEXUS'
-          AND c.vendor_code IS NOT NULL
-          AND c.under_maintenance = false
-        GROUP BY c.vendor_code
-        ORDER BY 2`,
-    );
-    return { total: rows.length, data: rows };
+  async getProviders(category?: string) {
+    const wanted = category?.trim().toUpperCase() || null;
+
+    type Row = {
+      code: string;
+      name: string;
+      source: string;
+      games: number;
+      categories: string[];
+    };
+    const byCode = new Map<string, Row & { cats: Set<string> }>();
+
+    const add = (
+      source: string,
+      ref: string | null,
+      name: string,
+      games: number,
+      vertical: string,
+    ) => {
+      const id = String(ref ?? '').trim();
+      if (!id) return;
+      const code = `${source}:${id.toUpperCase()}`;
+      let row = byCode.get(code);
+      if (!row) {
+        row = { code, name, source, games: 0, categories: [], cats: new Set() };
+        byCode.set(code, row);
+      }
+      row.games += games;
+      row.cats.add(vertical);
+    };
+
+    // ── The shared catalogue: Nexus + Palace + OroPlay in one pass ────────
+    try {
+      const rows = await this.dataSource.query(
+        `SELECT CASE WHEN c.aggregator = 'NEXUS' THEN 'NEXUS'
+                     WHEN c.type = 'slots'       THEN 'PALACE'
+                     ELSE 'OROPLAY' END                       AS source,
+                COALESCE(NULLIF(c.vendor_code, ''),
+                         c.provider_id::text,
+                         NULLIF(c.provider, ''))              AS ref,
+                MAX(c.provider)                               AS name,
+                c.type                                        AS type,
+                COUNT(*)::int                                 AS games
+           FROM public.casino_games c
+          WHERE c.under_maintenance = false
+          GROUP BY 1, 2, c.type`,
+      );
+      for (const r of rows) {
+        add(
+          r.source,
+          r.ref,
+          r.name || String(r.ref ?? ''),
+          r.games,
+          // The one mapping from a catalogue type to a promotion vertical.
+          // Unknown types land in OTHER rather than vanishing — a provider
+          // missing from the list cannot be targeted at all.
+          toVertical(r.type) ?? 'OTHER',
+        );
+      }
+    } catch (e: any) {
+      this.logger.warn(`catalog providers query failed: ${e.message}`);
+    }
+
+    // ── OROPLAY vendors the catalogue sync does not cover ────────────────
+    // `updateLiveCasinoGames` only syncs OroPlay's LIVE vendors, so its
+    // fishing and mini/crash vendors never reach casino_games and would be
+    // untargetable. Their vertical is carried by the vendor-code prefix, the
+    // same split the betting-history report uses. Merged by code, so a vendor
+    // the sync does cover is not listed twice.
+    try {
+      const rows = await this.dataSource.query(
+        `SELECT DISTINCT o.vendor_code AS code
+           FROM public.oroplay_transactions o
+          WHERE o.vendor_code IS NOT NULL AND o.vendor_code <> ''`,
+      );
+      for (const r of rows) {
+        add('OROPLAY', r.code, r.code, 0, oroplayVertical(r.code));
+      }
+    } catch (e: any) {
+      this.logger.warn(`catalog OROPLAY providers query failed: ${e.message}`);
+    }
+
+    // ── OWN: the draw games we run ourselves ──────────────────────────────
+    try {
+      const [own] = await this.dataSource.query(
+        `SELECT COUNT(*)::int AS games FROM public.games WHERE is_active = true`,
+      );
+      if (own?.games) add('OWN', 'HOUSE', 'In-House Games', own.games, 'LOTTERY');
+    } catch (e: any) {
+      this.logger.warn(`catalog OWN providers query failed: ${e.message}`);
+    }
+
+    // ── The two sportsbooks ───────────────────────────────────────────────
+    // Listed unconditionally: neither is a synced catalogue, so there are no
+    // rows to discover them from, and leaving them out would make a sports
+    // promotion impossible to scope.
+    //
+    // Nexus's is a single LOBBY: `game_list` returns nothing for it, so it has
+    // no casino_games row at all, and its bets come back on the shared
+    // callback with provider_code 'SPORTSBOOK'. `add` merges by code, so this
+    // is harmless if the sync ever does start producing rows for it.
+    add('NEXUS', 'SPORTSBOOK', 'Nexus Sportsbook', 0, 'SPORTS');
+    add('SPORTS', 'HOUSE', 'Sportsbook', 0, 'SPORTS');
+
+    const data = [...byCode.values()]
+      .map(({ cats, ...row }) => ({ ...row, categories: [...cats].sort() }))
+      .filter((p) => !wanted || p.categories.includes(wanted))
+      .sort((a, b) => a.name.localeCompare(b.name));
+
+    return { total: data.length, data };
   }
 
   // Convenience: everything the bonus form needs in one call.

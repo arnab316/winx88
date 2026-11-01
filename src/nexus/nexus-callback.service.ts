@@ -443,6 +443,9 @@ export class NexusCallbackService {
           type: gameType,
           source: 'NEXUS',
           code: g.game_code ?? null,
+          // `provider_code` is the same vendor_code the catalogue keys Nexus
+          // vendors by, so it matches the provider list on the bonus form.
+          provider: g.provider_code ?? null,
         });
       }
 

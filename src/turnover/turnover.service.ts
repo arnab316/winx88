@@ -7,7 +7,12 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
-import { toVertical, gameKey, type BetGameContext } from '../common/game-vertical';
+import {
+  toVertical,
+  gameKey,
+  providerKey,
+  type BetGameContext,
+} from '../common/game-vertical';
 import { TurnoverLedgerService } from '../ledger/turnover-ledger.service';
 import { ReferralEngineService } from '../referral/referral-engine.service';
 import {
@@ -89,7 +94,7 @@ export class TurnoverService {
   const promo = await qr.query(
     `SELECT id, rollover_multiplier, bonus_type, bonus_value,
             min_amount, max_bonus, is_active,
-            eligible_game_categories, excluded_game_keys
+            eligible_game_categories, eligible_providers, excluded_game_keys
      FROM promotions
      WHERE id = $1`,
     [promotionId],
@@ -132,6 +137,7 @@ export class TurnoverService {
     // edit to the promotion later must not narrow what a half-cleared
     // requirement accepts.
     eligibleCategories: normaliseList(p.eligible_game_categories),
+    eligibleProviders: normaliseList(p.eligible_providers),
     excludedGameKeys: normaliseList(p.excluded_game_keys) ?? [],
   });
 }
@@ -146,27 +152,48 @@ export class TurnoverService {
   /**
    * Does this requirement accept a bet on this game?
    *
-   * Two independent rules, both snapshot onto the requirement when it was
-   * created:
+   * Three independent rules, all snapshot onto the requirement when it was
+   * created, and all of which must pass:
    *
    *   eligible_categories   null/empty = every vertical counts
+   *   eligible_providers    null/empty = every provider counts
    *   excluded_game_keys    a game listed here never counts
    *
-   * An UNIDENTIFIED game counts. That is deliberate: a bet whose category we
-   * cannot read would otherwise silently fail to clear turnover, and the
-   * player would be left unable to withdraw with nothing on screen explaining
-   * why. Letting a rule leak is recoverable; stranding a balance is the kind
-   * of thing support cannot answer. Every integration passes its context, so
-   * this is the fallback for a provider that sends something new, not the
-   * normal path.
+   * A provider entry is SCOPED TO ITS VERTICAL — "SLOT|NEXUS:PRAGMATIC", not
+   * a bare provider key. That scoping is what makes the rule composable: a
+   * vertical named in the list is narrowed to the providers listed under it,
+   * and a vertical absent from the list stays unrestricted. A flat list of
+   * provider keys would instead mean "Slots: Pragmatic only" silently shut
+   * off every Live Casino table the same promotion had just allowed.
+   *
+   * An UNIDENTIFIED game counts. That is deliberate: a bet whose category or
+   * provider we cannot read would otherwise silently fail to clear turnover,
+   * and the player would be left unable to withdraw with nothing on screen
+   * explaining why. Letting a rule leak is recoverable; stranding a balance is
+   * the kind of thing support cannot answer. Every integration passes its
+   * context, so this is the fallback for a provider that sends something new,
+   * not the normal path.
    */
   private accepts(
-    req: { eligible_categories?: unknown; excluded_game_keys?: unknown },
+    req: {
+      eligible_categories?: unknown;
+      eligible_providers?: unknown;
+      excluded_game_keys?: unknown;
+    },
     vertical: string | null,
     key: string | null,
+    provider: string | null,
   ): boolean {
     const excluded = normaliseList(req.excluded_game_keys);
     if (key && excluded?.includes(key.toUpperCase())) return false;
+
+    const allowedProviders = normaliseList(req.eligible_providers);
+    if (allowedProviders && vertical && provider) {
+      const scope = `${vertical}|`;
+      const scoped = allowedProviders.filter((e) => e.startsWith(scope));
+      // Only bites for a vertical the admin actually narrowed.
+      if (scoped.length && !scoped.includes(`${scope}${provider}`)) return false;
+    }
 
     const allowed = normaliseList(req.eligible_categories);
     if (!allowed) return true;        // unrestricted
@@ -192,7 +219,7 @@ export class TurnoverService {
 
     const reqs = await qr.query(
       `SELECT id, target_amount, current_amount,
-              eligible_categories, excluded_game_keys
+              eligible_categories, eligible_providers, excluded_game_keys
        FROM turnover_requirements
        WHERE user_id = $1 AND status = 'ACTIVE'
        ORDER BY created_at ASC, id ASC
@@ -205,6 +232,9 @@ export class TurnoverService {
     // What this bet looks like to the rules, worked out once for all of them.
     const vertical = toVertical(game?.type);
     const key = game?.source ? gameKey(game.source, game.code) : null;
+    const provider = game?.source
+      ? providerKey(game.source, game.provider)
+      : null;
 
     let remaining = betAmount;
 
@@ -213,12 +243,13 @@ export class TurnoverService {
 
       // A requirement can be restricted to certain verticals, and can bar
       // individual games. Both are snapshots taken when it was created.
-      if (!this.accepts(req, vertical, key)) {
+      if (!this.accepts(req, vertical, key, provider)) {
         // Logged because "my turnover did not move" is the support question
         // this feature creates, and the answer is otherwise invisible.
         this.logger.log(
           `turnover req ${req.id}: bet ${betId} skipped — ` +
-            `vertical=${vertical ?? 'unknown'} game=${key ?? 'unknown'} not eligible`,
+            `vertical=${vertical ?? 'unknown'} game=${key ?? 'unknown'} ` +
+            `provider=${provider ?? 'unknown'} not eligible`,
         );
         continue;
       }
@@ -536,6 +567,11 @@ export class TurnoverService {
       label?: string | null;
       /** Verticals this requirement accepts. Null/absent = all of them. */
       eligibleCategories?: string[] | null;
+      /**
+       * Providers this requirement accepts, as "<VERTICAL>|<SOURCE>:<VENDOR>"
+       * entries. Null/absent = all of them.
+       */
+      eligibleProviders?: string[] | null;
       /** Games that never count, as CatalogService "SOURCE:code" keys. */
       excludedGameKeys?: string[] | null;
     },
@@ -562,10 +598,11 @@ export class TurnoverService {
       `INSERT INTO turnover_requirements
         (user_id, source_type, source_id, base_amount, multiplier,
          target_amount, current_amount, status, created_by_admin_id, label,
-         completed_at, eligible_categories, excluded_game_keys)
+         completed_at, eligible_categories, excluded_game_keys,
+         eligible_providers)
        VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9,
                CASE WHEN $10::boolean THEN NOW() ELSE NULL END,
-               $11::jsonb, COALESCE($12::jsonb, '[]'::jsonb))
+               $11::jsonb, COALESCE($12::jsonb, '[]'::jsonb), $13::jsonb)
        RETURNING id, target_amount`,
       [
         data.userId,
@@ -583,6 +620,9 @@ export class TurnoverService {
           : null,
         data.excludedGameKeys?.length
           ? JSON.stringify(data.excludedGameKeys)
+          : null,
+        data.eligibleProviders?.length
+          ? JSON.stringify(data.eligibleProviders)
           : null,
       ],
     );

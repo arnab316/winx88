@@ -2132,7 +2132,9 @@ export class SportsService {
               slipStake,
               // One vertical, no per-game exclusion: a sportsbook slip is not
               // a catalog game and has no key an admin could pick.
-              { type: 'SPORTS', source: 'SPORTS' },
+              // One vertical and one provider: the sportsbook itself, which
+              // CatalogService lists as SPORTS:HOUSE.
+              { type: 'SPORTS', source: 'SPORTS', provider: 'HOUSE' },
             );
 
             this.logger.log(

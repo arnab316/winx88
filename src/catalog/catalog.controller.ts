@@ -15,6 +15,7 @@ import { CatalogService } from './catalog.service';
  *
  *   GET /admin/catalog                       → { categories, games }
  *   GET /admin/catalog/categories            → provider verticals
+ *   GET /admin/catalog/providers?category=   → providers, all integrations
  *   GET /admin/catalog/games?search=&source= → games for the exclude list
  *        source = OWN | PALACE | OROPLAY (omit for all)
  */
@@ -33,10 +34,14 @@ export class CatalogController {
     return this.catalog.getCategories();
   }
 
-  /** Every provider the exclude list can group by. */
+  /**
+   * Every provider an admin can target or exclude, across all integrations.
+   * `category` narrows it to the providers offering one vertical, which is
+   * what the promotion form asks for when a vertical is expanded.
+   */
   @Get('providers')
-  getProviders() {
-    return this.catalog.getProviders();
+  getProviders(@Query('category') category?: string) {
+    return this.catalog.getProviders(category);
   }
 
   @Get('games')

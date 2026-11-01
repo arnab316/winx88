@@ -83,6 +83,27 @@ export function gameKey(source: string, code?: string | null): string | null {
 }
 
 /**
+ * The stable key the admin's PROVIDER list stores, matching the codes
+ * CatalogService.getProviders() hands the promotion form.
+ *
+ * A provider is only unique within its integration — OroPlay and Nexus both
+ * carry a vendor called "Evolution", and Palace identifies its providers by a
+ * numeric id that would collide with anything. So the integration is part of
+ * the identity, exactly as it is for a game key.
+ *
+ * Returns null when the provider cannot be identified, which callers MUST
+ * treat as "cannot tell" rather than "ineligible" — same rule as toVertical.
+ */
+export function providerKey(
+  source: string,
+  provider?: string | number | null,
+): string | null {
+  const p = String(provider ?? '').trim();
+  if (!p) return null;
+  return `${source.trim().toUpperCase()}:${p.toUpperCase()}`;
+}
+
+/**
  * OroPlay's vertical, which is carried by the VENDOR CODE prefix rather than
  * by any type field — `gameType` on its callback is a numeric id. The same
  * split the betting-history report uses.
@@ -103,4 +124,10 @@ export interface BetGameContext {
   source?: string | null;
   /** The provider's own game code, or our game id for in-house games. */
   code?: string | null;
+  /**
+   * The vendor WITHIN that integration — Nexus's provider_code, OroPlay's
+   * vendorCode, Palace's provider_id. Optional, and when it is missing the
+   * bet counts, for the same reason an unknown vertical does.
+   */
+  provider?: string | number | null;
 }

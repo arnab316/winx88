@@ -202,6 +202,7 @@ export class OroplayCallbackService {
             type: oroplayVertical(vendorCode),
             source: 'OROPLAY',
             code: gameCode ?? null,
+            provider: vendorCode ?? null,
           },
         );
       } else if (isCanceled && txAmount > 0 && roundId) {

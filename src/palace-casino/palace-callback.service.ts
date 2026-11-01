@@ -301,6 +301,9 @@ export class PalaceCallbackService {
             type: (data as any).game_type ?? 'slot',
             source: 'PALACE',
             code: data.game_code ?? null,
+            // Palace identifies a provider by a numeric id, which is what the
+            // catalogue groups its slots by.
+            provider: (data as any).provider_id ?? null,
           },
         );
       }

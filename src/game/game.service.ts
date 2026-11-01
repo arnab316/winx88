@@ -418,7 +418,12 @@ export class GameService {
           betAmount,
           // Our own draw games. CatalogService lists them as OWN:<id>, which
           // is the key an admin's exclude list would hold.
-          { type: 'LOTTERY', source: 'OWN', code: String(bet.game_id ?? '') },
+          {
+            type: 'LOTTERY',
+            source: 'OWN',
+            code: String(bet.game_id ?? ''),
+            provider: 'HOUSE',
+          },
         );
       }
 

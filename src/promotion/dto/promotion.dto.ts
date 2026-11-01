@@ -135,8 +135,27 @@ export class CreatePromotionDto {
   /**
    * Games that never count toward this bonus's turnover, as the
    * "SOURCE:code" keys CatalogService.getGames() returns.
+   *
+   * Decorated because the global ValidationPipe runs with `whitelist: true`,
+   * which strips any property carrying no validation metadata at all — an
+   * undecorated field never reaches the service, and the save looks like it
+   * worked.
    */
+  @IsOptional() @IsArray() @ArrayUnique() @IsString({ each: true })
   excludedGameKeys?: string[];
+
+  /**
+   * Which providers clear this bonus's turnover, within the verticals that
+   * are narrowed at all. Each entry is "<VERTICAL>|<SOURCE>:<VENDOR>", e.g.
+   * "SLOT|NEXUS:PRAGMATIC", built from the codes CatalogService
+   * .getProviders() returns. Empty = every provider counts.
+   *
+   * Scoping by vertical is what keeps the rule composable: a vertical named
+   * here is limited to the providers listed under it, one that is not named
+   * stays unrestricted.
+   */
+  @IsOptional() @IsArray() @ArrayUnique() @IsString({ each: true })
+  eligibleProviders?: string[];
 
   @IsOptional() @IsNumber() @Min(0) autoUnlockThreshold?: number;
 
@@ -218,8 +237,27 @@ export class UpdatePromotionDto {
   /**
    * Games that never count toward this bonus's turnover, as the
    * "SOURCE:code" keys CatalogService.getGames() returns.
+   *
+   * Decorated because the global ValidationPipe runs with `whitelist: true`,
+   * which strips any property carrying no validation metadata at all — an
+   * undecorated field never reaches the service, and the save looks like it
+   * worked.
    */
+  @IsOptional() @IsArray() @ArrayUnique() @IsString({ each: true })
   excludedGameKeys?: string[];
+
+  /**
+   * Which providers clear this bonus's turnover, within the verticals that
+   * are narrowed at all. Each entry is "<VERTICAL>|<SOURCE>:<VENDOR>", e.g.
+   * "SLOT|NEXUS:PRAGMATIC", built from the codes CatalogService
+   * .getProviders() returns. Empty = every provider counts.
+   *
+   * Scoping by vertical is what keeps the rule composable: a vertical named
+   * here is limited to the providers listed under it, one that is not named
+   * stays unrestricted.
+   */
+  @IsOptional() @IsArray() @ArrayUnique() @IsString({ each: true })
+  eligibleProviders?: string[];
 
   @IsOptional() @IsNumber() @Min(0) autoUnlockThreshold?: number;
 
