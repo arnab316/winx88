@@ -73,6 +73,22 @@ export function toVertical(type?: string | null): string | null {
 }
 
 /**
+ * A jsonb rule list from the database, as a clean upper-cased string array.
+ *
+ * Returns null for absent/empty so "no restriction" stays distinguishable
+ * from "restricted to nothing" — the two mean opposite things here. Shared so
+ * the snapshot written at grant time and the check run at bet time cannot
+ * normalise differently.
+ */
+export function normaliseRuleList(raw: unknown): string[] | null {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out = arr
+    .map((v) => String(v ?? '').trim().toUpperCase())
+    .filter(Boolean);
+  return out.length ? out : null;
+}
+
+/**
  * The stable key the admin's exclude list stores, matching the "SOURCE:code"
  * format CatalogService.getGames() hands the promotion form.
  */

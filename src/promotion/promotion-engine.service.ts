@@ -20,6 +20,7 @@ import {
   BonusDestination,
 } from './dto/promotion.dto';
 import * as Eligibility from './promotion-eligibility.helpers';
+import { normaliseRuleList as toRuleList } from '../common/game-vertical';
 
 
 export interface BonusComputation {
@@ -400,6 +401,17 @@ export class PromotionEngineService  {
         // Show the promotion's name as the turnover header (e.g. "1K DoubleDown")
         // instead of the generic "Promotion turnover".
         label: promotion.title,
+        // The game rules the admin set on this promotion, SNAPSHOT onto the
+        // requirement exactly as the deposit path does.
+        //
+        // Without these the rules only ever applied to deposit-attached
+        // promotions: every registration bonus, promocode, reload and
+        // hand-approved claim created an unrestricted requirement, so play on
+        // any provider cleared it however the promotion was configured. The
+        // admin saw their selection saved and silently ignored.
+        eligibleCategories: toRuleList(promotion.eligible_game_categories),
+        eligibleProviders: toRuleList(promotion.eligible_providers),
+        excludedGameKeys: toRuleList(promotion.excluded_game_keys) ?? [],
       } as any);
 
       turnoverReqId = reqResult.requirementId;

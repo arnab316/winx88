@@ -8,22 +8,17 @@ import type { MigrationInterface, QueryRunner } from 'typeorm';
  * slots bonus with one studio's free rounds needs "Slots, but only Pragmatic",
  * not every slot in the catalogue. This is that second axis.
  *
- *   promotions.eligible_providers   [] = every provider counts
+ *   promotions.eligible_providers   [] = every provider counts, otherwise
+ *                                   ONLY the listed ones do
  *
- * Each entry is "<VERTICAL>|<SOURCE>:<VENDOR>" — SLOT|NEXUS:PRAGMATIC,
- * LIVE|OROPLAY:EVOLUTION, SLOT|PALACE:12, LOTTERY|OWN:HOUSE,
- * SPORTS|SPORTS:HOUSE.
+ * Each entry is "<SOURCE>:<VENDOR>" — NEXUS:PRAGMATIC, OROPLAY:EVOLUTION,
+ * PALACE:12, OWN:HOUSE, SPORTS:HOUSE. The source prefix is load-bearing:
+ * OroPlay and Nexus both carry a vendor called "Evolution", and Palace
+ * identifies providers by a numeric id, so a vendor code alone is not an
+ * identity.
  *
- * Both halves are load-bearing:
- *
- *   the source  OroPlay and Nexus both carry a vendor called "Evolution",
- *               and Palace identifies providers by a numeric id, so a vendor
- *               code alone is not an identity
- *   the vertical a vertical named in the list is narrowed to the providers
- *               listed under it, and one absent from the list is left
- *               unrestricted. A flat list would make "Slots: Pragmatic only"
- *               silently shut off every Live Casino table the same promotion
- *               had just allowed.
+ * This list and eligible_game_categories are ORTHOGONAL and compose by AND —
+ * "Slots" plus "NEXUS:PRAGMATIC" clears on Pragmatic's slots only.
  *
  * Snapshot onto the requirement for the same reason the other two rules are:
  * a player accepts a bonus on the terms shown at the time, and an edit to the

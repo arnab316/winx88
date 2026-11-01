@@ -145,14 +145,12 @@ export class CreatePromotionDto {
   excludedGameKeys?: string[];
 
   /**
-   * Which providers clear this bonus's turnover, within the verticals that
-   * are narrowed at all. Each entry is "<VERTICAL>|<SOURCE>:<VENDOR>", e.g.
-   * "SLOT|NEXUS:PRAGMATIC", built from the codes CatalogService
-   * .getProviders() returns. Empty = every provider counts.
+   * Which providers clear this bonus's turnover, as the "SOURCE:VENDOR" keys
+   * CatalogService.getProviders() returns. Empty = every provider counts;
+   * otherwise ONLY the listed ones do.
    *
-   * Scoping by vertical is what keeps the rule composable: a vertical named
-   * here is limited to the providers listed under it, one that is not named
-   * stays unrestricted.
+   * Composes with eligibleGameCategories by AND, so "SLOT" plus
+   * "NEXUS:PRAGMATIC" clears on Pragmatic's slots only.
    */
   @IsOptional() @IsArray() @ArrayUnique() @IsString({ each: true })
   eligibleProviders?: string[];
@@ -247,14 +245,12 @@ export class UpdatePromotionDto {
   excludedGameKeys?: string[];
 
   /**
-   * Which providers clear this bonus's turnover, within the verticals that
-   * are narrowed at all. Each entry is "<VERTICAL>|<SOURCE>:<VENDOR>", e.g.
-   * "SLOT|NEXUS:PRAGMATIC", built from the codes CatalogService
-   * .getProviders() returns. Empty = every provider counts.
+   * Which providers clear this bonus's turnover, as the "SOURCE:VENDOR" keys
+   * CatalogService.getProviders() returns. Empty = every provider counts;
+   * otherwise ONLY the listed ones do.
    *
-   * Scoping by vertical is what keeps the rule composable: a vertical named
-   * here is limited to the providers listed under it, one that is not named
-   * stays unrestricted.
+   * Composes with eligibleGameCategories by AND, so "SLOT" plus
+   * "NEXUS:PRAGMATIC" clears on Pragmatic's slots only.
    */
   @IsOptional() @IsArray() @ArrayUnique() @IsString({ each: true })
   eligibleProviders?: string[];

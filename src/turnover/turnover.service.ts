@@ -11,6 +11,7 @@ import {
   toVertical,
   gameKey,
   providerKey,
+  normaliseRuleList as normaliseList,
   type BetGameContext,
 } from '../common/game-vertical';
 import { TurnoverLedgerService } from '../ledger/turnover-ledger.service';
@@ -33,20 +34,6 @@ import {
  *   - On withdrawal request → BLOCK if ANY active req exists
  *   - On withdrawal approval → RESET ALL active reqs to zero (archive)
  */
-/**
- * A jsonb list from the database, as a clean string array.
- *
- * Returns null for absent/empty so "no restriction" stays distinguishable
- * from "restricted to nothing" — the two mean opposite things here.
- */
-function normaliseList(raw: unknown): string[] | null {
-  const arr = Array.isArray(raw) ? raw : [];
-  const out = arr
-    .map((v) => String(v ?? '').trim().toUpperCase())
-    .filter(Boolean);
-  return out.length ? out : null;
-}
-
 @Injectable()
 export class TurnoverService {
   private readonly logger = new Logger(TurnoverService.name);
@@ -159,12 +146,19 @@ export class TurnoverService {
    *   eligible_providers    null/empty = every provider counts
    *   excluded_game_keys    a game listed here never counts
    *
-   * A provider entry is SCOPED TO ITS VERTICAL — "SLOT|NEXUS:PRAGMATIC", not
-   * a bare provider key. That scoping is what makes the rule composable: a
-   * vertical named in the list is narrowed to the providers listed under it,
-   * and a vertical absent from the list stays unrestricted. A flat list of
-   * provider keys would instead mean "Slots: Pragmatic only" silently shut
-   * off every Live Casino table the same promotion had just allowed.
+   * The two lists are ORTHOGONAL and compose by AND: categories say which
+   * verticals count, providers say which providers count. Ticking "Slots"
+   * and "NEXUS:PRAGMATIC" means Pragmatic's slots — not "all slots" and not
+   * "everything Pragmatic".
+   *
+   * Provider entries are deliberately NOT scoped to the vertical they were
+   * ticked under. A "SLOT|NEXUS:PRAGMATIC" form would have to match the
+   * bet's vertical as well, and the two sides derive that from different
+   * fields: the catalogue's curated `type` (which an admin can edit) versus
+   * the provider's own type on the callback. They already disagree — a
+   * Hold'em table is curated `table` (TABLE) but bets arrive as `live`
+   * (LIVE) — so a scoped rule would silently stop matching. A bare provider
+   * key depends on nothing but the provider code itself.
    *
    * An UNIDENTIFIED game counts. That is deliberate: a bet whose category or
    * provider we cannot read would otherwise silently fail to clear turnover,
@@ -188,11 +182,8 @@ export class TurnoverService {
     if (key && excluded?.includes(key.toUpperCase())) return false;
 
     const allowedProviders = normaliseList(req.eligible_providers);
-    if (allowedProviders && vertical && provider) {
-      const scope = `${vertical}|`;
-      const scoped = allowedProviders.filter((e) => e.startsWith(scope));
-      // Only bites for a vertical the admin actually narrowed.
-      if (scoped.length && !scoped.includes(`${scope}${provider}`)) return false;
+    if (allowedProviders && provider && !allowedProviders.includes(provider)) {
+      return false;
     }
 
     const allowed = normaliseList(req.eligible_categories);
@@ -568,8 +559,8 @@ export class TurnoverService {
       /** Verticals this requirement accepts. Null/absent = all of them. */
       eligibleCategories?: string[] | null;
       /**
-       * Providers this requirement accepts, as "<VERTICAL>|<SOURCE>:<VENDOR>"
-       * entries. Null/absent = all of them.
+       * Providers this requirement accepts, as CatalogService
+       * "SOURCE:VENDOR" keys. Null/absent = all of them.
        */
       eligibleProviders?: string[] | null;
       /** Games that never count, as CatalogService "SOURCE:code" keys. */
