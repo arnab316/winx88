@@ -62,7 +62,18 @@ async vendorsGrouped() {
     'board-poker':       null, // no logo available
   };
 
-  const grouped = (res.message as any[]).reduce((acc, item) => {
+  // Defensive: `message` is an array on every documented response, but it is
+  // an upstream field and a non-array here threw a TypeError that surfaced as
+  // a bare 500 — the same symptom as a genuine outage, and indistinguishable
+  // from one in the logs.
+  const vendors = Array.isArray(res?.message) ? (res.message as any[]) : [];
+  if (!vendors.length) {
+    this.logger.warn(
+      `OroPlay vendor list was empty or malformed: ${JSON.stringify(res?.message)?.slice(0, 200)}`,
+    );
+  }
+
+  const grouped = vendors.reduce((acc, item) => {
     const groupName = typeMap[item.type] ?? 'Other';
     if (!acc[groupName]) acc[groupName] = [];
 

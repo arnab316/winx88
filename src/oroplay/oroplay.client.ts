@@ -137,8 +137,53 @@ export class OroplayClient {
   }
 
   // ─── Vendor / Game catalog ───────────────────────────────────
-  vendorList() {
-    return this.request<Vendor[]>('GET', '/vendors/list');
+  /**
+   * The vendor catalogue, cached in memory.
+   *
+   * Both /oroplay/vendors and /oroplay/vendors/grouped called this live on
+   * every request, so every player opening the lobby cost one upstream call
+   * — and, whenever the token cache missed, one `createtoken` as well. That
+   * is what put the account over OroPlay's "1 per 10s" quota and turned the
+   * whole lobby into a 500.
+   *
+   * The list changes when a vendor is added, which is weeks apart, so a short
+   * TTL costs nothing. The last good list is also kept and served if a later
+   * refresh fails: a lobby showing a slightly old vendor list beats a lobby
+   * showing nothing.
+   */
+  private vendorCache: { at: number; res: OroplayResponse<Vendor[]> } | null = null;
+  private vendorInFlight: Promise<OroplayResponse<Vendor[]>> | null = null;
+  private static readonly VENDOR_TTL_MS = 5 * 60 * 1000;
+
+  async vendorList(): Promise<OroplayResponse<Vendor[]>> {
+    const now = Date.now();
+    if (this.vendorCache && now - this.vendorCache.at < OroplayClient.VENDOR_TTL_MS) {
+      return this.vendorCache.res;
+    }
+
+    // Collapse a burst of lobby loads into one upstream call.
+    if (!this.vendorInFlight) {
+      this.vendorInFlight = this.request<Vendor[]>('GET', '/vendors/list')
+        .then((res) => {
+          this.vendorCache = { at: Date.now(), res };
+          return res;
+        })
+        .finally(() => {
+          this.vendorInFlight = null;
+        });
+    }
+
+    try {
+      return await this.vendorInFlight;
+    } catch (err) {
+      if (this.vendorCache) {
+        this.logger.warn(
+          `OroPlay vendor list refresh failed, serving the cached list: ${(err as Error).message}`,
+        );
+        return this.vendorCache.res;
+      }
+      throw err;
+    }
   }
 
   gameList(vendorCode: string, language = 'en') {
