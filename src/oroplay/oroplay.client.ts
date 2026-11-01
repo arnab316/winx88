@@ -55,8 +55,27 @@ export class OroplayClient {
     body?: any,
     retry = true,
   ): Promise<OroplayResponse<T>> {
+    // Fetched OUTSIDE the try below, because the 401 handler in it means
+    // "the API rejected our token, get a fresh one" — and that is the wrong
+    // response to /auth/createtoken itself answering 401.
+    //
+    // While this was inside, a 401 from the token endpoint was read as a
+    // stale token: invalidate() threw away a cached token that could still
+    // have served, and the retry fired a SECOND createtoken. So every call
+    // cost two requests against an endpoint that allows one per ten seconds,
+    // which is the opposite of what the retry was for.
+    let token: string;
     try {
-      const token = await this.tokenCache.getToken();
+      token = await this.tokenCache.getToken();
+    } catch (err: any) {
+      this.logger.error(
+        `OroPlay request [${path}] could not get a token: ${err.message}` +
+          `${this.describe(err.response?.data)}`,
+      );
+      throw err;
+    }
+
+    try {
       const cfg = {
         headers: {
           Authorization: `Bearer ${token}`,
@@ -79,9 +98,10 @@ export class OroplayClient {
     } catch (err: any) {
       const status = err.response?.status;
 
-      // Token might be stale — invalidate and retry once
+      // The API rejected our token — it is stale. Safe to invalidate and
+      // retry once: this 401 came from `path`, not from createtoken.
       if (status === 401 && retry) {
-        this.logger.warn(`Got 401 from OroPlay, invalidating token and retrying...`);
+        this.logger.warn(`Got 401 from OroPlay [${path}], refreshing the token and retrying...`);
         this.tokenCache.invalidate();
         return this.request<T>(method, path, body, false);
       }
