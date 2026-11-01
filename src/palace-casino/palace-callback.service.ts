@@ -295,6 +295,13 @@ export class PalaceCallbackService {
           user.id,
           Number(inserted[0].id),
           Number(data.amount),
+          {
+            // Palace sends its own type when it has one; everything it
+            // integrates is a slot otherwise.
+            type: (data as any).game_type ?? 'slot',
+            source: 'PALACE',
+            code: data.game_code ?? null,
+          },
         );
       }
 

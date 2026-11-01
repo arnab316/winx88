@@ -33,12 +33,19 @@ export class CatalogController {
     return this.catalog.getCategories();
   }
 
+  /** Every provider the exclude list can group by. */
+  @Get('providers')
+  getProviders() {
+    return this.catalog.getProviders();
+  }
+
   @Get('games')
   getGames(
     @Query('search') search?: string,
     @Query('source') source?: string,
+    @Query('provider') provider?: string,
     @Query('limit', new DefaultValuePipe(200), ParseIntPipe) limit?: number,
   ) {
-    return this.catalog.getGames({ search, source, limit });
+    return this.catalog.getGames({ search, source, provider, limit });
   }
 }

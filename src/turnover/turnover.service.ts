@@ -1,11 +1,13 @@
 // src/turnover/turnover.service.ts
 import {
   Injectable,
+  Logger,
   BadRequestException,
   ForbiddenException,
   NotFoundException,
 } from '@nestjs/common';
 import { DataSource, QueryRunner } from 'typeorm';
+import { toVertical, gameKey, type BetGameContext } from '../common/game-vertical';
 import { TurnoverLedgerService } from '../ledger/turnover-ledger.service';
 import { ReferralEngineService } from '../referral/referral-engine.service';
 import {
@@ -26,8 +28,24 @@ import {
  *   - On withdrawal request → BLOCK if ANY active req exists
  *   - On withdrawal approval → RESET ALL active reqs to zero (archive)
  */
+/**
+ * A jsonb list from the database, as a clean string array.
+ *
+ * Returns null for absent/empty so "no restriction" stays distinguishable
+ * from "restricted to nothing" — the two mean opposite things here.
+ */
+function normaliseList(raw: unknown): string[] | null {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out = arr
+    .map((v) => String(v ?? '').trim().toUpperCase())
+    .filter(Boolean);
+  return out.length ? out : null;
+}
+
 @Injectable()
 export class TurnoverService {
+  private readonly logger = new Logger(TurnoverService.name);
+
   constructor(
     private dataSource: DataSource,
     private turnoverLedger: TurnoverLedgerService,
@@ -70,7 +88,8 @@ export class TurnoverService {
 
   const promo = await qr.query(
     `SELECT id, rollover_multiplier, bonus_type, bonus_value,
-            min_amount, max_bonus, is_active
+            min_amount, max_bonus, is_active,
+            eligible_game_categories, excluded_game_keys
      FROM promotions
      WHERE id = $1`,
     [promotionId],
@@ -109,6 +128,11 @@ export class TurnoverService {
     multiplier,
     targetAmount,
     label: 'Deposit bonus turnover',
+    // Snapshot, not a live read: the player accepted these terms, and an
+    // edit to the promotion later must not narrow what a half-cleared
+    // requirement accepts.
+    eligibleCategories: normaliseList(p.eligible_game_categories),
+    excludedGameKeys: normaliseList(p.excluded_game_keys) ?? [],
   });
 }
 
@@ -119,11 +143,47 @@ export class TurnoverService {
   //   Both WON and LOST bets contribute their bet_amount.
   //   Distributes across active reqs FIFO (oldest first).
   // ═════════════════════════════════════════════════════════════
+  /**
+   * Does this requirement accept a bet on this game?
+   *
+   * Two independent rules, both snapshot onto the requirement when it was
+   * created:
+   *
+   *   eligible_categories   null/empty = every vertical counts
+   *   excluded_game_keys    a game listed here never counts
+   *
+   * An UNIDENTIFIED game counts. That is deliberate: a bet whose category we
+   * cannot read would otherwise silently fail to clear turnover, and the
+   * player would be left unable to withdraw with nothing on screen explaining
+   * why. Letting a rule leak is recoverable; stranding a balance is the kind
+   * of thing support cannot answer. Every integration passes its context, so
+   * this is the fallback for a provider that sends something new, not the
+   * normal path.
+   */
+  private accepts(
+    req: { eligible_categories?: unknown; excluded_game_keys?: unknown },
+    vertical: string | null,
+    key: string | null,
+  ): boolean {
+    const excluded = normaliseList(req.excluded_game_keys);
+    if (key && excluded?.includes(key.toUpperCase())) return false;
+
+    const allowed = normaliseList(req.eligible_categories);
+    if (!allowed) return true;        // unrestricted
+    if (!vertical) return true;       // cannot tell — see above
+    return allowed.includes(vertical);
+  }
+
   async contributeFromSettledBet(
     qr: QueryRunner,
     userId: number,
     betId: number,
     betAmount: number,
+    /**
+     * What the bet was placed on. Optional, and when it cannot identify the
+     * game the bet counts — see `accepts` below.
+     */
+    game?: BetGameContext,
   ): Promise<void> {
     // Refer-a-friend turnover/bonus-wagering progress. Self-isolated via a
     // SAVEPOINT inside the engine, so it can't break this bet settlement. Runs
@@ -131,7 +191,8 @@ export class TurnoverService {
     await this.referralEngine.onBetSettled(qr, userId, betAmount);
 
     const reqs = await qr.query(
-      `SELECT id, target_amount, current_amount
+      `SELECT id, target_amount, current_amount,
+              eligible_categories, excluded_game_keys
        FROM turnover_requirements
        WHERE user_id = $1 AND status = 'ACTIVE'
        ORDER BY created_at ASC, id ASC
@@ -141,10 +202,26 @@ export class TurnoverService {
 
     if (!reqs.length) return;
 
+    // What this bet looks like to the rules, worked out once for all of them.
+    const vertical = toVertical(game?.type);
+    const key = game?.source ? gameKey(game.source, game.code) : null;
+
     let remaining = betAmount;
 
     for (const req of reqs) {
       if (remaining <= 0) break;
+
+      // A requirement can be restricted to certain verticals, and can bar
+      // individual games. Both are snapshots taken when it was created.
+      if (!this.accepts(req, vertical, key)) {
+        // Logged because "my turnover did not move" is the support question
+        // this feature creates, and the answer is otherwise invisible.
+        this.logger.log(
+          `turnover req ${req.id}: bet ${betId} skipped — ` +
+            `vertical=${vertical ?? 'unknown'} game=${key ?? 'unknown'} not eligible`,
+        );
+        continue;
+      }
 
       const target  = parseFloat(req.target_amount);
       const current = parseFloat(req.current_amount);
@@ -457,6 +534,10 @@ export class TurnoverService {
       targetAmount: number;
       adminId?: number;
       label?: string | null;
+      /** Verticals this requirement accepts. Null/absent = all of them. */
+      eligibleCategories?: string[] | null;
+      /** Games that never count, as CatalogService "SOURCE:code" keys. */
+      excludedGameKeys?: string[] | null;
     },
   ): Promise<{ requirementId: number; targetAmount: number }> {
     // A new requirement supersedes finished ones on the wagering page: archive
@@ -481,9 +562,10 @@ export class TurnoverService {
       `INSERT INTO turnover_requirements
         (user_id, source_type, source_id, base_amount, multiplier,
          target_amount, current_amount, status, created_by_admin_id, label,
-         completed_at)
+         completed_at, eligible_categories, excluded_game_keys)
        VALUES ($1,$2,$3,$4,$5,$6,0,$7,$8,$9,
-               CASE WHEN $10::boolean THEN NOW() ELSE NULL END)
+               CASE WHEN $10::boolean THEN NOW() ELSE NULL END,
+               $11::jsonb, COALESCE($12::jsonb, '[]'::jsonb))
        RETURNING id, target_amount`,
       [
         data.userId,
@@ -496,6 +578,12 @@ export class TurnoverService {
         data.adminId ?? null,
         data.label ?? null,
         settled,
+        data.eligibleCategories?.length
+          ? JSON.stringify(data.eligibleCategories)
+          : null,
+        data.excludedGameKeys?.length
+          ? JSON.stringify(data.excludedGameKeys)
+          : null,
       ],
     );
 

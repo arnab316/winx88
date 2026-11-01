@@ -132,6 +132,11 @@ export class CreatePromotionDto {
   @IsOptional() @IsArray() @ArrayUnique()
   @IsIn(GAME_CATEGORIES, { each: true })
   eligibleGameCategories?: GameCategory[];
+  /**
+   * Games that never count toward this bonus's turnover, as the
+   * "SOURCE:code" keys CatalogService.getGames() returns.
+   */
+  excludedGameKeys?: string[];
 
   @IsOptional() @IsNumber() @Min(0) autoUnlockThreshold?: number;
 
@@ -210,6 +215,11 @@ export class UpdatePromotionDto {
 
   @IsOptional() @IsArray() @ArrayUnique() @IsIn(GAME_CATEGORIES, { each: true })
   eligibleGameCategories?: GameCategory[];
+  /**
+   * Games that never count toward this bonus's turnover, as the
+   * "SOURCE:code" keys CatalogService.getGames() returns.
+   */
+  excludedGameKeys?: string[];
 
   @IsOptional() @IsNumber() @Min(0) autoUnlockThreshold?: number;
 

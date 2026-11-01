@@ -437,7 +437,13 @@ export class NexusCallbackService {
       // this transaction so it is atomic with the wallet move, and no-ops when
       // the player has no active requirement.
       if (bet > 0) {
-        await this.turnoverService.contributeFromSettledBet(qr, userId, rowId, bet);
+        await this.turnoverService.contributeFromSettledBet(qr, userId, rowId, bet, {
+          // game_type IS the vertical here ("slot", "live", "SB", "MN"), and
+          // the catalog keys Nexus games by uuid, which is the game_code.
+          type: gameType,
+          source: 'NEXUS',
+          code: g.game_code ?? null,
+        });
       }
 
       await qr.commitTransaction();

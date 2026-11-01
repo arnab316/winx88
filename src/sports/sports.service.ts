@@ -2130,6 +2130,9 @@ export class SportsService {
               user.id,
               Number(betLog[0].id),
               slipStake,
+              // One vertical, no per-game exclusion: a sportsbook slip is not
+              // a catalog game and has no key an admin could pick.
+              { type: 'SPORTS', source: 'SPORTS' },
             );
 
             this.logger.log(

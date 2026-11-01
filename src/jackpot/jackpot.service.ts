@@ -625,7 +625,10 @@ export class JackpotService {
         }
 
         // Turnover contribution (same as regular game settlement)
-        await this.turnoverService.contributeFromSettledBet(qr, bet.user_id, bet.id, betAmount);
+        await this.turnoverService.contributeFromSettledBet(
+          qr, bet.user_id, bet.id, betAmount,
+          { type: 'LOTTERY', source: 'OWN', code: String(bet.game_id ?? '') },
+        );
       }
 
       // 4. Mark round SETTLED

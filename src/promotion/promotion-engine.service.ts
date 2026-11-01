@@ -872,10 +872,10 @@ export class PromotionEngineService  {
            cap_limit_type, balance_require, remove_max_withdraw_lock,
            target_type, target_option, max_player, pay_later,
            display_if_non_eligible, hide_if_eligible,
-           limit_to_provider, check_by_wallet_balance)
+           limit_to_provider, check_by_wallet_balance, excluded_game_keys)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
                  $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-                 $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52)
+                 $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53)
          RETURNING *`,
         [
           dto.title,
@@ -935,6 +935,8 @@ export class PromotionEngineService  {
           dto.hideIfEligible ?? false,
           dto.limitToProvider ?? false,
           dto.checkByWalletBalance ?? false,
+          // jsonb NOT NULL — fall back to the schema default.
+          dto.excludedGameKeys ? JSON.stringify(dto.excludedGameKeys) : '[]',
         ],
       );
       let created = result[0];
@@ -1033,6 +1035,10 @@ export class PromotionEngineService  {
       hide_if_eligible:          dto.hideIfEligible,
       limit_to_provider:         dto.limitToProvider,
       check_by_wallet_balance:   dto.checkByWalletBalance,
+      excluded_game_keys:
+        dto.excludedGameKeys === undefined
+          ? undefined
+          : JSON.stringify(dto.excludedGameKeys ?? []),
     };
 
     // jsonb array fields need explicit serialization

@@ -1,4 +1,5 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { oroplayVertical } from '../common/game-vertical';
 import { DataSource } from 'typeorm';
 import {
   BalanceRequestDto,
@@ -194,6 +195,14 @@ export class OroplayCallbackService {
       if (!isCanceled && txAmount < 0) {
         await this.turnoverService.contributeFromSettledBet(
           qr, userId, txRowId, Math.abs(txAmount),
+          // OroPlay's own `gameType` is a numeric id; the vertical lives in
+          // the vendor-code prefix, the same split the betting-history report
+          // uses.
+          {
+            type: oroplayVertical(vendorCode),
+            source: 'OROPLAY',
+            code: gameCode ?? null,
+          },
         );
       } else if (isCanceled && txAmount > 0 && roundId) {
         // OroPlay cancels carry no pointer to the original bet, so match it by

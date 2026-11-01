@@ -44,14 +44,24 @@ export class CatalogService {
     return { data: this.CATEGORIES };
   }
 
-  async getGames(opts: { search?: string; source?: string; limit?: number } = {}) {
+  async getGames(
+    opts: {
+      search?: string;
+      source?: string;
+      /** Vendor code — narrows the NEXUS list to one provider. */
+      provider?: string;
+      limit?: number;
+    } = {},
+  ) {
     const limit = Math.min(Math.max(opts.limit ?? 200, 1), 1000);
     const search = opts.search?.trim();
     const source = opts.source?.trim().toUpperCase();
+    const provider = opts.provider?.trim() || null;
     const like = search ? `%${search}%` : null;
 
     const games: Array<{
       key: string; code: string; name: string; category: string; source: string;
+      provider?: string | null;
     }> = [];
 
     // ── OWN: lottery/jackpot games we run ourselves ───────────────────────
@@ -118,7 +128,66 @@ export class CatalogService {
       }
     }
 
+    // ── NEXUS: the synced catalogue — by far the largest source, and the
+    //    only one with real game names and a provider to group by. The other
+    //    three are derived from transaction history, so they only ever list
+    //    games somebody has already played.
+    if (!source || source === 'NEXUS') {
+      try {
+        const rows = await this.dataSource.query(
+          `SELECT 'NEXUS:' || c.game_code AS key,
+                  c.game_code AS code,
+                  c.name,
+                  CASE
+                    WHEN c.type IN ('slots','slot')                   THEN 'SLOT'
+                    WHEN c.type IN ('live','baccarat','blackjack',
+                                    'roulette','poker')               THEN 'LIVE'
+                    WHEN c.type IN ('fishing','fish')                 THEN 'FISH'
+                    WHEN c.type IN ('instant','crash')                THEN 'CRASH'
+                    ELSE 'OTHER'
+                  END AS category,
+                  'NEXUS' AS source,
+                  c.provider
+             FROM casino_games c
+            WHERE c.aggregator = 'NEXUS'
+              AND c.game_code IS NOT NULL
+              AND c.under_maintenance = false
+              ${provider ? `AND c.vendor_code = $${like ? 2 : 1}` : ``}
+              ${like ? `AND (c.name ILIKE $1 OR c.game_code ILIKE $1)` : ``}
+            ORDER BY c.provider, c.name
+            LIMIT ${limit}`,
+          [...(like ? [like] : []), ...(provider ? [provider] : [])],
+        );
+        games.push(...rows);
+      } catch (e: any) {
+        this.logger.warn(`catalog NEXUS games query failed: ${e.message}`);
+      }
+    }
+
     return { total: games.length, data: games.slice(0, limit) };
+  }
+
+  /**
+   * Every provider the exclude list can group by, whether or not anyone has
+   * played them yet.
+   *
+   * Driven off the synced catalogue rather than transaction history, so a
+   * newly added provider is pickable immediately — the admin should not have
+   * to wait for a player to try a game before being able to exclude it.
+   */
+  async getProviders() {
+    const rows = await this.dataSource.query(
+      `SELECT c.vendor_code AS code, MAX(c.provider) AS name,
+              COUNT(*)::int  AS games,
+              'NEXUS'        AS source
+         FROM casino_games c
+        WHERE c.aggregator = 'NEXUS'
+          AND c.vendor_code IS NOT NULL
+          AND c.under_maintenance = false
+        GROUP BY c.vendor_code
+        ORDER BY 2`,
+    );
+    return { total: rows.length, data: rows };
   }
 
   // Convenience: everything the bonus form needs in one call.
