@@ -4,6 +4,10 @@ import {
   CHANNEL_JOINS_SQL,
   CHANNEL_COLUMNS_SQL,
 } from '../common/channel-attribution';
+import {
+  PLAYER_KYC_SCOPE_SQL,
+  PLAYER_KYC_PENDING_STATUSES,
+} from '../common/kyc-scope';
 
 export type DashboardRange = 'today' | 'yesterday' | '7d' | '30d';
 
@@ -384,8 +388,14 @@ export class DashboardService {
          (SELECT COALESCE(SUM(amount),0) FROM withdrawals WHERE status = 'PENDING')          AS wd_amt,
          -- Only submissions with documents are review work. A status an admin
          -- set directly (no documents) has nothing to review.
-         (SELECT COUNT(*) FROM user_verifications
-           WHERE status IN ('PENDING','UNDER_REVIEW') AND front_image_url IS NOT NULL)::int AS kyc_cnt`,
+         --
+         -- Scoped to PLAYER KYC with the same predicate the review page uses:
+         -- affiliate KYC is a different queue on a different page, so counting
+         -- it here pointed admins at a list it could never appear in.
+         (SELECT COUNT(*) FROM user_verifications uv
+           WHERE uv.status IN ${PLAYER_KYC_PENDING_STATUSES}
+             AND uv.front_image_url IS NOT NULL
+             AND ${PLAYER_KYC_SCOPE_SQL})::int AS kyc_cnt`,
     );
     return {
       deposits: { count: row.dep_cnt, amount: this.r2(parseFloat(row.dep_amt)) },

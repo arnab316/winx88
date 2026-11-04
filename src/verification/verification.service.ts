@@ -10,6 +10,7 @@ import { DataSource } from 'typeorm';
 import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { extname } from 'path';
+import { PLAYER_KYC_SCOPE_SQL } from '../common/kyc-scope';
 
 @Injectable()
 export class VerificationService {
@@ -266,12 +267,10 @@ export class VerificationService {
   // Player-side KYC only: anything belonging to the affiliate program —
   // approved affiliates AND pending partner applicants — is reviewed on
   // GET /affiliate/admin/verifications instead, never mixed in here.
-  private static readonly NOT_AFFILIATE_SQL = `
-    NOT (
-      EXISTS (SELECT 1 FROM affiliate_users au WHERE au.user_id = uv.user_id)
-      OR EXISTS (SELECT 1 FROM affiliate_applications aa
-                  WHERE aa.user_id = uv.user_id AND aa.status = 'PENDING')
-    )`;
+  //
+  // Shared with the dashboard badge, which must count exactly what this
+  // lists. See src/common/kyc-scope.ts.
+  private static readonly NOT_AFFILIATE_SQL = PLAYER_KYC_SCOPE_SQL;
 
   async listVerifications(page: number, limit: number, status?: string) {
     const offset = (page - 1) * limit;
