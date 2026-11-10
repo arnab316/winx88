@@ -272,10 +272,10 @@ export class ReportsService {
         COALESCE(wd.cnt, 0)   AS wd_cnt,   COALESCE(wd.total, 0)   AS wd_total,
         COALESCE(adj.cnt, 0)  AS adj_cnt,  COALESCE(adj.adj_in, 0) AS adj_in,
         COALESCE(adj.adj_out, 0) AS adj_out, COALESCE(adj.total, 0) AS adj_total,
-        COALESCE(lb.cnt,0) + COALESCE(sl.cnt,0) + COALESCE(sp.cnt,0) + COALESCE(op.cnt,0)             AS bet_cnt,
-        COALESCE(lb.amount,0) + COALESCE(sl.amount,0) + COALESCE(sp.amount,0) + COALESCE(op.amount,0) AS bet_amount,
-        COALESCE(lb.valid,0) + COALESCE(sl.valid,0) + COALESCE(sp.valid,0) + COALESCE(op.valid,0)     AS bet_valid,
-        COALESCE(lb.settle,0) + COALESCE(sl.settle,0) + COALESCE(sp.settle,0) + COALESCE(op.settle,0) AS bet_settle,
+        COALESCE(lb.cnt,0) + COALESCE(sl.cnt,0) + COALESCE(sp.cnt,0) + COALESCE(op.cnt,0) + COALESCE(nx.cnt,0)             AS bet_cnt,
+        COALESCE(lb.amount,0) + COALESCE(sl.amount,0) + COALESCE(sp.amount,0) + COALESCE(op.amount,0) + COALESCE(nx.amount,0) AS bet_amount,
+        COALESCE(lb.valid,0) + COALESCE(sl.valid,0) + COALESCE(sp.valid,0) + COALESCE(op.valid,0) + COALESCE(nx.valid,0)     AS bet_valid,
+        COALESCE(lb.settle,0) + COALESCE(sl.settle,0) + COALESCE(sp.settle,0) + COALESCE(op.settle,0) + COALESCE(nx.settle,0) AS bet_settle,
         COALESCE(tv.total, 0)   AS turnover,
         COALESCE(pr.bonus_total, 0)   AS promo_bonus,
         COALESCE(pr.deposit_bonus, 0) AS deposit_bonus,
@@ -353,6 +353,21 @@ export class ReportsService {
            AND ($1::timestamptz IS NULL OR ot.created_at >= $1::timestamptz)
            AND ($2::timestamptz IS NULL OR ot.created_at <  $2::timestamptz)
       ) op ON TRUE
+      -- Nexus ledger rows. By far the largest source and the only one
+      -- carrying EVERY vertical — slots, live, fishing, crash and the SB
+      -- sportsbook. Omitting it left this report showing Palace slots,
+      -- lottery, sportsbook and OroPlay only, so a player whose play is
+      -- mostly Nexus looked almost inactive.
+      LEFT JOIN LATERAL (
+        SELECT COUNT(*) FILTER (WHERE nt.bet_money > 0)::int AS cnt,
+               SUM(nt.bet_money) AS amount,
+               SUM(nt.bet_money) FILTER (WHERE NOT nt.is_canceled) AS valid,
+               SUM(nt.win_money) FILTER (WHERE NOT nt.is_canceled) AS settle
+          FROM nexus_transactions nt
+         WHERE nt.user_id = u.id
+           AND ($1::timestamptz IS NULL OR nt.created_at >= $1::timestamptz)
+           AND ($2::timestamptz IS NULL OR nt.created_at <  $2::timestamptz)
+      ) nx ON TRUE
       LEFT JOIN LATERAL (
         SELECT SUM(amount) AS total
           FROM turnover_ledger tl
