@@ -268,6 +268,16 @@ export class GameHistoryService {
         CASE
           WHEN bool_and(nt.is_canceled) THEN 'CANCELLED'
           WHEN COALESCE(SUM(nt.win_money) FILTER (WHERE nt.is_canceled = FALSE), 0) > 0 THEN 'WON'
+          -- A round that has only ever been DEBITED is still in play: the
+          -- stake was taken when the bet was placed and the settling credit
+          -- has not arrived. A sportsbook slip sits here for hours, and
+          -- without this it was reported LOST the moment it was struck —
+          -- the player saw "Settled, -stake" on a match not yet kicked off.
+          --
+          -- Safe for the instant games: they settle in the same call
+          -- (debit_credit), or are credited even on a loss (credit+debit),
+          -- so neither can be mistaken for an open bet.
+          WHEN bool_and(lower(COALESCE(nt.txn_type, '')) = 'debit') THEN 'PLACED'
           ELSE 'LOST'
         END                                                   AS status,
         MIN(nt.created_at)                                    AS placed_at,
@@ -537,7 +547,7 @@ export class GameHistoryService {
              COUNT(*)::int                                                         AS bets,
              COUNT(*) FILTER (WHERE h.status = 'PLACED')::int                      AS pending,
              COALESCE(SUM(h.bet_amount), 0)                                        AS staked,
-             COALESCE(SUM(h.bet_amount) FILTER (WHERE h.status <> 'CANCELLED'), 0) AS valid,
+             COALESCE(SUM(h.bet_amount) FILTER (WHERE h.status NOT IN ('CANCELLED', 'PLACED')), 0) AS valid,
              COALESCE(SUM(h.actual_payout) FILTER (WHERE h.status = 'WON'), 0)     AS won,
              ARRAY_AGG(DISTINCT h.category ORDER BY h.category)                    AS categories
         FROM ${unioned}
@@ -577,7 +587,7 @@ export class GameHistoryService {
                   COUNT(*)::int                                                         AS bets,
                   COUNT(*) FILTER (WHERE h.status = 'PLACED')::int                      AS pending,
                   COALESCE(SUM(h.bet_amount), 0)                                        AS staked,
-                  COALESCE(SUM(h.bet_amount) FILTER (WHERE h.status <> 'CANCELLED'), 0) AS valid,
+                  COALESCE(SUM(h.bet_amount) FILTER (WHERE h.status NOT IN ('CANCELLED', 'PLACED')), 0) AS valid,
                   COALESCE(SUM(h.actual_payout) FILTER (WHERE h.status = 'WON'), 0)     AS won
              FROM ${unioned}
             WHERE h.placed_at::date = ANY($2::date[])
