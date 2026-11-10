@@ -293,6 +293,11 @@ export class TurnoverService {
         referenceType: 'BET',
         referenceId:   betId,
         description:   `Settled bet contributed ${contribution} toward turnover`,
+        // Both already worked out above for the matching rules. Recording
+        // them is what lets the Betting Records page split turnover by game
+        // type, and what makes referenceId resolvable to a source table.
+        betCategory:   vertical,
+        betSource:     game?.source ? String(game.source).toUpperCase() : null,
       });
 
       if (completed) {

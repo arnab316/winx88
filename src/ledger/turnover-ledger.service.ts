@@ -20,14 +20,17 @@ export class TurnoverLedgerService {
       referenceType,
       referenceId,
       description,
+      betCategory,
+      betSource,
     } = entry;
 
     const result = await qr.query(
       `INSERT INTO turnover_ledger
         (user_id, requirement_id, event_type, amount,
          balance_before, balance_after,
-         reference_type, reference_id, description)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
+         reference_type, reference_id, description,
+         bet_category, bet_source)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
        RETURNING id`,
       [
         userId,
@@ -39,6 +42,8 @@ export class TurnoverLedgerService {
         referenceType ?? null,
         referenceId ?? null,
         description ?? null,
+        betCategory ?? null,
+        betSource ?? null,
       ],
     );
 

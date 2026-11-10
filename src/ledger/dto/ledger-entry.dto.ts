@@ -85,4 +85,16 @@ export interface TurnoverLedgerEntry {
   referenceType?: string;       // 'BET' | 'WITHDRAWAL' | 'ADMIN'
   referenceId?: number;
   description?: string;
+  /**
+   * What the contribution was earned on. Set for CONTRIBUTION rows; absent
+   * for the others, which are not tied to a game.
+   *
+   * `betCategory` is the promotion vertical (SLOT, FISH, LIVE...), null when
+   * the provider sent a type we could not map — such a bet still counts, so
+   * it must still be recordable. `betSource` is the integration, which is
+   * what makes `referenceId` unambiguous: the five bet tables use
+   * independent id sequences.
+   */
+  betCategory?: string | null;
+  betSource?: string | null;
 }

@@ -595,8 +595,18 @@ export class GameHistoryService {
         WHERE table_schema = 'public' AND table_name = 'turnover_ledger'
           AND column_name = 'bet_category' LIMIT 1`,
     );
+    // The ledger stores the PROMOTION vertical (toVertical: SLOT, FISH,
+    // LIVE...) while the rows above use the history vocabulary (SLOT,
+    // FISHING, POKER...). The two agree on most names but not all, and an
+    // untranslated 'FISH' would match no row and disappear — worse than the
+    // unassigned line it would have landed in. Translated here rather than at
+    // write time so the ledger keeps the engine's own vocabulary, which is
+    // what the matching rules are expressed in.
     const catExpr = hasCat
-      ? `CASE UPPER(tl.bet_category) WHEN 'TABLE' THEN 'LIVE' WHEN 'VIRTUAL' THEN 'SPORTS'
+      ? `CASE UPPER(tl.bet_category)
+              WHEN 'TABLE'   THEN 'LIVE'
+              WHEN 'VIRTUAL' THEN 'SPORTS'
+              WHEN 'FISH'    THEN 'FISHING'
               ELSE UPPER(tl.bet_category) END`
       : `NULL::text`;
     const tParams: any[] = [userId, fromTs];
@@ -635,10 +645,26 @@ export class GameHistoryService {
         const won = Number(r.won);
         const cats = catRows.filter((c: any) => dayKey(c.day) === day);
 
-        // Turnover with no recorded game type. On a day with a single game type
-        // it can only belong to that type; otherwise it is reported separately
-        // rather than being spread across types on a guess.
-        let unassigned = turnoverOf.get(`${day}|`) ?? 0;
+        // Turnover that cannot be tied to a game type played that day: rows
+        // written before bet_category existed, plus any category that does
+        // not correspond to one of the day's rows — a provider type we could
+        // not map, or a split the history makes and the ledger does not
+        // (LOTTERY vs JACKPOT).
+        //
+        // Gathered rather than looked up by the empty key alone, because a
+        // non-matching category would otherwise be read by nothing and vanish
+        // from the page entirely. A contribution that matches no row must
+        // still be visible — that is what this line is for. On a day with a
+        // single game type it can only belong to that type; otherwise it is
+        // reported separately rather than spread across types on a guess.
+        const dayCats = new Set(cats.map((c: any) => c.category));
+        let unassigned = 0;
+        for (const [key, amt] of turnoverOf) {
+          const sep = key.indexOf('|');
+          if (key.slice(0, sep) !== day) continue;
+          const cat = key.slice(sep + 1);
+          if (!cat || !dayCats.has(cat)) unassigned += amt;
+        }
         const single = cats.length === 1;
 
         const byCategory = cats
