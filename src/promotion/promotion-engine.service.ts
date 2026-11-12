@@ -1,5 +1,6 @@
 import {
   Injectable,
+  Logger,
   BadRequestException,
   NotFoundException,
   ForbiddenException,
@@ -9,6 +10,7 @@ import { DataSource, QueryRunner } from 'typeorm';
 import { FinancialLedgerService } from '../ledger/financial-ledger.service';
 import { TurnoverService } from '../turnover/turnover.service';
 import { MemberGroupService } from '../member-group/member-group.service';
+import { CashbackService } from './cashback.service';
 import {
   CreatePromotionDto,
   UpdatePromotionDto,
@@ -40,11 +42,14 @@ export interface ApplyResult {
 @Injectable()
 export class PromotionEngineService  {
 
+  private readonly logger = new Logger(PromotionEngineService.name);
+
       constructor(
           private dataSource: DataSource,
     private financialLedger: FinancialLedgerService,
     private turnoverService: TurnoverService,
     private memberGroupService: MemberGroupService,
+    private cashback: CashbackService,
       ) {}
 
        // ═════════════════════════════════════════════════════════════
@@ -177,9 +182,32 @@ export class PromotionEngineService  {
       }
     }
  
+    // A cashback/manual promotion can set its own entry threshold, which
+    // gates the promotion itself rather than being checked at payout: a
+    // player depositing under it cannot take the promotion at all, the same
+    // way a DEPOSIT promotion's min_amount works.
+    const cashbackMin = parseFloat(p.cashback_min_deposit ?? '0');
+    if (
+      cashbackMin > 0 &&
+      context.depositAmount !== undefined &&
+      context.depositAmount !== null &&
+      context.depositAmount < cashbackMin
+    ) {
+      throw new BadRequestException(
+        `Minimum deposit for this promo is ${cashbackMin}`,
+      );
+    }
+
     // 10. Estimate bonus (also catches "calculation produces zero" edge cases)
     const computation = this.computeBonus(p, context.depositAmount ?? 0);
-    if (computation.bonusAmount <= 0) {
+    //
+    // A cycle promotion need not pay anything up front — a pure cashback or
+    // rebate bonus is earned over its window and credited when that window
+    // closes. Rejecting it here for "no bonus" would make every such
+    // promotion impossible to claim, which is not an edge case but the
+    // normal shape of one.
+    const isCyclePromotion = !!p.cashback_basis;
+    if (computation.bonusAmount <= 0 && !isCyclePromotion) {
       throw new BadRequestException(
         'This promotion would result in no bonus (check minimum deposit / promo formula)',
       );
@@ -429,6 +457,17 @@ export class PromotionEngineService  {
 
     await this.bumpCountersAndMaybeDisable(qr, promotion, bonusAmount);
 
+    // A cashback/rebate promotion whose cycle starts ON CLAIM opens the
+    // player's private window here. Deliberately not allowed to fail the
+    // grant: the bonus has already been credited, and a missing window is
+    // recoverable where a rolled-back credit is not.
+    try {
+      await this.cashback.onPromotionClaimed(userId, promotion.id);
+    } catch (e: any) {
+      this.logger.warn(
+        `cashback window not opened for user ${userId} on promotion ${promotion.id}: ${e.message}`,
+      );
+    }
     return { turnoverRequirementId: turnoverReqId, rolloverTarget };
   }
  
@@ -610,6 +649,53 @@ export class PromotionEngineService  {
   // ═════════════════════════════════════════════════════════════
   // PRIVATE: bonus calculation
   // ═════════════════════════════════════════════════════════════
+  /**
+   * Replace a promotion's percentage ladder.
+   *
+   * Rewritten wholesale rather than diffed: the ladder is ordered and
+   * contiguous, so a partial update could leave a gap between two bands that
+   * silently pays nothing for the amounts falling inside it. `tier_no` comes
+   * from array order, so the arrangement the admin sees is the one the
+   * engine evaluates.
+   */
+  private async replaceCashbackTiers(
+    promotionId: number,
+    tiers: Array<{ upperAmount?: number | null; percent: number }>,
+  ): Promise<void> {
+    await this.dataSource.query(
+      `DELETE FROM promotion_cashback_tiers WHERE promotion_id = $1`,
+      [promotionId],
+    );
+    if (!tiers.length) return;
+
+    const values: any[] = [];
+    const placeholders = tiers
+      .map((t, idx) => {
+        values.push(promotionId, idx + 1, t.upperAmount ?? null, t.percent);
+        const b = idx * 4;
+        return `($${b + 1},$${b + 2},$${b + 3},$${b + 4})`;
+      })
+      .join(',');
+
+    await this.dataSource.query(
+      `INSERT INTO promotion_cashback_tiers
+         (promotion_id, tier_no, upper_amount, percent)
+       VALUES ${placeholders}`,
+      values,
+    );
+  }
+
+  /** A promotion's ladder, in the order the engine evaluates it. */
+  private async loadCashbackTiers(promotionId: number) {
+    return this.dataSource.query(
+      `SELECT tier_no AS "tierNo", upper_amount AS "upperAmount", percent
+         FROM promotion_cashback_tiers
+        WHERE promotion_id = $1
+        ORDER BY tier_no`,
+      [promotionId],
+    );
+  }
+
   private computeBonus(promotion: any, depositAmount: number): BonusComputation {
     const bonusType = promotion.bonus_type as 'PERCENT' | 'FLAT';
     const bonusValue = parseFloat(promotion.bonus_value);
@@ -885,10 +971,16 @@ export class PromotionEngineService  {
            target_type, target_option, max_player, pay_later,
            display_if_non_eligible, hide_if_eligible,
            limit_to_provider, check_by_wallet_balance, excluded_game_keys,
-           eligible_providers)
+           eligible_providers,
+           cashback_basis, cycle_start_mode, cycle_start_at,
+           cycle_length_minutes, cycle_length_unit, cycle_repeat,
+           payout_delay_minutes, check_min_deposit, check_wallet_balance,
+           check_withdrawal, check_bonus_amount, cashback_min_deposit,
+           min_payout, max_payout, cashback_multiplier)
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,
                  $21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31,$32,$33,$34,$35,$36,$37,$38,
-                 $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54)
+                 $39,$40,$41,$42,$43,$44,$45,$46,$47,$48,$49,$50,$51,$52,$53,$54,
+                 $55,$56,$57,$58,$59,$60,$61,$62,$63,$64,$65,$66,$67,$68,$69)
          RETURNING *`,
         [
           dto.title,
@@ -951,9 +1043,32 @@ export class PromotionEngineService  {
           // jsonb NOT NULL — fall back to the schema default.
           dto.excludedGameKeys ? JSON.stringify(dto.excludedGameKeys) : '[]',
           dto.eligibleProviders ? JSON.stringify(dto.eligibleProviders) : '[]',
+          // Cashback / Rebate / Manual. All nullable — an ordinary deposit
+          // bonus has no cycle and leaves every one of these unset.
+          dto.cashbackBasis ?? null,
+          dto.cycleStartMode ?? null,
+          dto.cycleStartAt ?? null,
+          dto.cycleLengthMinutes ?? null,
+          dto.cycleLengthUnit ?? null,
+          dto.cycleRepeat ?? false,
+          dto.payoutDelayMinutes ?? null,
+          dto.checkMinDeposit ?? false,
+          dto.checkWalletBalance ?? false,
+          dto.checkWithdrawal ?? false,
+          dto.checkBonusAmount ?? false,
+          dto.cashbackMinDeposit ?? null,
+          dto.minPayout ?? null,
+          dto.maxPayout ?? null,
+          dto.cashbackMultiplier ?? null,
         ],
       );
       let created = result[0];
+
+      // The ladder lives in its own table, so it cannot ride the INSERT.
+      if (dto.cashbackTiers?.length) {
+        await this.replaceCashbackTiers(created.id, dto.cashbackTiers);
+        created.cashback_tiers = await this.loadCashbackTiers(created.id);
+      }
 
       // Register-valid-days isn't in the big INSERT above; set it post-insert.
       if (dto.registerValidDays !== undefined) {
@@ -1049,6 +1164,21 @@ export class PromotionEngineService  {
       hide_if_eligible:          dto.hideIfEligible,
       limit_to_provider:         dto.limitToProvider,
       check_by_wallet_balance:   dto.checkByWalletBalance,
+      cashback_basis:          dto.cashbackBasis,
+      cycle_start_mode:        dto.cycleStartMode,
+      cycle_start_at:          dto.cycleStartAt,
+      cycle_length_minutes:    dto.cycleLengthMinutes,
+      cycle_length_unit:       dto.cycleLengthUnit,
+      cycle_repeat:            dto.cycleRepeat,
+      payout_delay_minutes:    dto.payoutDelayMinutes,
+      check_min_deposit:       dto.checkMinDeposit,
+      check_wallet_balance:    dto.checkWalletBalance,
+      check_withdrawal:        dto.checkWithdrawal,
+      check_bonus_amount:      dto.checkBonusAmount,
+      cashback_min_deposit:    dto.cashbackMinDeposit,
+      min_payout:              dto.minPayout,
+      max_payout:              dto.maxPayout,
+      cashback_multiplier:     dto.cashbackMultiplier,
       excluded_game_keys:
         dto.excludedGameKeys === undefined
           ? undefined
@@ -1094,6 +1224,12 @@ export class PromotionEngineService  {
       );
       row = result[0];
     }
+
+    // undefined = not part of this edit; [] = the admin cleared the ladder.
+    if (dto.cashbackTiers !== undefined) {
+      await this.replaceCashbackTiers(id, dto.cashbackTiers);
+    }
+    row.cashback_tiers = await this.loadCashbackTiers(id);
 
     // Sync multi member-group eligibility when provided.
     if (dto.memberGroupIds !== undefined) {
@@ -1192,6 +1328,18 @@ async listPromotions(q: ListPromotionsQueryDto) {
     `SELECT p.*,
             mg.code AS member_group_code,
             mg.name AS member_group_name,
+            -- The cashback ladder, so the edit form can hydrate it without a
+            -- second round trip per promotion. Aggregated in the row rather
+            -- than fetched per promotion, which would be N+1 on every page.
+            COALESCE((
+              SELECT json_agg(json_build_object(
+                       'tierNo', t.tier_no,
+                       'upperAmount', t.upper_amount,
+                       'percent', t.percent)
+                       ORDER BY t.tier_no)
+              FROM promotion_cashback_tiers t
+              WHERE t.promotion_id = p.id
+            ), '[]'::json) AS cashback_tiers,
             COALESCE((
               SELECT json_agg(json_build_object(
                        'id', mg2.id, 'code', mg2.code, 'name', mg2.name)

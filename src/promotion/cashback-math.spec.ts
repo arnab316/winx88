@@ -2,6 +2,7 @@ import {
   computeLossBasis,
   resolveTier,
   computeCashback,
+  currentWindow,
   nextCycle,
   type CashbackTier,
 } from './cashback-math';
@@ -238,5 +239,69 @@ describe('cashback maths', () => {
       expect(next.cycleEnd.toISOString()).toBe('2026-11-11T00:00:00.000Z');
       expect(next.payoutAt.toISOString()).toBe('2026-11-11T12:00:00.000Z');
     });
+  });
+});
+
+/**
+ * Which window a fixed-clock promotion is in — the part that has to survive
+ * the watcher not running.
+ */
+describe('currentWindow', () => {
+  const START = new Date('2026-11-01T00:00:00Z');
+  const WEEK = 7 * 24 * 60;
+
+  const at = (iso: string, repeat = true, lengthMinutes = WEEK) =>
+    currentWindow({ start: START, lengthMinutes, repeat, now: new Date(iso) });
+
+  it('has no window before the promotion starts', () => {
+    expect(at('2026-10-31T23:59:00Z')).toBeNull();
+  });
+
+  it('opens the first window on the start moment', () => {
+    const w = at('2026-11-01T00:00:00Z');
+    expect(w?.cycleStart.toISOString()).toBe('2026-11-01T00:00:00.000Z');
+    expect(w?.cycleEnd.toISOString()).toBe('2026-11-08T00:00:00.000Z');
+  });
+
+  it('stays in the first window until it closes', () => {
+    expect(at('2026-11-07T23:59:00Z')?.cycleStart.toISOString()).toBe(
+      '2026-11-01T00:00:00.000Z',
+    );
+  });
+
+  it('moves to the next window the moment the last one ends', () => {
+    const w = at('2026-11-08T00:00:00Z');
+    expect(w?.cycleStart.toISOString()).toBe('2026-11-08T00:00:00.000Z');
+    expect(w?.cycleEnd.toISOString()).toBe('2026-11-15T00:00:00.000Z');
+  });
+
+  it('lands on the right window after a long outage', () => {
+    // The point of deriving rather than counting on: nothing ran for five
+    // weeks, and the promotion resumes in the CURRENT window rather than
+    // replaying the four it missed.
+    const w = at('2026-12-09T12:00:00Z');
+    expect(w?.cycleStart.toISOString()).toBe('2026-12-06T00:00:00.000Z');
+    expect(w?.cycleEnd.toISOString()).toBe('2026-12-13T00:00:00.000Z');
+  });
+
+  it('keeps a one-off in its single window', () => {
+    expect(at('2026-11-05T00:00:00Z', false)?.cycleStart.toISOString()).toBe(
+      '2026-11-01T00:00:00.000Z',
+    );
+  });
+
+  it('closes a one-off for good once its window ends', () => {
+    expect(at('2026-11-08T00:00:01Z', false)).toBeNull();
+  });
+
+  it('handles an hourly window, as a per-player cycle uses', () => {
+    const w = at('2026-11-01T05:30:00Z', true, 60);
+    expect(w?.cycleStart.toISOString()).toBe('2026-11-01T05:00:00.000Z');
+    expect(w?.cycleEnd.toISOString()).toBe('2026-11-01T06:00:00.000Z');
+  });
+
+  it('rejects a zero or negative length instead of looping forever', () => {
+    expect(at('2026-11-05T00:00:00Z', true, 0)).toBeNull();
+    expect(at('2026-11-05T00:00:00Z', true, -60)).toBeNull();
   });
 });

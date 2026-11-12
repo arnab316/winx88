@@ -16,6 +16,7 @@ import {
   ValidationPipe,
 } from '@nestjs/common';
 import { PromotionEngineService  } from './promotion-engine.service';
+import { CashbackService } from './cashback.service';
 import { JwtAuthGuard } from '../common/guards/jwt-auth.guard';
 import { ActiveAccountGuard } from '../common/guards/active-account.guard';
 import { AdminGuard } from '../common/guards/admin.guard';
@@ -38,7 +39,8 @@ export class PromotionController {
 
 
     constructor(private readonly engine: PromotionEngineService
-      ,   private readonly statsService: PromotionStatsService, 
+      ,   private readonly statsService: PromotionStatsService,
+          private readonly cashback: CashbackService,
     ) {}
 
 
@@ -177,5 +179,50 @@ export class PromotionController {
   @Post('admin/forfeit-claim')
   forfeitClaim(@Req() req: any, @Body() dto: ForfeitClaimDto) {
     return this.engine.forfeitClaim(dto, req.user.sub);
+  }
+
+  /** GET /promotions/me/cashback — the player's own cashback history. */
+  @UseGuards(JwtAuthGuard, ActiveAccountGuard)
+  @Get('me/cashback')
+  myCashback(
+    @Req() req: any,
+    @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+  ) {
+    return this.cashback.myCashback(req.user.sub, limit);
+  }
+
+  // ═════════════════════════════════════════════════════════════
+  // CASHBACK / REBATE CYCLES (admin)
+  // ═════════════════════════════════════════════════════════════
+
+  /** GET /promotions/admin/:id/cycles — this promotion's windows. */
+  @UseGuards(AdminGuard)
+  @Get('admin/:id/cycles')
+  cashbackRuns(
+    @Param('id', ParseIntPipe) id: number,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+  ) {
+    return this.cashback.listRuns(id, limit);
+  }
+
+  /**
+   * GET /promotions/admin/cycles/:runId/payouts — who earned what, and who
+   * earned nothing and why.
+   */
+  @UseGuards(AdminGuard)
+  @Get('admin/cycles/:runId/payouts')
+  cashbackPayouts(
+    @Param('runId', ParseIntPipe) runId: number,
+    @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+    @Query('limit', new DefaultValuePipe(50), ParseIntPipe) limit: number,
+  ) {
+    return this.cashback.listPayouts(runId, page, limit);
+  }
+
+  /** POST /promotions/admin/cycles/settle — run the watcher's work now. */
+  @UseGuards(AdminGuard)
+  @Post('admin/cycles/settle')
+  settleCashback() {
+    return this.cashback.settleNow();
   }
 }

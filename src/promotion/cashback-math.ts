@@ -154,6 +154,41 @@ export function computeCashback(
 }
 
 /**
+ * Which window a fixed-clock promotion is in right now.
+ *
+ * Derived by stepping forward from the configured start in whole cycle
+ * lengths until the window contains `now`, rather than by counting on from
+ * the last window that was recorded. That matters when nothing was running:
+ * a promotion created weeks ago, or one whose watcher was down over a
+ * weekend, lands on the window it SHOULD be in instead of replaying every
+ * window it missed.
+ *
+ * Returns null before the promotion starts, and for a non-repeating one
+ * whose single window has already closed.
+ */
+export function currentWindow(input: {
+  start: Date;
+  lengthMinutes: number;
+  repeat: boolean;
+  now: Date;
+}): { cycleStart: Date; cycleEnd: Date } | null {
+  const lenMs = input.lengthMinutes * 60_000;
+  if (!(lenMs > 0)) return null;
+
+  const elapsed = input.now.getTime() - input.start.getTime();
+  if (elapsed < 0) return null; // not started yet
+
+  const index = input.repeat ? Math.floor(elapsed / lenMs) : 0;
+  const cycleStart = new Date(input.start.getTime() + index * lenMs);
+  const cycleEnd = new Date(cycleStart.getTime() + lenMs);
+
+  // A one-off whose window has already closed has no current window.
+  if (!input.repeat && cycleEnd.getTime() <= input.now.getTime()) return null;
+
+  return { cycleStart, cycleEnd };
+}
+
+/**
  * The next cycle, when one repeats.
  *
  * The new cycle begins the instant the last one ended and runs for the same
