@@ -14,7 +14,22 @@ import {
   Length,
   Matches,
   ArrayUnique,
+  ValidateNested,
 } from 'class-validator';
+
+/**
+ * One band in a cashback/rebate percentage ladder. The percentage applies to
+ * the ACTUAL basis, not to the band's bound: a 200 loss inside a 0-999 band
+ * at 5% pays 10.
+ */
+export class CashbackTierDto {
+  @IsInt() @Min(1) tierNo!: number;
+
+  /** Top of the band. null = unbounded, valid on the last tier only. */
+  @IsOptional() @IsNumber() @Min(0) upperAmount?: number | null;
+
+  @IsNumber() @Min(0) @Max(100) percent!: number;
+}
 
 // ─── ENUMS / CONSTANTS ──────────────────────────────────────────
 export const PROMOTION_KINDS = [
@@ -155,6 +170,57 @@ export class CreatePromotionDto {
   @IsOptional() @IsArray() @ArrayUnique() @IsString({ each: true })
   eligibleProviders?: string[];
 
+
+  // ── Cashback / Rebate / Manual ────────────────────────────────────
+  // Decorated like everything else here: the global ValidationPipe runs with
+  // `whitelist: true`, so an undecorated field is stripped before it reaches
+  // the service and the save looks like it worked.
+
+  /** LOSS for cashback and manual, TURNOVER for rebate. */
+  @IsOptional() @IsIn(['LOSS', 'TURNOVER'])
+  cashbackBasis?: 'LOSS' | 'TURNOVER';
+
+  /** FIXED = one shared cycle; ON_CLAIM = a private cycle per player. */
+  @IsOptional() @IsIn(['FIXED', 'ON_CLAIM'])
+  cycleStartMode?: 'FIXED' | 'ON_CLAIM';
+
+  @IsOptional() @Transform(emptyToUndefined) @IsDateString()
+  cycleStartAt?: string;
+
+  /** Length as a duration, so a repeating cycle cannot drift. */
+  @IsOptional() @IsInt() @Min(1)
+  cycleLengthMinutes?: number;
+
+  /** Presentation only: DAYS for cashback/rebate, HOURS for manual. */
+  @IsOptional() @IsIn(['DAYS', 'HOURS'])
+  cycleLengthUnit?: 'DAYS' | 'HOURS';
+
+  @IsOptional() @IsBoolean() cycleRepeat?: boolean;
+
+  /** Payout is always an offset from the cycle's end, never a fixed clock. */
+  @IsOptional() @IsInt() @Min(0) payoutDelayMinutes?: number;
+
+  @IsOptional() @IsBoolean() checkMinDeposit?: boolean;
+  @IsOptional() @IsBoolean() checkWalletBalance?: boolean;
+  @IsOptional() @IsBoolean() checkWithdrawal?: boolean;
+  @IsOptional() @IsBoolean() checkBonusAmount?: boolean;
+
+  /** Manual only: gates entry to the promotion at deposit time. */
+  @IsOptional() @IsNumber() @Min(0) cashbackMinDeposit?: number;
+
+  @IsOptional() @IsNumber() @Min(0) minPayout?: number;
+  @IsOptional() @IsNumber() @Min(0) maxPayout?: number;
+  @IsOptional() @IsNumber() @Min(0) cashbackMultiplier?: number;
+
+  /**
+   * The percentage bands. `upperAmount` is the TOP of each band — a band runs
+   * from the previous one's top to its own, the first starting at zero, and
+   * the last may be null meaning unbounded.
+   */
+  @IsOptional() @IsArray() @ValidateNested({ each: true })
+  @Type(() => CashbackTierDto)
+  cashbackTiers?: CashbackTierDto[];
+
   @IsOptional() @IsNumber() @Min(0) autoUnlockThreshold?: number;
 
   @IsOptional() @IsBoolean() uniqueCheckBankAccount?: boolean;
@@ -254,6 +320,57 @@ export class UpdatePromotionDto {
    */
   @IsOptional() @IsArray() @ArrayUnique() @IsString({ each: true })
   eligibleProviders?: string[];
+
+
+  // ── Cashback / Rebate / Manual ────────────────────────────────────
+  // Decorated like everything else here: the global ValidationPipe runs with
+  // `whitelist: true`, so an undecorated field is stripped before it reaches
+  // the service and the save looks like it worked.
+
+  /** LOSS for cashback and manual, TURNOVER for rebate. */
+  @IsOptional() @IsIn(['LOSS', 'TURNOVER'])
+  cashbackBasis?: 'LOSS' | 'TURNOVER';
+
+  /** FIXED = one shared cycle; ON_CLAIM = a private cycle per player. */
+  @IsOptional() @IsIn(['FIXED', 'ON_CLAIM'])
+  cycleStartMode?: 'FIXED' | 'ON_CLAIM';
+
+  @IsOptional() @Transform(emptyToUndefined) @IsDateString()
+  cycleStartAt?: string;
+
+  /** Length as a duration, so a repeating cycle cannot drift. */
+  @IsOptional() @IsInt() @Min(1)
+  cycleLengthMinutes?: number;
+
+  /** Presentation only: DAYS for cashback/rebate, HOURS for manual. */
+  @IsOptional() @IsIn(['DAYS', 'HOURS'])
+  cycleLengthUnit?: 'DAYS' | 'HOURS';
+
+  @IsOptional() @IsBoolean() cycleRepeat?: boolean;
+
+  /** Payout is always an offset from the cycle's end, never a fixed clock. */
+  @IsOptional() @IsInt() @Min(0) payoutDelayMinutes?: number;
+
+  @IsOptional() @IsBoolean() checkMinDeposit?: boolean;
+  @IsOptional() @IsBoolean() checkWalletBalance?: boolean;
+  @IsOptional() @IsBoolean() checkWithdrawal?: boolean;
+  @IsOptional() @IsBoolean() checkBonusAmount?: boolean;
+
+  /** Manual only: gates entry to the promotion at deposit time. */
+  @IsOptional() @IsNumber() @Min(0) cashbackMinDeposit?: number;
+
+  @IsOptional() @IsNumber() @Min(0) minPayout?: number;
+  @IsOptional() @IsNumber() @Min(0) maxPayout?: number;
+  @IsOptional() @IsNumber() @Min(0) cashbackMultiplier?: number;
+
+  /**
+   * The percentage bands. `upperAmount` is the TOP of each band — a band runs
+   * from the previous one's top to its own, the first starting at zero, and
+   * the last may be null meaning unbounded.
+   */
+  @IsOptional() @IsArray() @ValidateNested({ each: true })
+  @Type(() => CashbackTierDto)
+  cashbackTiers?: CashbackTierDto[];
 
   @IsOptional() @IsNumber() @Min(0) autoUnlockThreshold?: number;
 
