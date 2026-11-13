@@ -154,8 +154,58 @@ export class ContactsAdminService {
     };
   }
 
-  /** One player's uploaded book, for a support request about that player. */
-  async forUser(userId: number) {
-    return this.list({ userId, limit: 200 });
+  /** One player's uploaded book — the member dialog's Contacts tab. */
+  async forUser(
+    userId: number,
+    opts: Omit<ListContactsQuery, 'userId'> = {},
+  ) {
+    return this.list({ ...opts, userId, limit: opts.limit ?? 25 });
+  }
+
+  /**
+   * Counts and the last upload for one player, for the tab header.
+   *
+   * `uploads` comes from device_contact_syncs rather than being derived from
+   * the contacts: a player who uploaded and then erased has 0 contacts and a
+   * non-zero upload count, and collapsing the two would hide that it ever
+   * happened.
+   */
+  async userSummary(userId: number) {
+    const [row] = await this.db.query(
+      `SELECT COUNT(*)::int                            AS total,
+              COUNT(matched_user_id)::int              AS matched,
+              (COUNT(*) - COUNT(matched_user_id))::int AS unmatched,
+              MAX(last_seen_at)                        AS last_seen
+         FROM device_contacts
+        WHERE user_id = $1`,
+      [userId],
+    );
+
+    const [uploads] = await this.db.query(
+      `SELECT COUNT(*)::int AS uploads, MAX(created_at) AS last_upload
+         FROM device_contact_syncs
+        WHERE user_id = $1`,
+      [userId],
+    );
+
+    const [last] = await this.db.query(
+      `SELECT platform, device_model, app_version, received_count,
+              stored_count, matched_count, created_at
+         FROM device_contact_syncs
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1`,
+      [userId],
+    );
+
+    return {
+      total: row?.total ?? 0,
+      matched: row?.matched ?? 0,
+      unmatched: row?.unmatched ?? 0,
+      lastSeen: row?.last_seen ?? null,
+      uploads: uploads?.uploads ?? 0,
+      lastUpload: uploads?.last_upload ?? null,
+      lastSync: last ?? null,
+    };
   }
 }
