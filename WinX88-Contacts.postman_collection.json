@@ -1,0 +1,166 @@
+{
+  "info": {
+    "name": "WinX88 - Device Contacts (player)",
+    "_postman_id": "winx88-contacts-player-1",
+    "description": "Player-facing device-contacts API.\n\n## Setup\n1. Open **Variables**, set `baseUrl`, `username`, `password`.\n2. Run **00 - Auth -> POST /auth/login**. The token is saved into `{{token}}` automatically; the contacts requests use it.\n\n## Endpoints\n- `POST /contacts/sync` - upload one chunk of the address book (max 400 contacts)\n- `GET /contacts/me/summary` - what the server holds for this player\n- `DELETE /contacts/me` - erase it (call when the OS permission is revoked)\n\nAdmin routes (`/contacts/admin/*`) are deliberately excluded.\n\nSource: `src/contacts/` - see `CONTACTS-API.md`.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    { "key": "baseUrl", "value": "https://beta.safurion.online" },
+    { "key": "token", "value": "" },
+    { "key": "refreshToken", "value": "" },
+    { "key": "username", "value": "" },
+    { "key": "password", "value": "" },
+    { "key": "lastSyncId", "value": "" }
+  ],
+  "item": [
+    {
+      "name": "00 - Auth",
+      "item": [
+        {
+          "name": "POST /auth/login",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{baseUrl}}/auth/login",
+              "host": ["{{baseUrl}}"],
+              "path": ["auth", "login"]
+            },
+            "description": "Auth: **public**\n\nRun this first - it stores `{{token}}` for the contacts requests.\n\nSource: `src/auth/auth.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"username\": \"{{username}}\",\n  \"password\": \"{{password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "const j = pm.response.json();",
+                  "// Token field name varies by build - accept the usual shapes.",
+                  "const t = j.accessToken || j.access_token || j.token || (j.data && (j.data.accessToken || j.data.token));",
+                  "if (t) { pm.collectionVariables.set('token', t); console.log('token saved'); }",
+                  "const rt = j.refreshToken || j.refresh_token || (j.data && j.data.refreshToken);",
+                  "if (rt) { pm.collectionVariables.set('refreshToken', rt); }",
+                  "pm.test('login ok', () => [200, 201].includes(pm.response.code));"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "01 - Device Contacts",
+      "item": [
+        {
+          "name": "POST /contacts/sync  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/contacts/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["contacts", "sync"]
+            },
+            "description": "Auth: **player** - the uploader is taken from the token, never the body. There is no `userId` field.\n\nUpload ONE chunk of the device address book after the player grants the contacts permission.\n\n**Limits:** `contacts` max 400 items; `phone` required (<=64 chars), `name` optional (<=200). Send chunks sequentially - a 2,000-contact book is five requests.\n\n**Idempotent:** upsert on (player, normalised number), so retrying a failed chunk is safe.\n\n**`stored` < `received` is normal:** numbers that normalise to under 6 digits (shortcodes, extensions, `*123#` dial strings) are dropped, and the same number written two ways inside one chunk is collapsed. Not an error, do not retry because of it.\n\nSource: `src/contacts/contacts.controller.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contacts\": [\n    { \"name\": \"Rahim Uddin\", \"phone\": \"+8801712345678\" },\n    { \"name\": \"Karim\", \"phone\": \"01812345678\" },\n    { \"phone\": \"8801912345678\" }\n  ],\n  \"platform\": \"android\",\n  \"deviceModel\": \"Redmi Note 12\",\n  \"appVersion\": \"1.4.0\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('sync accepted', () => [200, 201].includes(pm.response.code));",
+                  "if (pm.response.code === 413) {",
+                  "  console.warn('413 from the proxy: nginx client_max_body_size. No CORS headers, no JSON body - lower the chunk size.');",
+                  "} else {",
+                  "  const d = pm.response.json().data || {};",
+                  "  console.log('received=' + d.received + ' stored=' + d.stored + ' matched=' + d.matched + ' syncId=' + d.syncId);",
+                  "  if (d.syncId) { pm.collectionVariables.set('lastSyncId', d.syncId); }",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "POST /contacts/sync - empty book  [player]",
+          "request": {
+            "method": "POST",
+            "header": [
+              { "key": "Authorization", "value": "Bearer {{token}}" },
+              { "key": "Content-Type", "value": "application/json" }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/contacts/sync",
+              "host": ["{{baseUrl}}"],
+              "path": ["contacts", "sync"]
+            },
+            "description": "Auth: **player**\n\nThe permission-granted-but-no-contacts case. Valid: returns `stored: 0` and still writes an upload-log row, because \"consented and sent nothing\" and \"never consented\" are different facts.\n\nSource: `src/contacts/contacts.service.ts`",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"contacts\": [],\n  \"platform\": \"android\",\n  \"appVersion\": \"1.4.0\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          },
+          "response": []
+        },
+        {
+          "name": "GET /contacts/me/summary  [player]",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/contacts/me/summary",
+              "host": ["{{baseUrl}}"],
+              "path": ["contacts", "me", "summary"]
+            },
+            "description": "Auth: **player**\n\nWhat the server holds for this player: `total`, `matched`, `lastUpload`, and `lastSync` (the most recent upload receipt, or `null` if they have never uploaded).\n\nBack the in-app privacy screen with this - a player who granted the permission is entitled to see what it produced.\n\nSource: `src/contacts/contacts.controller.ts`"
+          },
+          "response": []
+        },
+        {
+          "name": "DELETE /contacts/me  [player]",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "Authorization", "value": "Bearer {{token}}" }],
+            "url": {
+              "raw": "{{baseUrl}}/contacts/me",
+              "host": ["{{baseUrl}}"],
+              "path": ["contacts", "me"]
+            },
+            "description": "Auth: **player**\n\nErases every stored contact for this player; returns `{ deleted: <n> }`. Upload-log rows survive on purpose - they record that an upload happened and was withdrawn.\n\n**The client must call this itself.** Android does not tell the server that a permission was revoked, so check the permission on every launch and call this once when it has gone from granted to denied (and when the player turns the feature off in-app). Otherwise the data outlives the consent.\n\nSource: `src/contacts/contacts.controller.ts`"
+          },
+          "response": [],
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('delete ok', () => pm.response.code === 200);",
+                  "console.log('deleted', (pm.response.json().data || {}).deleted);"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
