@@ -15,6 +15,7 @@ import { TwilioModule } from './twilio/twilio.module';
 import { CoinsModule } from './coins/coins.module';
 import { AffiliateModule } from './affiliate/affiliate.module';
 import { ReferralModule } from './referral/referral.module';
+import { ContactsModule } from './contacts/contacts.module';
 import { ReferralEngineModule } from './referral/referral-engine.module';
 import { OtpCleanupService } from './auth/otpcleanup';
 import { AgentsModule } from './agents/agents.module';
@@ -88,6 +89,7 @@ import { GameRailsModule } from './game-rails/game-rails.module';
     CoinsModule,
     AffiliateModule,
     ReferralModule,
+    ContactsModule,
     ReferralEngineModule,
     AgentsModule,
     LedgerModule,
